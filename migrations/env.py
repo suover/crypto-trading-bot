@@ -1,4 +1,5 @@
 from logging.config import fileConfig
+import crypto_trading_bot.db.models  # noqa: F401
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
