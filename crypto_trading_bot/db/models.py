@@ -1,7 +1,20 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Numeric, String, Text, func, text
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -205,4 +218,58 @@ class OrderLog(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class MarketCandle(Base):
+    __tablename__ = "market_candles"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "exchange",
+            "market",
+            "candle_type",
+            "candle_unit",
+            "candle_at",
+            name="uq_market_candles_exchange_market_type_unit_at",
+        ),
+        Index("ix_market_candles_market_candle_at", "market", "candle_at"),
+        Index("ix_market_candles_exchange_market", "exchange", "market"),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+
+    candle_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    candle_unit: Mapped[int] = mapped_column(Integer, nullable=False)
+    candle_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+    )
+
+    opening_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    high_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    low_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+    trade_price: Mapped[float] = mapped_column(Numeric(24, 10), nullable=False)
+
+    candle_acc_trade_price: Mapped[float] = mapped_column(
+        Numeric(24, 10),
+        nullable=False,
+    )
+    candle_acc_trade_volume: Mapped[float] = mapped_column(
+        Numeric(24, 10),
+        nullable=False,
+    )
+
+    raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
