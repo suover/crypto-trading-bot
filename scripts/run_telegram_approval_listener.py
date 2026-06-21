@@ -1,0 +1,384 @@
+import time
+from typing import Any
+
+from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.notification.telegram_client import TelegramClient
+from crypto_trading_bot.services.approval_decision_service import (
+    ApprovalDecisionResult,
+    ApprovalDecisionService,
+)
+from crypto_trading_bot.services.approval_request_service import (
+    ApprovalRequestService,
+)
+
+
+CALLBACK_DECISIONS = {
+    "approve": "APPROVE",
+    "reject": "REJECT",
+}
+
+EMPTY_INLINE_KEYBOARD: dict[str, list[Any]] = {
+    "inline_keyboard": [],
+}
+
+ACTION_PROMPT = "아래 버튼을 눌러 승인 또는 거절해 주세요."
+
+
+def parse_callback_data(callback_data: str) -> tuple[str, str]:
+    command, separator, callback_token = callback_data.partition(":")
+
+    normalized_command = command.strip().lower()
+    normalized_token = callback_token.strip()
+
+    if separator != ":":
+        raise ValueError(
+            "Invalid callback data format. "
+            f"callback_data={callback_data}"
+        )
+
+    decision = CALLBACK_DECISIONS.get(normalized_command)
+
+    if decision is None:
+        raise ValueError(
+            "Unsupported callback command. "
+            f"command={normalized_command}"
+        )
+
+    if not normalized_token:
+        raise ValueError("Callback token must not be empty")
+
+    return decision, normalized_token
+
+
+def build_decision_result_message(
+    original_text: str,
+    result: ApprovalDecisionResult,
+) -> str:
+    base_text = remove_action_prompt(original_text)
+
+    if result.decision == "APPROVE":
+        result_text = "승인 완료"
+        order_notice = (
+            "※ 승인 상태만 저장됐으며 실제 업비트 주문은 "
+            "아직 실행되지 않았습니다."
+        )
+    else:
+        result_text = "거절 완료"
+        order_notice = "※ 거절되어 실제 업비트 주문은 실행되지 않습니다."
+
+    message_lines = [
+        base_text,
+        "",
+        "------------------------------",
+        f"처리 결과: {result_text}",
+        "주문 상태: 미실행",
+        order_notice,
+    ]
+
+    if result.already_processed:
+        message_lines.extend(
+            [
+                "",
+                "※ 이미 같은 결정으로 처리된 요청입니다.",
+            ]
+        )
+
+    return "\n".join(message_lines)
+
+
+def build_expired_message(original_text: str) -> str:
+    base_text = remove_action_prompt(original_text)
+
+    return "\n".join(
+        [
+            base_text,
+            "",
+            "------------------------------",
+            "처리 결과: 승인 요청 만료",
+            "주문 상태: 미실행",
+            "※ 유효시간이 지나 승인하거나 거절할 수 없습니다.",
+        ]
+    )
+
+
+def remove_action_prompt(original_text: str) -> str:
+    lines = original_text.rstrip().splitlines()
+
+    if lines and lines[-1].strip() == ACTION_PROMPT:
+        lines.pop()
+
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    return "\n".join(lines)
+
+
+def get_user_error_message(error: ValueError) -> str:
+    error_message = str(error).lower()
+
+    if "expired" in error_message:
+        return "승인 요청의 유효시간이 만료되었습니다."
+
+    if "already been processed with a different decision" in error_message:
+        return "이미 다른 결정으로 처리된 요청입니다."
+
+    if "not found" in error_message:
+        return "승인 요청을 찾을 수 없습니다."
+
+    if "does not match" in error_message:
+        return "승인 요청 정보가 일치하지 않습니다."
+
+    if "not pending" in error_message:
+        return "이미 처리됐거나 더 이상 유효하지 않은 요청입니다."
+
+    return "승인 요청을 처리할 수 없습니다."
+
+
+def require_dict(
+    value: object,
+    field_name: str,
+) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"{field_name} is missing or invalid")
+
+    return value
+
+
+def require_string(
+    value: object,
+    field_name: str,
+) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} is missing or invalid")
+
+    return value
+
+
+def require_int(
+    value: object,
+    field_name: str,
+) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"{field_name} is missing or invalid")
+
+    return value
+
+
+def answer_callback_safely(
+    telegram_client: TelegramClient,
+    callback_query_id: str | None,
+    text: str,
+    show_alert: bool = False,
+) -> None:
+    if callback_query_id is None:
+        return
+
+    try:
+        telegram_client.answer_callback_query(
+            callback_query_id=callback_query_id,
+            text=text,
+            show_alert=show_alert,
+        )
+    except Exception as error:
+        print(
+            "Failed to answer Telegram callback query. "
+            f"error={error}"
+        )
+
+
+def process_callback_update(
+    telegram_client: TelegramClient,
+    update: dict[str, Any],
+) -> None:
+    callback_query_value = update.get("callback_query")
+
+    # /start, 일반 텍스트 메시지 등은 처리하지 않음
+    if not isinstance(callback_query_value, dict):
+        return
+
+    callback_query = callback_query_value
+    callback_query_id: str | None = None
+    chat_id: int | None = None
+    message_id: int | None = None
+    original_text = ""
+
+    try:
+        callback_query_id = require_string(
+            callback_query.get("id"),
+            "callback_query.id",
+        )
+
+        callback_data = require_string(
+            callback_query.get("data"),
+            "callback_query.data",
+        )
+
+        message = require_dict(
+            callback_query.get("message"),
+            "callback_query.message",
+        )
+
+        chat = require_dict(
+            message.get("chat"),
+            "callback_query.message.chat",
+        )
+
+        chat_id = require_int(
+            chat.get("id"),
+            "callback_query.message.chat.id",
+        )
+
+        message_id = require_int(
+            message.get("message_id"),
+            "callback_query.message.message_id",
+        )
+
+        message_text = message.get("text")
+
+        if isinstance(message_text, str):
+            original_text = message_text
+
+        decision, callback_token = parse_callback_data(callback_data)
+
+        with SessionLocal() as session:
+            decision_service = ApprovalDecisionService(session)
+
+            result = decision_service.process_decision(
+                callback_token=callback_token,
+                decision=decision,
+                telegram_chat_id=chat_id,
+                telegram_message_id=message_id,
+            )
+
+        result_message = build_decision_result_message(
+            original_text=original_text,
+            result=result,
+        )
+
+        # 처리 결과를 메시지에 표시하고 승인·거절 버튼 제거
+        telegram_client.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=result_message,
+            reply_markup=EMPTY_INLINE_KEYBOARD,
+        )
+
+        callback_answer = (
+            "매매 추천을 승인했습니다."
+            if result.decision == "APPROVE"
+            else "매매 추천을 거절했습니다."
+        )
+
+        answer_callback_safely(
+            telegram_client=telegram_client,
+            callback_query_id=callback_query_id,
+            text=callback_answer,
+        )
+
+        print(
+            "Telegram approval callback processed. "
+            f"approval_request_id={result.approval_request.id}, "
+            f"recommendation_id={result.recommendation.id}, "
+            f"decision={result.decision}, "
+            f"already_processed={result.already_processed}"
+        )
+
+    except ValueError as error:
+        user_message = get_user_error_message(error)
+
+        # 만료 요청은 버튼을 제거하고 메시지에도 만료 상태 표시
+        if (
+            "expired" in str(error).lower()
+            and chat_id is not None
+            and message_id is not None
+            and original_text
+        ):
+            telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=build_expired_message(original_text),
+                reply_markup=EMPTY_INLINE_KEYBOARD,
+            )
+
+        answer_callback_safely(
+            telegram_client=telegram_client,
+            callback_query_id=callback_query_id,
+            text=user_message,
+            show_alert=True,
+        )
+
+        print(
+            "Telegram approval callback rejected. "
+            f"error={error}"
+        )
+
+    except Exception:
+        answer_callback_safely(
+            telegram_client=telegram_client,
+            callback_query_id=callback_query_id,
+            text="승인 요청 처리 중 오류가 발생했습니다.",
+            show_alert=True,
+        )
+
+        # 예상하지 못한 오류는 업데이트를 확정하지 않도록 상위로 전달
+        raise
+
+
+def expire_pending_approval_requests() -> int:
+    with SessionLocal() as session:
+        approval_request_service = ApprovalRequestService(session)
+
+        return approval_request_service.expire_pending_requests()
+
+
+def run_telegram_approval_listener() -> None:
+    telegram_client = TelegramClient()
+    next_offset: int | None = None
+
+    print("Telegram approval listener started.")
+    print("Press Ctrl+C to stop.")
+
+    while True:
+        try:
+            expired_count = expire_pending_approval_requests()
+
+            if expired_count > 0:
+                print(
+                    "Expired pending approval requests cleaned up. "
+                    f"count={expired_count}"
+                )
+
+            updates = telegram_client.get_updates(
+                offset=next_offset,
+                timeout=30,
+            )
+
+            for update in updates:
+                update_id = require_int(
+                    update.get("update_id"),
+                    "update.update_id",
+                )
+
+                process_callback_update(
+                    telegram_client=telegram_client,
+                    update=update,
+                )
+
+                # 정상 처리 또는 영구적으로 처리할 수 없는 이벤트만 확정
+                next_offset = update_id + 1
+
+        except KeyboardInterrupt:
+            print("")
+            print("Telegram approval listener stopped.")
+            return
+
+        except Exception as error:
+            print(
+                "Telegram approval listener error. "
+                f"retry_after_seconds=5, error={error}"
+            )
+            time.sleep(5)
+
+
+if __name__ == "__main__":
+    run_telegram_approval_listener()

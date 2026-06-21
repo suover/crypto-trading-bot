@@ -1,0 +1,165 @@
+from datetime import UTC, datetime
+from decimal import Decimal
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from crypto_trading_bot.config.settings import get_settings
+from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.db.models import AnalysisRun, TradeRecommendation, User
+from crypto_trading_bot.notification.approval_request_message import (
+    build_approval_request_message,
+    build_approval_request_reply_markup,
+)
+from crypto_trading_bot.notification.telegram_client import TelegramClient
+from crypto_trading_bot.services.approval_request_service import (
+    DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+    ApprovalRequestService,
+)
+
+
+TEST_USER_NAME = "Minsu"
+TEST_MARKET = "KRW-BTC"
+TEST_BUY_AMOUNT_KRW = Decimal("10000")
+TEST_CONFIDENCE = Decimal("0.7500")
+
+
+def get_test_user(
+    session: Session,
+    user_name: str = TEST_USER_NAME,
+) -> User:
+    statement = (
+        select(User)
+        .where(
+            User.name == user_name,
+            User.is_active.is_(True),
+        )
+        .order_by(User.id.asc())
+        .limit(1)
+    )
+
+    user = session.scalar(statement)
+
+    if user is None:
+        raise ValueError(f"Active user not found. name={user_name}")
+
+    return user
+
+
+def create_test_buy_recommendation(
+    session: Session,
+    user: User,
+) -> tuple[AnalysisRun, TradeRecommendation]:
+    settings = get_settings()
+    now = datetime.now(UTC)
+
+    analysis_run = AnalysisRun(
+        user_id=user.id,
+        run_type="APPROVAL_TEST",
+        trading_mode=settings.trading_mode,
+        status="SUCCESS",
+        finished_at=now,
+        error_message=None,
+    )
+
+    session.add(analysis_run)
+    session.flush()
+
+    recommendation = TradeRecommendation(
+        analysis_run_id=analysis_run.id,
+        market_snapshot_id=None,
+        user_id=user.id,
+        exchange="UPBIT",
+        market=TEST_MARKET,
+        action="BUY",
+        confidence=TEST_CONFIDENCE,
+        reason=(
+            "텔레그램 승인 요청 기능 검증을 위한 테스트용 매수 추천입니다. "
+            "이 추천으로 실제 업비트 주문은 실행되지 않습니다."
+        ),
+        recommended_amount_krw=TEST_BUY_AMOUNT_KRW,
+        recommended_quantity=None,
+        ai_model="TEST",
+        ai_response={
+            "source": "approval_request_test",
+            "actual_order_enabled": False,
+        },
+        status="CREATED",
+    )
+
+    session.add(recommendation)
+    session.commit()
+
+    session.refresh(analysis_run)
+    session.refresh(recommendation)
+
+    return analysis_run, recommendation
+
+
+def send_test_approval_request() -> None:
+    settings = get_settings()
+
+    if not settings.telegram_chat_id:
+        raise ValueError("TELEGRAM_CHAT_ID is not configured")
+
+    telegram_client = TelegramClient()
+
+    with SessionLocal() as session:
+        user = get_test_user(session)
+
+        analysis_run, recommendation = create_test_buy_recommendation(
+            session=session,
+            user=user,
+        )
+
+        approval_request_service = ApprovalRequestService(session)
+
+        approval_request, created = (
+            approval_request_service.get_or_create_pending_request(
+                recommendation=recommendation,
+                telegram_chat_id=settings.telegram_chat_id,
+                expires_in_minutes=DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+            )
+        )
+
+        message = build_approval_request_message(
+            recommendation=recommendation,
+            expires_in_minutes=DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+        )
+
+        reply_markup = build_approval_request_reply_markup(
+            action=recommendation.action,
+            callback_token=approval_request.callback_token,
+        )
+
+        telegram_result = telegram_client.send_message(
+            chat_id=settings.telegram_chat_id,
+            text=message,
+            reply_markup=reply_markup,
+        )
+
+        telegram_message_id = telegram_result.get("message_id")
+
+        if not isinstance(telegram_message_id, int):
+            raise ValueError(
+                "Telegram response does not contain a valid message_id. "
+                f"result={telegram_result}"
+            )
+
+        approval_request_service.save_telegram_message_id(
+            approval_request=approval_request,
+            telegram_message_id=telegram_message_id,
+        )
+
+        print("Test approval request sent successfully.")
+        print(f"analysis_run_id={analysis_run.id}")
+        print(f"recommendation_id={recommendation.id}")
+        print(f"approval_request_id={approval_request.id}")
+        print(f"approval_request_created={created}")
+        print(f"telegram_message_id={telegram_message_id}")
+        print(f"expires_at={approval_request.expires_at}")
+        print("Actual Upbit order was not executed.")
+
+
+if __name__ == "__main__":
+    send_test_approval_request()
