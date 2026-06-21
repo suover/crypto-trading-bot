@@ -39,12 +39,21 @@ function Write-Log {
 try {
     Write-Log "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] START AI trade analysis"
 
-    & uv run python -X utf8 -u -m scripts.run_ai_trade_analysis 2>&1 |
-        ForEach-Object {
-            Write-Log ([string]$_)
-        }
+    $PreviousErrorActionPreference = $ErrorActionPreference
 
-    $ExitCode = $LASTEXITCODE
+    try {
+        $ErrorActionPreference = "Continue"
+
+        & uv run python -X utf8 -u -m scripts.run_ai_trade_analysis 2>&1 |
+            ForEach-Object {
+                Write-Log ([string]$_)
+            }
+
+        $ExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
 
     Write-Log "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] EXIT_CODE=$ExitCode"
 

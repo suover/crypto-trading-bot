@@ -1,12 +1,33 @@
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+
+from crypto_trading_bot.config.settings import get_settings
+from crypto_trading_bot.notification.telegram_client import TelegramClient
 
 
 @dataclass(frozen=True)
 class PipelineStep:
     name: str
     module: str
+
+
+class PipelineStepError(RuntimeError):
+    def __init__(
+        self,
+        step: PipelineStep,
+        return_code: int,
+    ) -> None:
+        self.step = step
+        self.return_code = return_code
+
+        super().__init__(
+            f"Pipeline step failed. "
+            f"name={step.name}, "
+            f"module={step.module}, "
+            f"return_code={return_code}"
+        )
 
 
 PIPELINE_STEPS = [
@@ -34,10 +55,10 @@ PIPELINE_STEPS = [
 
 
 def run_step(step: PipelineStep) -> None:
-    print("=" * 80)
-    print(f"START: {step.name}")
-    print(f"MODULE: {step.module}")
-    print("=" * 80)
+    print("=" * 80, flush=True)
+    print(f"START: {step.name}", flush=True)
+    print(f"MODULE: {step.module}", flush=True)
+    print("=" * 80, flush=True)
 
     result = subprocess.run(
         [sys.executable, "-m", step.module],
@@ -45,23 +66,92 @@ def run_step(step: PipelineStep) -> None:
     )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Pipeline step failed. name={step.name}, module={step.module}, "
-            f"returncode={result.returncode}"
+        raise PipelineStepError(
+            step=step,
+            return_code=result.returncode,
         )
 
-    print("=" * 80)
-    print(f"DONE: {step.name}")
-    print("=" * 80)
-    print()
+    print("=" * 80, flush=True)
+    print(f"DONE: {step.name}", flush=True)
+    print("=" * 80, flush=True)
+    print(flush=True)
+
+
+def build_failure_message(error: PipelineStepError) -> str:
+    failed_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+    return "\n".join(
+        [
+            "[AI 매매 분석 실패]",
+            "",
+            f"발생 시간: {failed_at}",
+            f"실패 단계: {error.step.name}",
+            f"실행 모듈: {error.step.module}",
+            f"종료 코드: {error.return_code}",
+            "",
+            "분석이 중단되어 이후 단계는 실행되지 않았습니다.",
+            "실행 로그를 확인해 주세요.",
+        ]
+    )
+
+
+def send_failure_notification(error: PipelineStepError) -> None:
+    try:
+        settings = get_settings()
+
+        if not settings.telegram_chat_id:
+            print(
+                "TELEGRAM_CHAT_ID is not configured. "
+                "Failure notification was not sent.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return
+
+        TelegramClient().send_message(
+            chat_id=settings.telegram_chat_id,
+            text=build_failure_message(error),
+        )
+
+        print(
+            "Pipeline failure notification sent to Telegram.",
+            flush=True,
+        )
+
+    except Exception as notification_error:
+        # 오류 알림 발송 실패가 원래 파이프라인 오류를 덮어쓰면 안 됨
+        print(
+            "Failed to send pipeline failure notification. "
+            f"error={notification_error}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def run_ai_trade_analysis() -> None:
-    for step in PIPELINE_STEPS:
-        run_step(step)
+    try:
+        for step in PIPELINE_STEPS:
+            run_step(step)
 
-    print("AI trade analysis pipeline completed successfully.")
+    except PipelineStepError as error:
+        print(
+            f"PIPELINE FAILED: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        send_failure_notification(error)
+
+        raise
+
+    print(
+        "AI trade analysis pipeline completed successfully.",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
-    run_ai_trade_analysis()
+    try:
+        run_ai_trade_analysis()
+    except PipelineStepError:
+        sys.exit(1)
