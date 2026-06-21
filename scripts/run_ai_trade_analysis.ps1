@@ -11,6 +11,8 @@ $LogFile = Join-Path $LogDir "ai_trade_analysis_$Timestamp.log"
 
 Set-Location $ProjectRoot
 
+$PythonExe = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+
 # Windows PowerShell과 Python의 입출력을 UTF-8로 통일
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
@@ -39,12 +41,16 @@ function Write-Log {
 try {
     Write-Log "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] START AI trade analysis"
 
+    if (-not (Test-Path $PythonExe)) {
+        throw "Python executable not found. path=$PythonExe"
+    }
+
     $PreviousErrorActionPreference = $ErrorActionPreference
 
     try {
         $ErrorActionPreference = "Continue"
 
-        & uv run python -X utf8 -u -m scripts.run_ai_trade_analysis 2>&1 |
+        & $PythonExe -X utf8 -u -m scripts.run_ai_trade_analysis 2>&1 |
             ForEach-Object {
                 Write-Log ([string]$_)
             }
