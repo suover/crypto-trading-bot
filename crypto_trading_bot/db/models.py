@@ -184,11 +184,17 @@ class ApprovalRequest(Base):
 class OrderLog(Base):
     __tablename__ = "order_logs"
 
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id",
+            name="uq_order_logs_recommendation_id",
+        ),
+    )
+
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     recommendation_id: Mapped[int] = mapped_column(
         ForeignKey("trade_recommendations.id"),
         nullable=False,
-        index=True,
     )
     approval_request_id: Mapped[int | None] = mapped_column(
         ForeignKey("approval_requests.id"),

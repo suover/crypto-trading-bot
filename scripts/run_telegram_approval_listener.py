@@ -1,7 +1,9 @@
 import time
+from decimal import Decimal
 from typing import Any
 
 from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.notification.telegram_client import TelegramClient
 from crypto_trading_bot.services.approval_decision_service import (
     ApprovalDecisionResult,
@@ -9,6 +11,11 @@ from crypto_trading_bot.services.approval_decision_service import (
 )
 from crypto_trading_bot.services.approval_request_service import (
     ApprovalRequestService,
+)
+from crypto_trading_bot.services.mock_order_execution_service import (
+    MockOrderExecutionError,
+    MockOrderExecutionResult,
+    MockOrderExecutionService,
 )
 
 
@@ -50,36 +57,101 @@ def parse_callback_data(callback_data: str) -> tuple[str, str]:
     return decision, normalized_token
 
 
+def format_decimal(
+    value: object | None,
+    decimal_places: int = 2,
+) -> str:
+    if value is None:
+        return "-"
+
+    decimal_value = Decimal(str(value))
+
+    return f"{decimal_value:,.{decimal_places}f}"
+
+
 def build_decision_result_message(
     original_text: str,
     result: ApprovalDecisionResult,
+    mock_order_result: MockOrderExecutionResult | None = None,
+    mock_order_error: str | None = None,
 ) -> str:
     base_text = remove_action_prompt(original_text)
-
-    if result.decision == "APPROVE":
-        result_text = "승인 완료"
-        order_notice = (
-            "※ 승인 상태만 저장됐으며 실제 업비트 주문은 "
-            "아직 실행되지 않았습니다."
-        )
-    else:
-        result_text = "거절 완료"
-        order_notice = "※ 거절되어 실제 업비트 주문은 실행되지 않습니다."
 
     message_lines = [
         base_text,
         "",
         "------------------------------",
-        f"처리 결과: {result_text}",
-        "주문 상태: 미실행",
-        order_notice,
     ]
+
+    if result.decision == "REJECT":
+        message_lines.extend(
+            [
+                "처리 결과: 거절 완료",
+                "주문 상태: 미실행",
+                "※ 거절되어 실제 업비트 주문은 실행되지 않습니다.",
+            ]
+        )
+
+    elif mock_order_result is not None:
+        order_log = mock_order_result.order_log
+
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 상태: 모의 주문 완료",
+                f"마켓: {order_log.market}",
+                f"매매 구분: {order_log.side}",
+                f"주문 방식: {order_log.order_type}",
+                (
+                    "주문 금액: "
+                    f"{format_decimal(order_log.amount_krw)}원"
+                ),
+                (
+                    "기준 가격: "
+                    f"{format_decimal(order_log.price)}원"
+                ),
+                (
+                    "모의 수량: "
+                    f"{format_decimal(order_log.quantity, 10)}"
+                ),
+                "",
+                "※ 실제 업비트 주문은 실행되지 않았습니다.",
+            ]
+        )
+
+        if mock_order_result.already_executed:
+            message_lines.extend(
+                [
+                    "",
+                    "※ 이미 처리된 모의 주문 결과입니다.",
+                ]
+            )
+
+    elif mock_order_error is not None:
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 상태: 모의 주문 실패",
+                f"실패 사유: {mock_order_error}",
+                "",
+                "※ 실제 업비트 주문은 실행되지 않았습니다.",
+            ]
+        )
+
+    else:
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 상태: 미실행",
+                "※ 모의 주문 결과를 확인할 수 없습니다.",
+            ]
+        )
 
     if result.already_processed:
         message_lines.extend(
             [
                 "",
-                "※ 이미 같은 결정으로 처리된 요청입니다.",
+                "※ 이미 같은 결정으로 처리된 승인 요청입니다.",
             ]
         )
 
@@ -164,6 +236,16 @@ def require_int(
     return value
 
 
+def get_safe_error_summary(error: Exception) -> str:
+    response = getattr(error, "response", None)
+    status_code = getattr(response, "status_code", None)
+
+    return (
+        f"error_type={type(error).__name__}, "
+        f"status_code={status_code}"
+    )
+
+
 def answer_callback_safely(
     telegram_client: TelegramClient,
     callback_query_id: str | None,
@@ -182,13 +264,14 @@ def answer_callback_safely(
     except Exception as error:
         print(
             "Failed to answer Telegram callback query. "
-            f"error={error}"
+            f"{get_safe_error_summary(error)}"
         )
 
 
 def process_callback_update(
     telegram_client: TelegramClient,
     update: dict[str, Any],
+    order_upbit_client: UpbitClient | None = None,
 ) -> None:
     callback_query_value = update.get("callback_query")
 
@@ -250,9 +333,37 @@ def process_callback_update(
                 telegram_message_id=message_id,
             )
 
+        mock_order_result: MockOrderExecutionResult | None = None
+        mock_order_error: str | None = None
+
+        if result.decision == "APPROVE":
+            try:
+                with SessionLocal() as session:
+                    mock_order_service = MockOrderExecutionService(
+                        session=session,
+                        upbit_client=order_upbit_client,
+                    )
+
+                    mock_order_result = mock_order_service.execute(
+                        recommendation_id=result.recommendation.id,
+                        approval_request_id=result.approval_request.id,
+                    )
+
+            except MockOrderExecutionError as error:
+                mock_order_error = str(error)
+
+                print(
+                    "Mock order execution rejected. "
+                    f"recommendation_id={result.recommendation.id}, "
+                    f"approval_request_id={result.approval_request.id}, "
+                    f"error={error}"
+                )
+
         result_message = build_decision_result_message(
             original_text=original_text,
             result=result,
+            mock_order_result=mock_order_result,
+            mock_order_error=mock_order_error,
         )
 
         # 처리 결과를 메시지에 표시하고 승인·거절 버튼 제거
@@ -263,11 +374,14 @@ def process_callback_update(
             reply_markup=EMPTY_INLINE_KEYBOARD,
         )
 
-        callback_answer = (
-            "매매 추천을 승인했습니다."
-            if result.decision == "APPROVE"
-            else "매매 추천을 거절했습니다."
-        )
+        if result.decision == "REJECT":
+            callback_answer = "매매 추천을 거절했습니다."
+
+        elif mock_order_result is not None:
+            callback_answer = "승인 후 모의 주문을 완료했습니다."
+
+        else:
+            callback_answer = "승인됐지만 모의 주문은 실행되지 않았습니다."
 
         answer_callback_safely(
             telegram_client=telegram_client,
@@ -275,12 +389,20 @@ def process_callback_update(
             text=callback_answer,
         )
 
+        mock_order_status = (
+            mock_order_result.order_log.status
+            if mock_order_result is not None
+            else None
+        )
+
         print(
             "Telegram approval callback processed. "
             f"approval_request_id={result.approval_request.id}, "
             f"recommendation_id={result.recommendation.id}, "
             f"decision={result.decision}, "
-            f"already_processed={result.already_processed}"
+            f"already_processed={result.already_processed}, "
+            f"mock_order_status={mock_order_status}, "
+            f"mock_order_error={mock_order_error}"
         )
 
     except ValueError as error:
@@ -331,7 +453,9 @@ def expire_pending_approval_requests() -> int:
         return approval_request_service.expire_pending_requests()
 
 
-def run_telegram_approval_listener() -> None:
+def run_telegram_approval_listener(
+    order_upbit_client: UpbitClient | None = None,
+) -> None:
     telegram_client = TelegramClient()
     next_offset: int | None = None
 
@@ -362,6 +486,7 @@ def run_telegram_approval_listener() -> None:
                 process_callback_update(
                     telegram_client=telegram_client,
                     update=update,
+                    order_upbit_client=order_upbit_client,
                 )
 
                 # 정상 처리 또는 영구적으로 처리할 수 없는 이벤트만 확정
@@ -375,7 +500,8 @@ def run_telegram_approval_listener() -> None:
         except Exception as error:
             print(
                 "Telegram approval listener error. "
-                f"retry_after_seconds=5, error={error}"
+                "retry_after_seconds=5, "
+                f"{get_safe_error_summary(error)}"
             )
             time.sleep(5)
 
