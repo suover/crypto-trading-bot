@@ -50,6 +50,7 @@ class MockOrderExecutionService:
         self,
         recommendation_id: int,
         approval_request_id: int,
+        commit: bool = True,
     ) -> MockOrderExecutionResult:
         settings = get_settings()
 
@@ -193,10 +194,12 @@ class MockOrderExecutionService:
         recommendation.status = "MOCK_EXECUTED"
 
         self.session.add(order_log)
-        self.session.commit()
+        self.session.flush()
 
-        self.session.refresh(order_log)
-        self.session.refresh(recommendation)
+        if commit:
+            self.session.commit()
+            self.session.refresh(order_log)
+            self.session.refresh(recommendation)
 
         return MockOrderExecutionResult(
             order_log=order_log,

@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     daily_max_order_amount_krw: int = 30000
     allowed_markets: str = "KRW-BTC,KRW-ETH"
 
+    mock_order_retry_max_retries: int = 3
+    mock_order_retry_delays_minutes: str = "5,15,30"
+
     @property
     def allowed_market_list(self) -> list[str]:
         return [
@@ -28,6 +31,26 @@ class Settings(BaseSettings):
             for market in self.allowed_markets.split(",")
             if market.strip()
         ]
+
+    @property
+    def mock_order_retry_delay_list(self) -> list[int]:
+        delays = [
+            int(value.strip())
+            for value in self.mock_order_retry_delays_minutes.split(",")
+            if value.strip()
+        ]
+
+        if not delays:
+            raise ValueError(
+                "mock_order_retry_delays_minutes must not be empty"
+            )
+
+        if any(delay <= 0 for delay in delays):
+            raise ValueError(
+                "mock order retry delays must be greater than 0"
+            )
+
+        return delays
 
     model_config = SettingsConfigDict(
         env_file=".env",

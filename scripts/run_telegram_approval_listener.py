@@ -1,8 +1,10 @@
 import time
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
 from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.db.models import OrderLog
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.notification.telegram_client import TelegramClient
 from crypto_trading_bot.services.approval_decision_service import (
@@ -12,10 +14,12 @@ from crypto_trading_bot.services.approval_decision_service import (
 from crypto_trading_bot.services.approval_request_service import (
     ApprovalRequestService,
 )
+from crypto_trading_bot.services.mock_order_attempt_service import (
+    MockOrderAttemptResult,
+    MockOrderAttemptService,
+)
 from crypto_trading_bot.services.mock_order_execution_service import (
     MockOrderExecutionError,
-    MockOrderExecutionResult,
-    MockOrderExecutionService,
 )
 
 
@@ -69,10 +73,20 @@ def format_decimal(
     return f"{decimal_value:,.{decimal_places}f}"
 
 
+def format_optional_datetime(
+    value: datetime | None,
+) -> str:
+    if value is None:
+        return "-"
+
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def build_decision_result_message(
     original_text: str,
     result: ApprovalDecisionResult,
-    mock_order_result: MockOrderExecutionResult | None = None,
+    mock_order_attempt_result: MockOrderAttemptResult | None = None,
+    mock_order_log: OrderLog | None = None,
     mock_order_error: str | None = None,
 ) -> str:
     base_text = remove_action_prompt(original_text)
@@ -92,38 +106,143 @@ def build_decision_result_message(
             ]
         )
 
-    elif mock_order_result is not None:
-        order_log = mock_order_result.order_log
+    elif mock_order_attempt_result is not None:
+        attempt_status = mock_order_attempt_result.status
 
-        message_lines.extend(
-            [
-                "처리 결과: 승인 완료",
-                "주문 상태: 모의 주문 완료",
-                f"마켓: {order_log.market}",
-                f"매매 구분: {order_log.side}",
-                f"주문 방식: {order_log.order_type}",
-                (
-                    "주문 금액: "
-                    f"{format_decimal(order_log.amount_krw)}원"
-                ),
-                (
-                    "기준 가격: "
-                    f"{format_decimal(order_log.price)}원"
-                ),
-                (
-                    "모의 수량: "
-                    f"{format_decimal(order_log.quantity, 10)}"
-                ),
-                "",
-                "※ 실제 업비트 주문은 실행되지 않았습니다.",
-            ]
-        )
+        if attempt_status in {
+            "EXECUTED",
+            "ALREADY_EXECUTED",
+        }:
+            if mock_order_log is None:
+                message_lines.extend(
+                    [
+                        "처리 결과: 승인 완료",
+                        "주문 상태: 모의 주문 결과 조회 실패",
+                        "",
+                        "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                    ]
+                )
+            else:
+                message_lines.extend(
+                    [
+                        "처리 결과: 승인 완료",
+                        "주문 상태: 모의 주문 완료",
+                        f"마켓: {mock_order_log.market}",
+                        f"매매 구분: {mock_order_log.side}",
+                        f"주문 방식: {mock_order_log.order_type}",
+                        (
+                            "주문 금액: "
+                            f"{format_decimal(mock_order_log.amount_krw)}원"
+                        ),
+                        (
+                            "기준 가격: "
+                            f"{format_decimal(mock_order_log.price)}원"
+                        ),
+                        (
+                            "모의 수량: "
+                            f"{format_decimal(mock_order_log.quantity, 10)}"
+                        ),
+                        (
+                            "실행 시도 번호: "
+                            f"{mock_order_attempt_result.attempt_number}"
+                        ),
+                        "",
+                        "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                    ]
+                )
 
-        if mock_order_result.already_executed:
+                if attempt_status == "ALREADY_EXECUTED":
+                    message_lines.extend(
+                        [
+                            "",
+                            "※ 이미 처리된 모의 주문 결과입니다.",
+                        ]
+                    )
+
+        elif attempt_status == "RETRYABLE_FAILED":
             message_lines.extend(
                 [
+                    "처리 결과: 승인 완료",
+                    "주문 상태: 모의 주문 실패 / 재시도 예정",
+                    (
+                        "실행 시도 번호: "
+                        f"{mock_order_attempt_result.attempt_number}"
+                    ),
+                    (
+                        "실패 코드: "
+                        f"{mock_order_attempt_result.error_code}"
+                    ),
+                    (
+                        "실패 사유: "
+                        f"{mock_order_attempt_result.error_message}"
+                    ),
+                    (
+                        "다음 재시도 예정: "
+                        f"{format_optional_datetime(
+                            mock_order_attempt_result.next_retry_at
+                        )}"
+                    ),
                     "",
-                    "※ 이미 처리된 모의 주문 결과입니다.",
+                    "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ]
+            )
+
+        elif attempt_status == "PERMANENT_FAILED":
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 상태: 모의 주문 실패 / 재시도 불가",
+                    (
+                        "실행 시도 번호: "
+                        f"{mock_order_attempt_result.attempt_number}"
+                    ),
+                    (
+                        "실패 코드: "
+                        f"{mock_order_attempt_result.error_code}"
+                    ),
+                    (
+                        "실패 사유: "
+                        f"{mock_order_attempt_result.error_message}"
+                    ),
+                    "",
+                    "※ 해당 요청은 자동 재시도되지 않습니다.",
+                    "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ]
+            )
+
+        elif attempt_status == "RETRY_EXHAUSTED":
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 상태: 모의 주문 최종 실패",
+                    (
+                        "실행 시도 번호: "
+                        f"{mock_order_attempt_result.attempt_number}"
+                    ),
+                    (
+                        "실패 코드: "
+                        f"{mock_order_attempt_result.error_code}"
+                    ),
+                    (
+                        "실패 사유: "
+                        f"{mock_order_attempt_result.error_message}"
+                    ),
+                    "",
+                    "※ 최대 재시도 횟수를 모두 사용했습니다.",
+                    "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ]
+            )
+
+        else:
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    (
+                        "주문 상태: 알 수 없는 상태 "
+                        f"({attempt_status})"
+                    ),
+                    "",
+                    "※ 실제 업비트 주문은 실행되지 않았습니다.",
                 ]
             )
 
@@ -131,8 +250,8 @@ def build_decision_result_message(
         message_lines.extend(
             [
                 "처리 결과: 승인 완료",
-                "주문 상태: 모의 주문 실패",
-                f"실패 사유: {mock_order_error}",
+                "주문 상태: 모의 주문 처리 오류",
+                f"오류 사유: {mock_order_error}",
                 "",
                 "※ 실제 업비트 주문은 실행되지 않았습니다.",
             ]
@@ -333,27 +452,41 @@ def process_callback_update(
                 telegram_message_id=message_id,
             )
 
-        mock_order_result: MockOrderExecutionResult | None = None
+        mock_order_attempt_result: MockOrderAttemptResult | None = None
+        mock_order_log: OrderLog | None = None
         mock_order_error: str | None = None
 
         if result.decision == "APPROVE":
             try:
                 with SessionLocal() as session:
-                    mock_order_service = MockOrderExecutionService(
+                    attempt_service = MockOrderAttemptService(
                         session=session,
                         upbit_client=order_upbit_client,
                     )
 
-                    mock_order_result = mock_order_service.execute(
+                    mock_order_attempt_result = attempt_service.execute(
                         recommendation_id=result.recommendation.id,
                         approval_request_id=result.approval_request.id,
                     )
+
+                    if mock_order_attempt_result.order_log_id is not None:
+                        mock_order_log = session.get(
+                            OrderLog,
+                            mock_order_attempt_result.order_log_id,
+                        )
+
+                        if mock_order_log is None:
+                            raise MockOrderExecutionError(
+                                "Mock order log was not found after execution. "
+                                f"order_log_id="
+                                f"{mock_order_attempt_result.order_log_id}"
+                            )
 
             except MockOrderExecutionError as error:
                 mock_order_error = str(error)
 
                 print(
-                    "Mock order execution rejected. "
+                    "Mock order attempt processing failed. "
                     f"recommendation_id={result.recommendation.id}, "
                     f"approval_request_id={result.approval_request.id}, "
                     f"error={error}"
@@ -362,7 +495,8 @@ def process_callback_update(
         result_message = build_decision_result_message(
             original_text=original_text,
             result=result,
-            mock_order_result=mock_order_result,
+            mock_order_attempt_result=mock_order_attempt_result,
+            mock_order_log=mock_order_log,
             mock_order_error=mock_order_error,
         )
 
@@ -374,11 +508,29 @@ def process_callback_update(
             reply_markup=EMPTY_INLINE_KEYBOARD,
         )
 
+        attempt_status = (
+            mock_order_attempt_result.status
+            if mock_order_attempt_result is not None
+            else None
+        )
+
         if result.decision == "REJECT":
             callback_answer = "매매 추천을 거절했습니다."
 
-        elif mock_order_result is not None:
+        elif attempt_status in {
+            "EXECUTED",
+            "ALREADY_EXECUTED",
+        }:
             callback_answer = "승인 후 모의 주문을 완료했습니다."
+
+        elif attempt_status == "RETRYABLE_FAILED":
+            callback_answer = "모의 주문 재시도가 예약되었습니다."
+
+        elif attempt_status == "PERMANENT_FAILED":
+            callback_answer = "모의 주문을 실행할 수 없습니다."
+
+        elif attempt_status == "RETRY_EXHAUSTED":
+            callback_answer = "모의 주문 재시도 한도를 초과했습니다."
 
         else:
             callback_answer = "승인됐지만 모의 주문은 실행되지 않았습니다."
@@ -389,9 +541,15 @@ def process_callback_update(
             text=callback_answer,
         )
 
-        mock_order_status = (
-            mock_order_result.order_log.status
-            if mock_order_result is not None
+        mock_order_attempt_status = (
+            mock_order_attempt_result.status
+            if mock_order_attempt_result is not None
+            else None
+        )
+
+        mock_order_attempt_number = (
+            mock_order_attempt_result.attempt_number
+            if mock_order_attempt_result is not None
             else None
         )
 
@@ -401,7 +559,10 @@ def process_callback_update(
             f"recommendation_id={result.recommendation.id}, "
             f"decision={result.decision}, "
             f"already_processed={result.already_processed}, "
-            f"mock_order_status={mock_order_status}, "
+            f"mock_order_attempt_status="
+            f"{mock_order_attempt_status}, "
+            f"mock_order_attempt_number="
+            f"{mock_order_attempt_number}, "
             f"mock_order_error={mock_order_error}"
         )
 

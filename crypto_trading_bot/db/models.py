@@ -26,7 +26,9 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
-    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, nullable=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(
+        BigInteger, unique=True, nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -49,7 +51,9 @@ class AnalysisRun(Base):
     __tablename__ = "analysis_runs"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     run_type: Mapped[str] = mapped_column(String(30), nullable=False)
     trading_mode: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -58,7 +62,9 @@ class AnalysisRun(Base):
         nullable=False,
         server_default=func.now(),
     )
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -76,7 +82,9 @@ class MarketSnapshot(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     current_price: Mapped[float | None] = mapped_column(Numeric(30, 10), nullable=True)
@@ -99,7 +107,9 @@ class AccountSnapshot(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     currency: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     balance: Mapped[float | None] = mapped_column(Numeric(30, 10), nullable=True)
@@ -127,14 +137,20 @@ class TradeRecommendation(Base):
         nullable=True,
         index=True,
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)
     confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    recommended_amount_krw: Mapped[float | None] = mapped_column(Numeric(20, 2), nullable=True)
-    recommended_quantity: Mapped[float | None] = mapped_column(Numeric(30, 10), nullable=True)
+    recommended_amount_krw: Mapped[float | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    recommended_quantity: Mapped[float | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
     ai_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ai_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -160,14 +176,24 @@ class ApprovalRequest(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    callback_token: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    rejected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    callback_token: Mapped[str] = mapped_column(
+        String(100), nullable=False, unique=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    rejected_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -178,6 +204,79 @@ class ApprovalRequest(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class OrderExecutionAttempt(Base):
+    __tablename__ = "order_execution_attempts"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id",
+            "trading_mode",
+            "attempt_number",
+            name=("uq_order_execution_attempts_recommendation_mode_number"),
+        ),
+        Index(
+            "ix_order_execution_attempts_status_next_retry_at",
+            "status",
+            "next_retry_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("trade_recommendations.id"),
+        nullable=False,
+        index=True,
+    )
+    approval_request_id: Mapped[int] = mapped_column(
+        ForeignKey("approval_requests.id"),
+        nullable=False,
+        index=True,
+    )
+    order_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("order_logs.id"),
+        nullable=True,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    trading_mode: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+    attempt_number: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+    error_code: Mapped[str | None] = mapped_column(
+        String(100),
+        nullable=True,
+    )
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
     )
 
 
@@ -201,7 +300,9 @@ class OrderLog(Base):
         nullable=True,
         index=True,
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
     trading_mode: Mapped[str] = mapped_column(String(30), nullable=False)
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
@@ -211,7 +312,9 @@ class OrderLog(Base):
     quantity: Mapped[float | None] = mapped_column(Numeric(30, 10), nullable=True)
     price: Mapped[float | None] = mapped_column(Numeric(30, 10), nullable=True)
     status: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
-    exchange_order_id: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    exchange_order_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, index=True
+    )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
