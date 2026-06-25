@@ -11,6 +11,7 @@ from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import (
     ApprovalRequest,
     OrderExecutionAttempt,
+    OrderRetryNotification,
     TradeRecommendation,
 )
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
@@ -26,6 +27,14 @@ TERMINAL_ATTEMPT_STATUSES = frozenset(
     {
         "EXECUTED",
         "ALREADY_EXECUTED",
+        "PERMANENT_FAILED",
+        "RETRY_EXHAUSTED",
+    }
+)
+
+OUTBOX_NOTIFICATION_STATUSES = frozenset(
+    {
+        "EXECUTED",
         "PERMANENT_FAILED",
         "RETRY_EXHAUSTED",
     }
@@ -103,10 +112,12 @@ class MockOrderAttemptService:
         else:
             if latest_attempt.approval_request_id != approval_request.id:
                 raise MockOrderExecutionError(
-                    "Latest execution attempt approval request does not match. "
+                    "Latest execution attempt approval request "
+                    "does not match. "
                     f"latest_approval_request_id="
                     f"{latest_attempt.approval_request_id}, "
-                    f"requested_approval_request_id={approval_request.id}"
+                    f"requested_approval_request_id="
+                    f"{approval_request.id}"
                 )
 
             if latest_attempt.status in TERMINAL_ATTEMPT_STATUSES:
@@ -152,6 +163,7 @@ class MockOrderAttemptService:
                 approval_request_id=approval_request.id,
                 commit=False,
             )
+
         except MockOrderExecutionError as error:
             classification = self._classify_execution_error(error)
 
@@ -162,6 +174,7 @@ class MockOrderAttemptService:
                 maximum_attempts=maximum_attempts,
                 classification=classification,
             )
+
         except httpx.HTTPStatusError as error:
             classification = self._classify_http_status_error(error)
 
@@ -172,7 +185,11 @@ class MockOrderAttemptService:
                 maximum_attempts=maximum_attempts,
                 classification=classification,
             )
-        except (httpx.TimeoutException, httpx.NetworkError) as error:
+
+        except (
+            httpx.TimeoutException,
+            httpx.NetworkError,
+        ) as error:
             classification = FailureClassification(
                 retryable=True,
                 error_code="UPBIT_NETWORK_ERROR",
@@ -205,6 +222,18 @@ class MockOrderAttemptService:
         )
 
         self.session.add(attempt)
+
+        # attempt.id가 발급된 뒤 같은 트랜잭션에서
+        # 알림 Outbox를 함께 저장한다.
+        self.session.flush()
+
+        self._enqueue_retry_notification(
+            attempt=attempt,
+            approval_request=approval_request,
+        )
+
+        # order_log, execution attempt, notification outbox를
+        # 하나의 트랜잭션으로 확정한다.
         self.session.commit()
         self.session.refresh(attempt)
 
@@ -230,9 +259,11 @@ class MockOrderAttemptService:
         if not classification.retryable:
             status: AttemptResultStatus = "PERMANENT_FAILED"
             next_retry_at = None
+
         elif attempt_number >= maximum_attempts:
             status = "RETRY_EXHAUSTED"
             next_retry_at = None
+
         else:
             status = "RETRYABLE_FAILED"
 
@@ -263,6 +294,16 @@ class MockOrderAttemptService:
         )
 
         self.session.add(attempt)
+
+        # attempt.id가 발급된 뒤 같은 트랜잭션에서
+        # 알림 Outbox를 함께 저장한다.
+        self.session.flush()
+
+        self._enqueue_retry_notification(
+            attempt=attempt,
+            approval_request=approval_request,
+        )
+
         self.session.commit()
         self.session.refresh(attempt)
 
@@ -276,6 +317,39 @@ class MockOrderAttemptService:
             error_message=attempt.error_message,
             next_retry_at=attempt.next_retry_at,
         )
+
+    def _enqueue_retry_notification(
+        self,
+        attempt: OrderExecutionAttempt,
+        approval_request: ApprovalRequest,
+    ) -> None:
+        # 최초 승인 시도의 결과는 텔레그램 승인 메시지를
+        # 직접 수정하므로 별도 후속 알림을 만들지 않는다.
+        if attempt.attempt_number < 2:
+            return
+
+        # 재시도가 끝났거나 성공한 경우에만
+        # 후속 텔레그램 알림을 생성한다.
+        if attempt.status not in OUTBOX_NOTIFICATION_STATUSES:
+            return
+
+        if approval_request.telegram_chat_id is None:
+            return
+
+        notification = OrderRetryNotification(
+            attempt_id=attempt.id,
+            recommendation_id=attempt.recommendation_id,
+            approval_request_id=approval_request.id,
+            telegram_chat_id=(approval_request.telegram_chat_id),
+            retry_status=attempt.status,
+            delivery_status="PENDING",
+            retry_count=0,
+            next_retry_at=None,
+            error_message=None,
+            sent_at=None,
+        )
+
+        self.session.add(notification)
 
     def _get_recommendation_for_update(
         self,
@@ -325,7 +399,7 @@ class MockOrderAttemptService:
     ) -> MockOrderAttemptResult:
         return MockOrderAttemptResult(
             recommendation_id=attempt.recommendation_id,
-            approval_request_id=attempt.approval_request_id,
+            approval_request_id=(attempt.approval_request_id),
             attempt_id=attempt.id,
             attempt_number=attempt.attempt_number,
             status=attempt.status,

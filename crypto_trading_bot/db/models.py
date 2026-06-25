@@ -280,6 +280,95 @@ class OrderExecutionAttempt(Base):
     )
 
 
+class OrderRetryNotification(Base):
+    __tablename__ = "order_retry_notifications"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "attempt_id",
+            name="uq_order_retry_notifications_attempt_id",
+        ),
+        Index(
+            "ix_order_retry_notifications_delivery_next_retry",
+            "delivery_status",
+            "next_retry_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("order_execution_attempts.id"),
+        nullable=False,
+    )
+
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("trade_recommendations.id"),
+        nullable=False,
+        index=True,
+    )
+
+    approval_request_id: Mapped[int] = mapped_column(
+        ForeignKey("approval_requests.id"),
+        nullable=False,
+        index=True,
+    )
+
+    telegram_chat_id: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+    )
+
+    retry_status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    delivery_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=text("'PENDING'"),
+    )
+
+    retry_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("0"),
+    )
+
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    error_message: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class OrderLog(Base):
     __tablename__ = "order_logs"
 
