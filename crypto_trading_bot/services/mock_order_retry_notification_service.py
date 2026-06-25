@@ -54,6 +54,7 @@ class MockOrderRetryNotificationService:
     def notify(
         self,
         retry_result: MockOrderRetryResult,
+        telegram_chat_id: int | None = None,
     ) -> MockOrderRetryNotificationResult:
         if retry_result.status not in NOTIFIABLE_RETRY_STATUSES:
             return self._build_result(
@@ -93,11 +94,19 @@ class MockOrderRetryNotificationService:
                 ),
             )
 
-        if approval_request.telegram_chat_id is None:
+        # Outbox에 저장된 채팅 ID를 넘겨받은 경우 우선 사용하고,
+        # 없으면 기존 승인 요청에 저장된 채팅 ID를 사용한다.
+        resolved_chat_id = (
+            telegram_chat_id
+            if telegram_chat_id is not None
+            else approval_request.telegram_chat_id
+        )
+
+        if resolved_chat_id is None:
             return self._build_result(
                 retry_result=retry_result,
                 notification_status="SKIPPED",
-                error_message=("Approval request does not have a Telegram chat ID"),
+                error_message=("Telegram chat ID is not available"),
             )
 
         order_log = None
@@ -127,9 +136,10 @@ class MockOrderRetryNotificationService:
 
         try:
             self.telegram_client.send_message(
-                chat_id=approval_request.telegram_chat_id,
+                chat_id=resolved_chat_id,
                 text=message,
             )
+
         except Exception as error:
             return self._build_result(
                 retry_result=retry_result,
@@ -181,7 +191,7 @@ class MockOrderRetryNotificationService:
             f"추천 ID: {retry_result.recommendation_id}",
             f"마켓: {recommendation.market}",
             f"매매 구분: {recommendation.action}",
-            f"실행 시도 번호: {retry_result.attempt_number}",
+            (f"실행 시도 번호: {retry_result.attempt_number}"),
         ]
 
         if order_log is not None:
@@ -236,15 +246,15 @@ class MockOrderRetryNotificationService:
                 "모의 주문 재시도 결과",
                 "",
                 "처리 결과: 재시도 불가",
-                f"추천 ID: {retry_result.recommendation_id}",
+                (f"추천 ID: {retry_result.recommendation_id}"),
                 f"마켓: {recommendation.market}",
                 f"매매 구분: {recommendation.action}",
-                f"실행 시도 번호: {retry_result.attempt_number}",
-                f"실패 코드: {retry_result.error_code}",
-                f"실패 사유: {retry_result.error_message}",
+                (f"실행 시도 번호: {retry_result.attempt_number}"),
+                (f"실패 코드: {retry_result.error_code}"),
+                (f"실패 사유: {retry_result.error_message}"),
                 "",
-                "※ 해당 요청은 더 이상 자동 재시도되지 않습니다.",
-                "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ("※ 해당 요청은 더 이상 자동 재시도되지 않습니다."),
+                ("※ 실제 업비트 주문은 실행되지 않았습니다."),
             ]
         )
 
@@ -258,15 +268,15 @@ class MockOrderRetryNotificationService:
                 "모의 주문 재시도 결과",
                 "",
                 "처리 결과: 최종 실패",
-                f"추천 ID: {retry_result.recommendation_id}",
+                (f"추천 ID: {retry_result.recommendation_id}"),
                 f"마켓: {recommendation.market}",
                 f"매매 구분: {recommendation.action}",
-                f"실행 시도 번호: {retry_result.attempt_number}",
-                f"실패 코드: {retry_result.error_code}",
-                f"실패 사유: {retry_result.error_message}",
+                (f"실행 시도 번호: {retry_result.attempt_number}"),
+                (f"실패 코드: {retry_result.error_code}"),
+                (f"실패 사유: {retry_result.error_message}"),
                 "",
-                "※ 최대 재시도 횟수를 모두 사용했습니다.",
-                "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ("※ 최대 재시도 횟수를 모두 사용했습니다."),
+                ("※ 실제 업비트 주문은 실행되지 않았습니다."),
             ]
         )
 
@@ -289,7 +299,7 @@ class MockOrderRetryNotificationService:
         error_message: str | None = None,
     ) -> MockOrderRetryNotificationResult:
         return MockOrderRetryNotificationResult(
-            recommendation_id=retry_result.recommendation_id,
+            recommendation_id=(retry_result.recommendation_id),
             approval_request_id=(retry_result.approval_request_id),
             attempt_id=retry_result.attempt_id,
             retry_status=retry_result.status,
