@@ -4,8 +4,13 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.db.postgres_advisory_lock import (
+    PostgresAdvisoryLock,
+)
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
-from crypto_trading_bot.notification.telegram_client import TelegramClient
+from crypto_trading_bot.notification.telegram_client import (
+    TelegramClient,
+)
 from crypto_trading_bot.services.mock_order_retry_service import (
     MockOrderRetryService,
     MockOrderRetrySummary,
@@ -25,6 +30,8 @@ DEFAULT_LIMIT = 100
 MIN_INTERVAL_SECONDS = 10
 MAX_INTERVAL_SECONDS = 3600
 MAX_LIMIT = 100
+
+MOCK_ORDER_RETRY_WORKER_LOCK_KEY = 2026062601
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -159,44 +166,60 @@ def run_worker(
     limit: int,
     once: bool,
 ) -> None:
-    print("Mock order retry worker started.")
-    print(f"interval_seconds={interval_seconds}")
-    print(f"limit={limit}")
-    print(f"once={once}")
-    print("Actual Upbit order will not be executed.")
+    worker_lock = PostgresAdvisoryLock(
+        lock_key=MOCK_ORDER_RETRY_WORKER_LOCK_KEY,
+    )
+
+    if not worker_lock.acquire():
+        print("Another mock order retry worker is already running. Worker will exit.")
+        return
+
+    print("Mock order retry worker lock acquired.")
 
     try:
-        while True:
-            cycle_started_at = time.monotonic()
+        print("Mock order retry worker started.")
+        print(f"interval_seconds={interval_seconds}")
+        print(f"limit={limit}")
+        print(f"once={once}")
+        print("Actual Upbit order will not be executed.")
 
-            try:
-                run_retry_cycle(
-                    limit=limit,
-                )
-            except Exception as error:
-                print(
-                    "Retry worker cycle failed. "
-                    f"error_type={type(error).__name__}, "
-                    f"error={error}"
-                )
+        try:
+            while True:
+                cycle_started_at = time.monotonic()
+
+                try:
+                    run_retry_cycle(
+                        limit=limit,
+                    )
+                except Exception as error:
+                    print(
+                        "Retry worker cycle failed. "
+                        f"error_type="
+                        f"{type(error).__name__}, "
+                        f"error={error}"
+                    )
+
+                    if once:
+                        raise
 
                 if once:
-                    raise
+                    return
 
-            if once:
-                return
+                elapsed_seconds = time.monotonic() - cycle_started_at
 
-            elapsed_seconds = time.monotonic() - cycle_started_at
+                sleep_seconds = max(
+                    0,
+                    interval_seconds - elapsed_seconds,
+                )
 
-            sleep_seconds = max(
-                0,
-                interval_seconds - elapsed_seconds,
-            )
+                time.sleep(sleep_seconds)
 
-            time.sleep(sleep_seconds)
+        except KeyboardInterrupt:
+            print("Mock order retry worker stopped.")
 
-    except KeyboardInterrupt:
-        print("Mock order retry worker stopped.")
+    finally:
+        worker_lock.release()
+        print("Mock order retry worker lock released.")
 
 
 if __name__ == "__main__":
