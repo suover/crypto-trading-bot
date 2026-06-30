@@ -28,9 +28,7 @@ def get_chat_name(chat: dict[str, Any]) -> str:
     last_name = chat.get("last_name")
 
     return " ".join(
-        str(value)
-        for value in [title, username, first_name, last_name]
-        if value
+        str(value) for value in [title, username, first_name, last_name] if value
     )
 
 
@@ -62,9 +60,7 @@ def get_telegram_chat_id() -> None:
         printed_chat_ids.add(chat_id)
 
         print(
-            f"chat_id={chat_id} | "
-            f"type={chat.get('type')} | "
-            f"name={get_chat_name(chat)}"
+            f"chat_id={chat_id} | type={chat.get('type')} | name={get_chat_name(chat)}"
         )
 
 

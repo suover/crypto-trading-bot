@@ -47,9 +47,7 @@ class MarketCandleService:
                 candles,
                 key=lambda item: item["candle_date_time_utc"],
             ):
-                candle_at = parse_upbit_utc_datetime(
-                    candle["candle_date_time_utc"]
-                )
+                candle_at = parse_upbit_utc_datetime(candle["candle_date_time_utc"])
 
                 existing_candle = (
                     self.session.query(MarketCandle.id)
@@ -76,9 +74,7 @@ class MarketCandleService:
                     high_price=to_decimal(candle["high_price"]),
                     low_price=to_decimal(candle["low_price"]),
                     trade_price=to_decimal(candle["trade_price"]),
-                    candle_acc_trade_price=to_decimal(
-                        candle["candle_acc_trade_price"]
-                    ),
+                    candle_acc_trade_price=to_decimal(candle["candle_acc_trade_price"]),
                     candle_acc_trade_volume=to_decimal(
                         candle["candle_acc_trade_volume"]
                     ),

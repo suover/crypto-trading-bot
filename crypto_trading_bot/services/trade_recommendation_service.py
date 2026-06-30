@@ -131,9 +131,7 @@ class TradeRecommendationService:
             raise
 
     def _get_user(self, user_name: str) -> User:
-        user = self.session.scalar(
-            select(User).where(User.name == user_name)
-        )
+        user = self.session.scalar(select(User).where(User.name == user_name))
 
         if user is None:
             raise ValueError(f"User not found. name={user_name}")
@@ -203,14 +201,8 @@ class TradeRecommendationService:
                 recommended_quantity=None,
             )
 
-        close_prices = [
-            to_decimal(candle.trade_price)
-            for candle in candles
-        ]
-        volumes = [
-            to_decimal(candle.candle_acc_trade_volume)
-            for candle in candles
-        ]
+        close_prices = [to_decimal(candle.trade_price) for candle in candles]
+        volumes = [to_decimal(candle.candle_acc_trade_volume) for candle in candles]
 
         indicators = calculate_market_indicators(
             market=market,

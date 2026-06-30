@@ -36,8 +36,7 @@ def build_approval_request_message(
         )
     else:
         message_lines.append(
-            "추천수량: "
-            f"{format_decimal(recommendation.recommended_quantity, 10)}"
+            f"추천수량: {format_decimal(recommendation.recommended_quantity, 10)}"
         )
 
     message_lines.extend(
@@ -63,9 +62,7 @@ def build_approval_request_reply_markup(
     if not callback_token.strip():
         raise ValueError("callback_token must not be empty")
 
-    approval_button_text = (
-        "매수 승인" if normalized_action == "BUY" else "매도 승인"
-    )
+    approval_button_text = "매수 승인" if normalized_action == "BUY" else "매도 승인"
 
     return {
         "inline_keyboard": [
@@ -88,8 +85,7 @@ def _normalize_action(action: str) -> str:
 
     if normalized_action not in SUPPORTED_APPROVAL_ACTIONS:
         raise ValueError(
-            "Approval request is only available for BUY or SELL. "
-            f"action={action}"
+            f"Approval request is only available for BUY or SELL. action={action}"
         )
 
     return normalized_action

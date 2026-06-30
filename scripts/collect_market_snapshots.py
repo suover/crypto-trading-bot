@@ -9,9 +9,7 @@ def collect_market_snapshots() -> None:
         analysis_run, snapshots = service.collect_market_snapshots()
 
         print(
-            f"Analysis run saved. "
-            f"id={analysis_run.id}, "
-            f"snapshot_count={len(snapshots)}"
+            f"Analysis run saved. id={analysis_run.id}, snapshot_count={len(snapshots)}"
         )
 
         for snapshot in snapshots:

@@ -60,8 +60,7 @@ class MockOrderExecutionService:
 
         if recommendation is None:
             raise MockOrderExecutionError(
-                "Trade recommendation not found. "
-                f"recommendation_id={recommendation_id}"
+                f"Trade recommendation not found. recommendation_id={recommendation_id}"
             )
 
         approval_request = self._get_approval_request_for_update(
@@ -70,8 +69,7 @@ class MockOrderExecutionService:
 
         if approval_request is None:
             raise MockOrderExecutionError(
-                "Approval request not found. "
-                f"approval_request_id={approval_request_id}"
+                f"Approval request not found. approval_request_id={approval_request_id}"
             )
 
         # 기존 주문 여부를 확인하기 전에 승인 요청과 추천의 관계부터 검증
@@ -129,27 +127,21 @@ class MockOrderExecutionService:
                 recommendation=recommendation,
                 accounts=accounts,
                 current_price=current_price,
-                max_order_amount_krw=Decimal(
-                    settings.max_order_amount_krw
-                ),
+                max_order_amount_krw=Decimal(settings.max_order_amount_krw),
             )
         else:
             amount_krw, quantity = self._prepare_sell_order(
                 recommendation=recommendation,
                 accounts=accounts,
                 current_price=current_price,
-                max_order_amount_krw=Decimal(
-                    settings.max_order_amount_krw
-                ),
+                max_order_amount_krw=Decimal(settings.max_order_amount_krw),
             )
 
         daily_order_amount = self._get_daily_mock_order_amount(
             user_id=recommendation.user_id,
         )
 
-        daily_max_order_amount = Decimal(
-            settings.daily_max_order_amount_krw
-        )
+        daily_max_order_amount = Decimal(settings.daily_max_order_amount_krw)
 
         if daily_order_amount + amount_krw > daily_max_order_amount:
             raise MockOrderExecutionError(
@@ -185,9 +177,7 @@ class MockOrderExecutionService:
                 "quantity": str(quantity),
                 "price": str(current_price),
                 "daily_order_amount_before": str(daily_order_amount),
-                "daily_order_amount_after": str(
-                    daily_order_amount + amount_krw
-                ),
+                "daily_order_amount_after": str(daily_order_amount + amount_krw),
             },
         )
 
@@ -235,11 +225,7 @@ class MockOrderExecutionService:
         self,
         user_id: int,
     ) -> User | None:
-        statement = (
-            select(User)
-            .where(User.id == user_id)
-            .with_for_update()
-        )
+        statement = select(User).where(User.id == user_id).with_for_update()
 
         return self.session.scalar(statement)
 
@@ -270,14 +256,11 @@ class MockOrderExecutionService:
 
         if approval_request.status != "APPROVED":
             raise MockOrderExecutionError(
-                "Approval request is not approved. "
-                f"status={approval_request.status}"
+                f"Approval request is not approved. status={approval_request.status}"
             )
 
         if approval_request.approved_at is None:
-            raise MockOrderExecutionError(
-                "Approval request does not have approved_at"
-            )
+            raise MockOrderExecutionError("Approval request does not have approved_at")
 
     @staticmethod
     def _validate_recommendation_status(
@@ -285,8 +268,7 @@ class MockOrderExecutionService:
     ) -> None:
         if recommendation.status != "APPROVED":
             raise MockOrderExecutionError(
-                "Trade recommendation is not approved. "
-                f"status={recommendation.status}"
+                f"Trade recommendation is not approved. status={recommendation.status}"
             )
 
     @staticmethod
@@ -296,14 +278,12 @@ class MockOrderExecutionService:
     ) -> None:
         if recommendation.exchange != "UPBIT":
             raise MockOrderExecutionError(
-                "Unsupported exchange. "
-                f"exchange={recommendation.exchange}"
+                f"Unsupported exchange. exchange={recommendation.exchange}"
             )
 
         if recommendation.market not in allowed_markets:
             raise MockOrderExecutionError(
-                "Market is not allowed. "
-                f"market={recommendation.market}"
+                f"Market is not allowed. market={recommendation.market}"
             )
 
         if recommendation.action not in {"BUY", "SELL"}:
@@ -322,9 +302,7 @@ class MockOrderExecutionService:
             if ticker.get("market") != market:
                 continue
 
-            current_price = self._to_decimal(
-                ticker.get("trade_price")
-            )
+            current_price = self._to_decimal(ticker.get("trade_price"))
 
             if current_price <= 0:
                 break
@@ -345,17 +323,14 @@ class MockOrderExecutionService:
         current_price: Decimal,
         max_order_amount_krw: Decimal,
     ) -> tuple[Decimal, Decimal]:
-        amount_krw = self._to_decimal(
-            recommendation.recommended_amount_krw
-        ).quantize(
+        amount_krw = self._to_decimal(recommendation.recommended_amount_krw).quantize(
             MONEY_QUANTUM,
             rounding=ROUND_DOWN,
         )
 
         if amount_krw < MIN_ORDER_AMOUNT_KRW:
             raise MockOrderExecutionError(
-                "Buy amount is below minimum order amount. "
-                f"amount={amount_krw}"
+                f"Buy amount is below minimum order amount. amount={amount_krw}"
             )
 
         if amount_krw > max_order_amount_krw:
@@ -396,17 +371,13 @@ class MockOrderExecutionService:
         current_price: Decimal,
         max_order_amount_krw: Decimal,
     ) -> tuple[Decimal, Decimal]:
-        quantity = self._to_decimal(
-            recommendation.recommended_quantity
-        ).quantize(
+        quantity = self._to_decimal(recommendation.recommended_quantity).quantize(
             QUANTITY_QUANTUM,
             rounding=ROUND_DOWN,
         )
 
         if quantity <= 0:
-            raise MockOrderExecutionError(
-                "Sell quantity must be greater than 0"
-            )
+            raise MockOrderExecutionError("Sell quantity must be greater than 0")
 
         base_currency = self._get_base_currency(
             market=recommendation.market,
@@ -432,8 +403,7 @@ class MockOrderExecutionService:
 
         if amount_krw < MIN_ORDER_AMOUNT_KRW:
             raise MockOrderExecutionError(
-                "Sell amount is below minimum order amount. "
-                f"amount={amount_krw}"
+                f"Sell amount is below minimum order amount. amount={amount_krw}"
             )
 
         if amount_krw > max_order_amount_krw:
@@ -480,16 +450,12 @@ class MockOrderExecutionService:
         normalized_currency = currency.strip().upper()
 
         for account in accounts:
-            account_currency = str(
-                account.get("currency", "")
-            ).strip().upper()
+            account_currency = str(account.get("currency", "")).strip().upper()
 
             if account_currency != normalized_currency:
                 continue
 
-            return MockOrderExecutionService._to_decimal(
-                account.get("balance")
-            )
+            return MockOrderExecutionService._to_decimal(account.get("balance"))
 
         return Decimal("0")
 
@@ -500,9 +466,7 @@ class MockOrderExecutionService:
         parts = market.split("-")
 
         if len(parts) != 2 or not parts[1]:
-            raise MockOrderExecutionError(
-                f"Unexpected market format. market={market}"
-            )
+            raise MockOrderExecutionError(f"Unexpected market format. market={market}")
 
         return parts[1].upper()
 

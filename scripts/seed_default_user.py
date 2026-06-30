@@ -7,7 +7,9 @@ def seed_default_user() -> None:
         existing_user = session.query(User).filter(User.name == "Minsu").first()
 
         if existing_user is not None:
-            print(f"Default user already exists. id={existing_user.id}, name={existing_user.name}")
+            print(
+                f"Default user already exists. id={existing_user.id}, name={existing_user.name}"
+            )
             return
 
         user = User(

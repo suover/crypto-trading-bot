@@ -72,7 +72,7 @@ class ApprovalRequestService:
         self.session.refresh(approval_request)
 
         return approval_request, True
-    
+
     def expire_pending_requests(self) -> int:
         now = datetime.now(UTC)
 

@@ -77,8 +77,7 @@ class ApprovalDecisionService:
 
         if approval_request.status != "PENDING":
             raise ValueError(
-                "Approval request is not pending. "
-                f"status={approval_request.status}"
+                f"Approval request is not pending. status={approval_request.status}"
             )
 
         now = datetime.now(UTC)
@@ -137,19 +136,13 @@ class ApprovalDecisionService:
         telegram_message_id: int,
     ) -> None:
         if approval_request.telegram_chat_id != telegram_chat_id:
-            raise ValueError(
-                "Telegram chat ID does not match approval request"
-            )
+            raise ValueError("Telegram chat ID does not match approval request")
 
         if approval_request.telegram_message_id is None:
-            raise ValueError(
-                "Approval request does not have a Telegram message ID"
-            )
+            raise ValueError("Approval request does not have a Telegram message ID")
 
         if approval_request.telegram_message_id != telegram_message_id:
-            raise ValueError(
-                "Telegram message ID does not match approval request"
-            )
+            raise ValueError("Telegram message ID does not match approval request")
 
     @staticmethod
     def _handle_already_processed_request(
@@ -157,9 +150,7 @@ class ApprovalDecisionService:
         recommendation: TradeRecommendation,
         decision: ApprovalDecision,
     ) -> ApprovalDecisionResult | None:
-        expected_status = (
-            "APPROVED" if decision == "APPROVE" else "REJECTED"
-        )
+        expected_status = "APPROVED" if decision == "APPROVE" else "REJECTED"
 
         if approval_request.status == expected_status:
             return ApprovalDecisionResult(
@@ -183,10 +174,7 @@ class ApprovalDecisionService:
         normalized_decision = decision.strip().upper()
 
         if normalized_decision not in SUPPORTED_DECISIONS:
-            raise ValueError(
-                "Unsupported approval decision. "
-                f"decision={decision}"
-            )
+            raise ValueError(f"Unsupported approval decision. decision={decision}")
 
         if normalized_decision == "APPROVE":
             return "APPROVE"

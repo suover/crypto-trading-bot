@@ -13,9 +13,7 @@ def check_upbit_ticker() -> None:
         trade_price = ticker["trade_price"]
         signed_change_rate = ticker["signed_change_rate"]
 
-        print(
-            f"{market} | price={trade_price} | change_rate={signed_change_rate}"
-        )
+        print(f"{market} | price={trade_price} | change_rate={signed_change_rate}")
 
 
 if __name__ == "__main__":

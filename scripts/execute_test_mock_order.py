@@ -87,8 +87,7 @@ def get_approved_request(
 
     if approval_request is None:
         raise ValueError(
-            "Approved request not found. "
-            f"recommendation_id={recommendation_id}"
+            f"Approved request not found. recommendation_id={recommendation_id}"
         )
 
     return approval_request
@@ -115,14 +114,8 @@ def execute_test_mock_order(
 
         print("Mock order execution completed.")
         print(f"order_log_id={result.order_log.id}")
-        print(
-            f"recommendation_id="
-            f"{result.order_log.recommendation_id}"
-        )
-        print(
-            f"approval_request_id="
-            f"{result.order_log.approval_request_id}"
-        )
+        print(f"recommendation_id={result.order_log.recommendation_id}")
+        print(f"approval_request_id={result.order_log.approval_request_id}")
         print(f"market={result.order_log.market}")
         print(f"side={result.order_log.side}")
         print(f"amount_krw={result.order_log.amount_krw}")

@@ -54,21 +54,16 @@ def calculate_rsi(values: Sequence[Decimal], period: int = 14) -> Decimal | None
     if len(values) < period + 1:
         return None
 
-    changes = [
-        values[index] - values[index - 1]
-        for index in range(1, len(values))
-    ]
+    changes = [values[index] - values[index - 1] for index in range(1, len(values))]
 
     initial_changes = changes[:period]
 
     avg_gain = sum(
-        change if change > 0 else Decimal(0)
-        for change in initial_changes
+        change if change > 0 else Decimal(0) for change in initial_changes
     ) / Decimal(period)
 
     avg_loss = sum(
-        abs(change) if change < 0 else Decimal(0)
-        for change in initial_changes
+        abs(change) if change < 0 else Decimal(0) for change in initial_changes
     ) / Decimal(period)
 
     for change in changes[period:]:

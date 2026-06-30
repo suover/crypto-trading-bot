@@ -41,14 +41,10 @@ class Settings(BaseSettings):
         ]
 
         if not delays:
-            raise ValueError(
-                "mock_order_retry_delays_minutes must not be empty"
-            )
+            raise ValueError("mock_order_retry_delays_minutes must not be empty")
 
         if any(delay <= 0 for delay in delays):
-            raise ValueError(
-                "mock order retry delays must be greater than 0"
-            )
+            raise ValueError("mock order retry delays must be greater than 0")
 
         return delays
 

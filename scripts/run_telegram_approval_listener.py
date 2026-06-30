@@ -42,18 +42,12 @@ def parse_callback_data(callback_data: str) -> tuple[str, str]:
     normalized_token = callback_token.strip()
 
     if separator != ":":
-        raise ValueError(
-            "Invalid callback data format. "
-            f"callback_data={callback_data}"
-        )
+        raise ValueError(f"Invalid callback data format. callback_data={callback_data}")
 
     decision = CALLBACK_DECISIONS.get(normalized_command)
 
     if decision is None:
-        raise ValueError(
-            "Unsupported callback command. "
-            f"command={normalized_command}"
-        )
+        raise ValueError(f"Unsupported callback command. command={normalized_command}")
 
     if not normalized_token:
         raise ValueError("Callback token must not be empty")
@@ -130,22 +124,10 @@ def build_decision_result_message(
                         f"마켓: {mock_order_log.market}",
                         f"매매 구분: {mock_order_log.side}",
                         f"주문 방식: {mock_order_log.order_type}",
-                        (
-                            "주문 금액: "
-                            f"{format_decimal(mock_order_log.amount_krw)}원"
-                        ),
-                        (
-                            "기준 가격: "
-                            f"{format_decimal(mock_order_log.price)}원"
-                        ),
-                        (
-                            "모의 수량: "
-                            f"{format_decimal(mock_order_log.quantity, 10)}"
-                        ),
-                        (
-                            "실행 시도 번호: "
-                            f"{mock_order_attempt_result.attempt_number}"
-                        ),
+                        (f"주문 금액: {format_decimal(mock_order_log.amount_krw)}원"),
+                        (f"기준 가격: {format_decimal(mock_order_log.price)}원"),
+                        (f"모의 수량: {format_decimal(mock_order_log.quantity, 10)}"),
+                        (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
                         "",
                         "※ 실제 업비트 주문은 실행되지 않았습니다.",
                     ]
@@ -164,23 +146,16 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 실패 / 재시도 예정",
-                    (
-                        "실행 시도 번호: "
-                        f"{mock_order_attempt_result.attempt_number}"
-                    ),
-                    (
-                        "실패 코드: "
-                        f"{mock_order_attempt_result.error_code}"
-                    ),
-                    (
-                        "실패 사유: "
-                        f"{mock_order_attempt_result.error_message}"
-                    ),
+                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
+                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
+                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
                     (
                         "다음 재시도 예정: "
-                        f"{format_optional_datetime(
-                            mock_order_attempt_result.next_retry_at
-                        )}"
+                        f"{
+                            format_optional_datetime(
+                                mock_order_attempt_result.next_retry_at
+                            )
+                        }"
                     ),
                     "",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -192,18 +167,9 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 실패 / 재시도 불가",
-                    (
-                        "실행 시도 번호: "
-                        f"{mock_order_attempt_result.attempt_number}"
-                    ),
-                    (
-                        "실패 코드: "
-                        f"{mock_order_attempt_result.error_code}"
-                    ),
-                    (
-                        "실패 사유: "
-                        f"{mock_order_attempt_result.error_message}"
-                    ),
+                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
+                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
+                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
                     "",
                     "※ 해당 요청은 자동 재시도되지 않습니다.",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -215,18 +181,9 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 최종 실패",
-                    (
-                        "실행 시도 번호: "
-                        f"{mock_order_attempt_result.attempt_number}"
-                    ),
-                    (
-                        "실패 코드: "
-                        f"{mock_order_attempt_result.error_code}"
-                    ),
-                    (
-                        "실패 사유: "
-                        f"{mock_order_attempt_result.error_message}"
-                    ),
+                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
+                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
+                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
                     "",
                     "※ 최대 재시도 횟수를 모두 사용했습니다.",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -237,10 +194,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
-                    (
-                        "주문 상태: 알 수 없는 상태 "
-                        f"({attempt_status})"
-                    ),
+                    (f"주문 상태: 알 수 없는 상태 ({attempt_status})"),
                     "",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
                 ]
@@ -359,10 +313,7 @@ def get_safe_error_summary(error: Exception) -> str:
     response = getattr(error, "response", None)
     status_code = getattr(response, "status_code", None)
 
-    return (
-        f"error_type={type(error).__name__}, "
-        f"status_code={status_code}"
-    )
+    return f"error_type={type(error).__name__}, status_code={status_code}"
 
 
 def answer_callback_safely(
@@ -382,8 +333,7 @@ def answer_callback_safely(
         )
     except Exception as error:
         print(
-            "Failed to answer Telegram callback query. "
-            f"{get_safe_error_summary(error)}"
+            f"Failed to answer Telegram callback query. {get_safe_error_summary(error)}"
         )
 
 
@@ -590,10 +540,7 @@ def process_callback_update(
             show_alert=True,
         )
 
-        print(
-            "Telegram approval callback rejected. "
-            f"error={error}"
-        )
+        print(f"Telegram approval callback rejected. error={error}")
 
     except Exception:
         answer_callback_safely(

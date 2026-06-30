@@ -64,7 +64,7 @@ class UpbitClient:
         )
 
         return f"Bearer {token}"
-    
+
     def get_minute_candles(
         self,
         market: str,

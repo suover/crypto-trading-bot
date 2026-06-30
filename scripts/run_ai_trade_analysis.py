@@ -121,8 +121,7 @@ def send_failure_notification(error: PipelineStepError) -> None:
     except Exception as notification_error:
         # 오류 알림 발송 실패가 원래 파이프라인 오류를 덮어쓰면 안 됨
         print(
-            "Failed to send pipeline failure notification. "
-            f"error={notification_error}",
+            f"Failed to send pipeline failure notification. error={notification_error}",
             file=sys.stderr,
             flush=True,
         )

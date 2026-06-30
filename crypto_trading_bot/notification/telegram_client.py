@@ -89,9 +89,7 @@ class TelegramClient:
         )
 
         if result is not True:
-            raise ValueError(
-                "Unexpected Telegram answerCallbackQuery response format"
-            )
+            raise ValueError("Unexpected Telegram answerCallbackQuery response format")
 
         return True
 
@@ -123,9 +121,7 @@ class TelegramClient:
         )
 
         if not isinstance(result, (dict, bool)):
-            raise ValueError(
-                "Unexpected Telegram editMessageText response format"
-            )
+            raise ValueError("Unexpected Telegram editMessageText response format")
 
         return result
 
@@ -174,9 +170,7 @@ class TelegramClient:
         payload = response.json()
 
         if not payload.get("ok"):
-            raise ValueError(
-                f"Telegram {method} failed. payload={payload}"
-            )
+            raise ValueError(f"Telegram {method} failed. payload={payload}")
 
         return payload.get("result")
 

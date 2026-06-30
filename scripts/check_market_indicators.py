@@ -61,14 +61,8 @@ def check_market_indicators() -> None:
                 print(f"{market} | 저장된 캔들 데이터가 없습니다.")
                 continue
 
-            close_prices = [
-                to_decimal(candle.trade_price)
-                for candle in candles
-            ]
-            volumes = [
-                to_decimal(candle.candle_acc_trade_volume)
-                for candle in candles
-            ]
+            close_prices = [to_decimal(candle.trade_price) for candle in candles]
+            volumes = [to_decimal(candle.candle_acc_trade_volume) for candle in candles]
 
             indicators = calculate_market_indicators(
                 market=market,
