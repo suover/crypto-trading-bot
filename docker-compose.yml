@@ -1,4 +1,4 @@
-services:
+﻿services:
   postgres:
     image: postgres:17
     container_name: crypto-trading-postgres
@@ -17,6 +17,68 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-migrate
+    restart: "no"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
+      TZ: Asia/Seoul
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["alembic", "upgrade", "head"]
+
+  telegram-listener:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-telegram-listener
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
+      TZ: Asia/Seoul
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "scripts.run_telegram_approval_listener"]
+
+  mock-order-retry-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-mock-order-retry-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
+      TZ: Asia/Seoul
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "python",
+        "-m",
+        "scripts.run_mock_order_retry_worker",
+        "--interval-seconds",
+        "60",
+      ]
 
 volumes:
   postgres_data:
