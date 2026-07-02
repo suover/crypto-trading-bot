@@ -5,6 +5,9 @@ from typing import Any
 
 from crypto_trading_bot.db.database import SessionLocal
 from crypto_trading_bot.db.models import OrderLog
+from crypto_trading_bot.db.postgres_advisory_lock import (
+    PostgresAdvisoryLock,
+)
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.notification.telegram_client import TelegramClient
 from crypto_trading_bot.services.approval_decision_service import (
@@ -33,6 +36,8 @@ EMPTY_INLINE_KEYBOARD: dict[str, list[Any]] = {
 }
 
 ACTION_PROMPT = "아래 버튼을 눌러 승인 또는 거절해 주세요."
+
+TELEGRAM_APPROVAL_LISTENER_LOCK_KEY = 2026063002
 
 
 def parse_callback_data(callback_data: str) -> tuple[str, str]:
@@ -124,10 +129,10 @@ def build_decision_result_message(
                         f"마켓: {mock_order_log.market}",
                         f"매매 구분: {mock_order_log.side}",
                         f"주문 방식: {mock_order_log.order_type}",
-                        (f"주문 금액: {format_decimal(mock_order_log.amount_krw)}원"),
-                        (f"기준 가격: {format_decimal(mock_order_log.price)}원"),
-                        (f"모의 수량: {format_decimal(mock_order_log.quantity, 10)}"),
-                        (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
+                        f"주문 금액: {format_decimal(mock_order_log.amount_krw)}원",
+                        f"기준 가격: {format_decimal(mock_order_log.price)}원",
+                        f"모의 수량: {format_decimal(mock_order_log.quantity, 10)}",
+                        f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
                         "",
                         "※ 실제 업비트 주문은 실행되지 않았습니다.",
                     ]
@@ -146,16 +151,12 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 실패 / 재시도 예정",
-                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
-                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
-                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
+                    f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
+                    f"실패 코드: {mock_order_attempt_result.error_code}",
+                    f"실패 사유: {mock_order_attempt_result.error_message}",
                     (
                         "다음 재시도 예정: "
-                        f"{
-                            format_optional_datetime(
-                                mock_order_attempt_result.next_retry_at
-                            )
-                        }"
+                        f"{format_optional_datetime(mock_order_attempt_result.next_retry_at)}"
                     ),
                     "",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -167,9 +168,9 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 실패 / 재시도 불가",
-                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
-                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
-                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
+                    f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
+                    f"실패 코드: {mock_order_attempt_result.error_code}",
+                    f"실패 사유: {mock_order_attempt_result.error_message}",
                     "",
                     "※ 해당 요청은 자동 재시도되지 않습니다.",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -181,9 +182,9 @@ def build_decision_result_message(
                 [
                     "처리 결과: 승인 완료",
                     "주문 상태: 모의 주문 최종 실패",
-                    (f"실행 시도 번호: {mock_order_attempt_result.attempt_number}"),
-                    (f"실패 코드: {mock_order_attempt_result.error_code}"),
-                    (f"실패 사유: {mock_order_attempt_result.error_message}"),
+                    f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
+                    f"실패 코드: {mock_order_attempt_result.error_code}",
+                    f"실패 사유: {mock_order_attempt_result.error_message}",
                     "",
                     "※ 최대 재시도 횟수를 모두 사용했습니다.",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -194,7 +195,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
-                    (f"주문 상태: 알 수 없는 상태 ({attempt_status})"),
+                    f"주문 상태: 알 수 없는 상태 ({attempt_status})",
                     "",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
                 ]
@@ -564,54 +565,72 @@ def expire_pending_approval_requests() -> int:
 def run_telegram_approval_listener(
     order_upbit_client: UpbitClient | None = None,
 ) -> None:
-    telegram_client = TelegramClient()
-    next_offset: int | None = None
+    listener_lock = PostgresAdvisoryLock(
+        lock_key=TELEGRAM_APPROVAL_LISTENER_LOCK_KEY,
+    )
 
-    print("Telegram approval listener started.")
-    print("Press Ctrl+C to stop.")
+    if not listener_lock.acquire():
+        print(
+            "Another Telegram approval listener is already running. Listener will exit."
+        )
+        return
 
-    while True:
-        try:
-            expired_count = expire_pending_approval_requests()
+    print("Telegram approval listener lock acquired.")
 
-            if expired_count > 0:
+    try:
+        telegram_client = TelegramClient()
+        next_offset: int | None = None
+
+        print("Telegram approval listener started.")
+        print("Press Ctrl+C to stop.")
+
+        while True:
+            try:
+                expired_count = expire_pending_approval_requests()
+
+                if expired_count > 0:
+                    print(
+                        "Expired pending approval requests "
+                        "cleaned up. "
+                        f"count={expired_count}"
+                    )
+
+                updates = telegram_client.get_updates(
+                    offset=next_offset,
+                    timeout=30,
+                )
+
+                for update in updates:
+                    update_id = require_int(
+                        update.get("update_id"),
+                        "update.update_id",
+                    )
+
+                    process_callback_update(
+                        telegram_client=telegram_client,
+                        update=update,
+                        order_upbit_client=order_upbit_client,
+                    )
+
+                    # 정상 처리 또는 영구적으로 처리할 수 없는 이벤트만 확정
+                    next_offset = update_id + 1
+
+            except KeyboardInterrupt:
+                print("")
+                print("Telegram approval listener stopped.")
+                return
+
+            except Exception as error:
                 print(
-                    "Expired pending approval requests cleaned up. "
-                    f"count={expired_count}"
+                    "Telegram approval listener error. "
+                    "retry_after_seconds=5, "
+                    f"{get_safe_error_summary(error)}"
                 )
+                time.sleep(5)
 
-            updates = telegram_client.get_updates(
-                offset=next_offset,
-                timeout=30,
-            )
-
-            for update in updates:
-                update_id = require_int(
-                    update.get("update_id"),
-                    "update.update_id",
-                )
-
-                process_callback_update(
-                    telegram_client=telegram_client,
-                    update=update,
-                    order_upbit_client=order_upbit_client,
-                )
-
-                # 정상 처리 또는 영구적으로 처리할 수 없는 이벤트만 확정
-                next_offset = update_id + 1
-
-        except KeyboardInterrupt:
-            print("")
-            print("Telegram approval listener stopped.")
-            return
-
-        except Exception as error:
-            print(
-                "Telegram approval listener error. "
-                "retry_after_seconds=5, "
-                f"{get_safe_error_summary(error)}"
-            )
-            time.sleep(5)
+    finally:
+        listener_lock.release()
+        print("Telegram approval listener lock released.")
 
 
 if __name__ == "__main__":
