@@ -5,13 +5,16 @@ on:
     branches:
       - main
       - "feature/**"
+      - "chore/**"
+      - "docs/**"
+      - "ci/**"
   pull_request:
     branches:
       - main
 
 jobs:
   test:
-    name: Ruff and Pytest
+    name: Ruff, Pytest, and Docker
     runs-on: ubuntu-latest
 
     services:
@@ -66,3 +69,12 @@ jobs:
 
       - name: Run tests
         run: uv run pytest -q
+
+      - name: Prepare Docker Compose env file
+        run: cp .env.example .env
+
+      - name: Validate Docker Compose config
+        run: docker compose config > /dev/null
+
+      - name: Build Docker runtime images
+        run: docker compose build
