@@ -112,9 +112,7 @@ def create_test_buy_recommendation(
             "actual_order_enabled": False,
             "test_buy_amount_krw": str(test_buy_amount_krw),
             "max_order_amount_krw": str(settings.max_order_amount_krw),
-            "daily_max_order_amount_krw": str(
-                settings.daily_max_order_amount_krw
-            ),
+            "daily_max_order_amount_krw": str(settings.daily_max_order_amount_krw),
         },
         status="CREATED",
     )
