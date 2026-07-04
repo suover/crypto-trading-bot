@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,8 +20,34 @@ from crypto_trading_bot.services.approval_request_service import (
 
 TEST_USER_NAME = "Minsu"
 TEST_MARKET = "KRW-BTC"
-TEST_BUY_AMOUNT_KRW = Decimal("10000")
 TEST_CONFIDENCE = Decimal("0.7500")
+
+MIN_TEST_BUY_AMOUNT_KRW = Decimal("5000")
+MONEY_QUANTUM = Decimal("0.01")
+
+
+def get_test_buy_amount_krw() -> Decimal:
+    settings = get_settings()
+
+    max_order_amount_krw = Decimal(str(settings.max_order_amount_krw))
+    daily_max_order_amount_krw = Decimal(str(settings.daily_max_order_amount_krw))
+
+    test_buy_amount_krw = min(
+        max_order_amount_krw,
+        daily_max_order_amount_krw,
+    ).quantize(
+        MONEY_QUANTUM,
+        rounding=ROUND_DOWN,
+    )
+
+    if test_buy_amount_krw < MIN_TEST_BUY_AMOUNT_KRW:
+        raise ValueError(
+            "Test buy amount is below minimum order amount. "
+            f"test_buy_amount_krw={test_buy_amount_krw}, "
+            f"minimum={MIN_TEST_BUY_AMOUNT_KRW}"
+        )
+
+    return test_buy_amount_krw
 
 
 def get_test_user(
@@ -49,6 +75,7 @@ def get_test_user(
 def create_test_buy_recommendation(
     session: Session,
     user: User,
+    test_buy_amount_krw: Decimal,
 ) -> tuple[AnalysisRun, TradeRecommendation]:
     settings = get_settings()
     now = datetime.now(UTC)
@@ -75,14 +102,19 @@ def create_test_buy_recommendation(
         confidence=TEST_CONFIDENCE,
         reason=(
             "텔레그램 승인 요청 기능 검증을 위한 테스트용 매수 추천입니다. "
-            "이 추천으로 실제 업비트 주문은 실행되지 않습니다."
+            "이 추천으로 실제 거래소 주문은 실행되지 않습니다."
         ),
-        recommended_amount_krw=TEST_BUY_AMOUNT_KRW,
+        recommended_amount_krw=test_buy_amount_krw,
         recommended_quantity=None,
         ai_model="TEST",
         ai_response={
             "source": "approval_request_test",
             "actual_order_enabled": False,
+            "test_buy_amount_krw": str(test_buy_amount_krw),
+            "max_order_amount_krw": str(settings.max_order_amount_krw),
+            "daily_max_order_amount_krw": str(
+                settings.daily_max_order_amount_krw
+            ),
         },
         status="CREATED",
     )
@@ -102,6 +134,7 @@ def send_test_approval_request() -> None:
     if not settings.telegram_chat_id:
         raise ValueError("TELEGRAM_CHAT_ID is not configured")
 
+    test_buy_amount_krw = get_test_buy_amount_krw()
     telegram_client = TelegramClient()
 
     with SessionLocal() as session:
@@ -110,6 +143,7 @@ def send_test_approval_request() -> None:
         analysis_run, recommendation = create_test_buy_recommendation(
             session=session,
             user=user,
+            test_buy_amount_krw=test_buy_amount_krw,
         )
 
         approval_request_service = ApprovalRequestService(session)
@@ -157,8 +191,9 @@ def send_test_approval_request() -> None:
         print(f"approval_request_id={approval_request.id}")
         print(f"approval_request_created={created}")
         print(f"telegram_message_id={telegram_message_id}")
+        print(f"test_buy_amount_krw={test_buy_amount_krw}")
         print(f"expires_at={approval_request.expires_at}")
-        print("Actual Upbit order was not executed.")
+        print("Actual exchange order was not executed.")
 
 
 if __name__ == "__main__":
