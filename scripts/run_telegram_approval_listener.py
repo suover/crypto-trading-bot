@@ -4,7 +4,6 @@ from decimal import Decimal
 from typing import Any
 
 from crypto_trading_bot.db.database import SessionLocal
-from crypto_trading_bot.db.models import OrderLog
 from crypto_trading_bot.db.postgres_advisory_lock import (
     PostgresAdvisoryLock,
 )
@@ -17,12 +16,9 @@ from crypto_trading_bot.services.approval_decision_service import (
 from crypto_trading_bot.services.approval_request_service import (
     ApprovalRequestService,
 )
-from crypto_trading_bot.services.mock_order_attempt_service import (
-    MockOrderAttemptResult,
-    MockOrderAttemptService,
-)
-from crypto_trading_bot.services.mock_order_execution_service import (
-    MockOrderExecutionError,
+from crypto_trading_bot.services.approved_order_execution_service import (
+    ApprovedOrderExecutionResult,
+    ApprovedOrderExecutionService,
 )
 
 
@@ -84,9 +80,7 @@ def format_optional_datetime(
 def build_decision_result_message(
     original_text: str,
     result: ApprovalDecisionResult,
-    mock_order_attempt_result: MockOrderAttemptResult | None = None,
-    mock_order_log: OrderLog | None = None,
-    mock_order_error: str | None = None,
+    order_execution_result: ApprovedOrderExecutionResult | None = None,
 ) -> str:
     base_text = remove_action_prompt(original_text)
 
@@ -104,8 +98,56 @@ def build_decision_result_message(
                 "※ 거절되어 실제 업비트 주문은 실행되지 않습니다.",
             ]
         )
+    elif order_execution_result is not None:
+        if order_execution_result.execution_mode == "MOCK":
+            append_mock_order_result_message(
+                message_lines=message_lines,
+                order_execution_result=order_execution_result,
+            )
+        elif order_execution_result.execution_mode == "LIVE":
+            append_live_order_result_message(
+                message_lines=message_lines,
+                order_execution_result=order_execution_result,
+            )
+        else:
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 상태: 주문 실행 모드 확인 실패",
+                    f"오류 사유: {order_execution_result.error_message}",
+                    "",
+                    "※ 실제 업비트 주문은 실행되지 않았습니다.",
+                ]
+            )
+    else:
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 상태: 미실행",
+                "※ 주문 실행 결과를 확인할 수 없습니다.",
+            ]
+        )
 
-    elif mock_order_attempt_result is not None:
+    if result.already_processed:
+        message_lines.extend(
+            [
+                "",
+                "※ 이미 같은 결정으로 처리된 승인 요청입니다.",
+            ]
+        )
+
+    return "\n".join(message_lines)
+
+
+def append_mock_order_result_message(
+    message_lines: list[str],
+    order_execution_result: ApprovedOrderExecutionResult,
+) -> None:
+    mock_order_attempt_result = order_execution_result.mock_order_attempt_result
+    mock_order_log = order_execution_result.order_log
+    mock_order_error = order_execution_result.error_message
+
+    if mock_order_attempt_result is not None:
         attempt_status = mock_order_attempt_result.status
 
         if attempt_status in {
@@ -125,6 +167,7 @@ def build_decision_result_message(
                 message_lines.extend(
                     [
                         "처리 결과: 승인 완료",
+                        "주문 실행 모드: MOCK",
                         "주문 상태: 모의 주문 완료",
                         f"마켓: {mock_order_log.market}",
                         f"매매 구분: {mock_order_log.side}",
@@ -150,6 +193,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
+                    "주문 실행 모드: MOCK",
                     "주문 상태: 모의 주문 실패 / 재시도 예정",
                     f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
                     f"실패 코드: {mock_order_attempt_result.error_code}",
@@ -167,6 +211,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
+                    "주문 실행 모드: MOCK",
                     "주문 상태: 모의 주문 실패 / 재시도 불가",
                     f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
                     f"실패 코드: {mock_order_attempt_result.error_code}",
@@ -181,6 +226,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
+                    "주문 실행 모드: MOCK",
                     "주문 상태: 모의 주문 최종 실패",
                     f"실행 시도 번호: {mock_order_attempt_result.attempt_number}",
                     f"실패 코드: {mock_order_attempt_result.error_code}",
@@ -195,6 +241,7 @@ def build_decision_result_message(
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
+                    "주문 실행 모드: MOCK",
                     f"주문 상태: 알 수 없는 상태 ({attempt_status})",
                     "",
                     "※ 실제 업비트 주문은 실행되지 않았습니다.",
@@ -205,31 +252,77 @@ def build_decision_result_message(
         message_lines.extend(
             [
                 "처리 결과: 승인 완료",
+                "주문 실행 모드: MOCK",
                 "주문 상태: 모의 주문 처리 오류",
                 f"오류 사유: {mock_order_error}",
                 "",
                 "※ 실제 업비트 주문은 실행되지 않았습니다.",
             ]
         )
-
     else:
         message_lines.extend(
             [
                 "처리 결과: 승인 완료",
+                "주문 실행 모드: MOCK",
                 "주문 상태: 미실행",
                 "※ 모의 주문 결과를 확인할 수 없습니다.",
             ]
         )
 
-    if result.already_processed:
+
+def append_live_order_result_message(
+    message_lines: list[str],
+    order_execution_result: ApprovedOrderExecutionResult,
+) -> None:
+    live_order_execution_result = order_execution_result.live_order_execution_result
+    live_order_log = order_execution_result.order_log
+    live_order_error = order_execution_result.error_message
+
+    if live_order_execution_result is not None and live_order_log is not None:
         message_lines.extend(
             [
+                "처리 결과: 승인 완료",
+                "주문 실행 모드: LIVE",
+                "주문 상태: 실거래 주문 접수",
+                f"마켓: {live_order_log.market}",
+                f"매매 구분: {live_order_log.side}",
+                f"주문 방식: {live_order_log.order_type}",
+                f"주문 금액: {format_decimal(live_order_log.amount_krw)}원",
+                f"주문 수량: {format_decimal(live_order_log.quantity, 10)}",
+                f"거래소 주문 ID: {live_order_log.exchange_order_id}",
                 "",
-                "※ 이미 같은 결정으로 처리된 승인 요청입니다.",
+                "※ 실제 업비트 주문이 요청되었습니다.",
             ]
         )
 
-    return "\n".join(message_lines)
+        if live_order_execution_result.already_executed:
+            message_lines.extend(
+                [
+                    "",
+                    "※ 이미 처리된 실거래 주문 결과입니다.",
+                ]
+            )
+
+    elif live_order_error is not None:
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 실행 모드: LIVE",
+                "주문 상태: 실거래 주문 처리 오류",
+                f"오류 사유: {live_order_error}",
+                "",
+                "※ 실거래 주문은 완료되지 않았습니다.",
+            ]
+        )
+    else:
+        message_lines.extend(
+            [
+                "처리 결과: 승인 완료",
+                "주문 실행 모드: LIVE",
+                "주문 상태: 미실행",
+                "※ 실거래 주문 결과를 확인할 수 없습니다.",
+            ]
+        )
 
 
 def build_expired_message(original_text: str) -> str:
@@ -403,52 +496,33 @@ def process_callback_update(
                 telegram_message_id=message_id,
             )
 
-        mock_order_attempt_result: MockOrderAttemptResult | None = None
-        mock_order_log: OrderLog | None = None
-        mock_order_error: str | None = None
+        order_execution_result: ApprovedOrderExecutionResult | None = None
 
         if result.decision == "APPROVE":
-            try:
-                with SessionLocal() as session:
-                    attempt_service = MockOrderAttemptService(
-                        session=session,
-                        upbit_client=order_upbit_client,
-                    )
-
-                    mock_order_attempt_result = attempt_service.execute(
-                        recommendation_id=result.recommendation.id,
-                        approval_request_id=result.approval_request.id,
-                    )
-
-                    if mock_order_attempt_result.order_log_id is not None:
-                        mock_order_log = session.get(
-                            OrderLog,
-                            mock_order_attempt_result.order_log_id,
-                        )
-
-                        if mock_order_log is None:
-                            raise MockOrderExecutionError(
-                                "Mock order log was not found after execution. "
-                                f"order_log_id="
-                                f"{mock_order_attempt_result.order_log_id}"
-                            )
-
-            except MockOrderExecutionError as error:
-                mock_order_error = str(error)
-
-                print(
-                    "Mock order attempt processing failed. "
-                    f"recommendation_id={result.recommendation.id}, "
-                    f"approval_request_id={result.approval_request.id}, "
-                    f"error={error}"
+            with SessionLocal() as session:
+                approved_order_execution_service = ApprovedOrderExecutionService(
+                    session=session,
+                    upbit_client=order_upbit_client,
                 )
+
+                order_execution_result = approved_order_execution_service.execute(
+                    recommendation_id=result.recommendation.id,
+                    approval_request_id=result.approval_request.id,
+                )
+
+                if not order_execution_result.succeeded:
+                    print(
+                        "Approved order execution failed. "
+                        f"execution_mode={order_execution_result.execution_mode}, "
+                        f"recommendation_id={result.recommendation.id}, "
+                        f"approval_request_id={result.approval_request.id}, "
+                        f"error={order_execution_result.error_message}"
+                    )
 
         result_message = build_decision_result_message(
             original_text=original_text,
             result=result,
-            mock_order_attempt_result=mock_order_attempt_result,
-            mock_order_log=mock_order_log,
-            mock_order_error=mock_order_error,
+            order_execution_result=order_execution_result,
         )
 
         # 처리 결과를 메시지에 표시하고 승인·거절 버튼 제거
@@ -459,37 +533,63 @@ def process_callback_update(
             reply_markup=EMPTY_INLINE_KEYBOARD,
         )
 
-        attempt_status = (
-            mock_order_attempt_result.status
-            if mock_order_attempt_result is not None
-            else None
-        )
-
         if result.decision == "REJECT":
             callback_answer = "매매 추천을 거절했습니다."
-
-        elif attempt_status in {
-            "EXECUTED",
-            "ALREADY_EXECUTED",
-        }:
-            callback_answer = "승인 후 모의 주문을 완료했습니다."
-
-        elif attempt_status == "RETRYABLE_FAILED":
-            callback_answer = "모의 주문 재시도가 예약되었습니다."
-
-        elif attempt_status == "PERMANENT_FAILED":
-            callback_answer = "모의 주문을 실행할 수 없습니다."
-
-        elif attempt_status == "RETRY_EXHAUSTED":
-            callback_answer = "모의 주문 재시도 한도를 초과했습니다."
-
+        elif order_execution_result is None:
+            callback_answer = "승인됐지만 주문은 실행되지 않았습니다."
+        elif not order_execution_result.succeeded:
+            if order_execution_result.execution_mode == "LIVE":
+                callback_answer = "실거래 주문을 실행할 수 없습니다."
+            elif order_execution_result.execution_mode == "MOCK":
+                callback_answer = "모의 주문을 실행할 수 없습니다."
+            else:
+                callback_answer = "주문 실행 모드를 확인할 수 없습니다."
+        elif order_execution_result.execution_mode == "LIVE":
+            callback_answer = "승인 후 실거래 주문을 요청했습니다."
         else:
-            callback_answer = "승인됐지만 모의 주문은 실행되지 않았습니다."
+            mock_order_attempt_result = order_execution_result.mock_order_attempt_result
+            attempt_status = (
+                mock_order_attempt_result.status
+                if mock_order_attempt_result is not None
+                else None
+            )
+
+            if attempt_status in {
+                "EXECUTED",
+                "ALREADY_EXECUTED",
+            }:
+                callback_answer = "승인 후 모의 주문을 완료했습니다."
+            elif attempt_status == "RETRYABLE_FAILED":
+                callback_answer = "모의 주문 재시도가 예약되었습니다."
+            elif attempt_status == "PERMANENT_FAILED":
+                callback_answer = "모의 주문을 실행할 수 없습니다."
+            elif attempt_status == "RETRY_EXHAUSTED":
+                callback_answer = "모의 주문 재시도 한도를 초과했습니다."
+            else:
+                callback_answer = "승인됐지만 모의 주문은 실행되지 않았습니다."
 
         answer_callback_safely(
             telegram_client=telegram_client,
             callback_query_id=callback_query_id,
             text=callback_answer,
+        )
+
+        execution_mode = (
+            order_execution_result.execution_mode
+            if order_execution_result is not None
+            else None
+        )
+
+        order_execution_error = (
+            order_execution_result.error_message
+            if order_execution_result is not None
+            else None
+        )
+
+        mock_order_attempt_result = (
+            order_execution_result.mock_order_attempt_result
+            if order_execution_result is not None
+            else None
         )
 
         mock_order_attempt_status = (
@@ -504,17 +604,29 @@ def process_callback_update(
             else None
         )
 
+        live_order_execution_result = (
+            order_execution_result.live_order_execution_result
+            if order_execution_result is not None
+            else None
+        )
+
+        live_order_already_executed = (
+            live_order_execution_result.already_executed
+            if live_order_execution_result is not None
+            else None
+        )
+
         print(
             "Telegram approval callback processed. "
             f"approval_request_id={result.approval_request.id}, "
             f"recommendation_id={result.recommendation.id}, "
             f"decision={result.decision}, "
             f"already_processed={result.already_processed}, "
-            f"mock_order_attempt_status="
-            f"{mock_order_attempt_status}, "
-            f"mock_order_attempt_number="
-            f"{mock_order_attempt_number}, "
-            f"mock_order_error={mock_order_error}"
+            f"execution_mode={execution_mode}, "
+            f"mock_order_attempt_status={mock_order_attempt_status}, "
+            f"mock_order_attempt_number={mock_order_attempt_number}, "
+            f"live_order_already_executed={live_order_already_executed}, "
+            f"order_execution_error={order_execution_error}"
         )
 
     except ValueError as error:
