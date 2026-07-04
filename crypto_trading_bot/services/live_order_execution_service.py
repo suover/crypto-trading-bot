@@ -1,14 +1,19 @@
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import TradeRecommendation
+from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.services.live_order_safety import (
     validate_live_order_request,
 )
+
+
+LIVE_ORDER_STATUS = "LIVE_PLACED"
 
 
 class LiveOrderExecutionError(ValueError):
@@ -24,6 +29,13 @@ class LiveOrderExecutionPlan:
     amount_krw: Decimal | None
     quantity: Decimal | None
     ready_to_execute: bool
+
+
+@dataclass(frozen=True)
+class LiveOrderExecutionResult:
+    order_log: OrderLog
+    recommendation: TradeRecommendation
+    already_executed: bool
 
 
 class LiveOrderExecutionService:
@@ -74,14 +86,110 @@ class LiveOrderExecutionService:
     def execute(
         self,
         recommendation_id: int,
-    ) -> LiveOrderExecutionPlan:
-        plan = self.build_execution_plan(
+        approval_request_id: int | None = None,
+        commit: bool = True,
+    ) -> LiveOrderExecutionResult:
+        recommendation = self._get_recommendation_for_update(
             recommendation_id=recommendation_id,
         )
 
-        raise NotImplementedError(
-            "Live Upbit order execution is intentionally not implemented yet. "
-            f"recommendation_id={plan.recommendation_id}"
+        if recommendation is None:
+            raise LiveOrderExecutionError(
+                "Trade recommendation was not found. "
+                f"recommendation_id={recommendation_id}"
+            )
+
+        existing_order_log = self._get_order_log(
+            recommendation_id=recommendation.id,
+        )
+
+        if existing_order_log is not None:
+            return LiveOrderExecutionResult(
+                order_log=existing_order_log,
+                recommendation=recommendation,
+                already_executed=True,
+            )
+
+        plan = self.build_execution_plan(
+            recommendation_id=recommendation.id,
+        )
+
+        exchange_response = self._place_live_order(
+            plan=plan,
+        )
+
+        exchange_order_id = self._extract_exchange_order_id(
+            exchange_response=exchange_response,
+        )
+
+        order_log = OrderLog(
+            recommendation_id=recommendation.id,
+            approval_request_id=approval_request_id,
+            user_id=recommendation.user_id,
+            trading_mode="LIVE",
+            exchange=recommendation.exchange,
+            market=recommendation.market,
+            side=plan.action,
+            order_type="MARKET",
+            amount_krw=plan.amount_krw,
+            quantity=plan.quantity,
+            price=None,
+            status=LIVE_ORDER_STATUS,
+            exchange_order_id=exchange_order_id,
+            error_message=None,
+            raw_response={
+                "actual_order_executed": True,
+                "recommendation_id": recommendation.id,
+                "approval_request_id": approval_request_id,
+                "market": recommendation.market,
+                "side": plan.action,
+                "amount_krw": str(plan.amount_krw)
+                if plan.amount_krw is not None
+                else None,
+                "quantity": str(plan.quantity) if plan.quantity is not None else None,
+                "exchange_response": exchange_response,
+            },
+        )
+
+        recommendation.status = "LIVE_EXECUTED"
+
+        self.session.add(order_log)
+        self.session.flush()
+
+        if commit:
+            self.session.commit()
+            self.session.refresh(order_log)
+            self.session.refresh(recommendation)
+
+        return LiveOrderExecutionResult(
+            order_log=order_log,
+            recommendation=recommendation,
+            already_executed=False,
+        )
+
+    def _place_live_order(
+        self,
+        plan: LiveOrderExecutionPlan,
+    ) -> dict[str, Any]:
+        identifier = f"recommendation-{plan.recommendation_id}"
+
+        if plan.action == "BUY":
+            if plan.amount_krw is None:
+                raise LiveOrderExecutionError("BUY live order requires amount_krw")
+
+            return self.upbit_client.create_market_buy_order(
+                market=plan.market,
+                amount_krw=plan.amount_krw,
+                identifier=identifier,
+            )
+
+        if plan.quantity is None:
+            raise LiveOrderExecutionError("SELL live order requires quantity")
+
+        return self.upbit_client.create_market_sell_order(
+            market=plan.market,
+            quantity=plan.quantity,
+            identifier=identifier,
         )
 
     def _get_recommendation(
@@ -100,6 +208,30 @@ class LiveOrderExecutionService:
             )
 
         return recommendation
+
+    def _get_recommendation_for_update(
+        self,
+        recommendation_id: int,
+    ) -> TradeRecommendation | None:
+        statement = (
+            select(TradeRecommendation)
+            .where(TradeRecommendation.id == recommendation_id)
+            .with_for_update()
+        )
+
+        return self.session.scalar(statement)
+
+    def _get_order_log(
+        self,
+        recommendation_id: int,
+    ) -> OrderLog | None:
+        statement = (
+            select(OrderLog)
+            .where(OrderLog.recommendation_id == recommendation_id)
+            .with_for_update()
+        )
+
+        return self.session.scalar(statement)
 
     @staticmethod
     def _validate_recommendation_for_live_order(
@@ -130,3 +262,14 @@ class LiveOrderExecutionService:
             return None
 
         return Decimal(str(value))
+
+    @staticmethod
+    def _extract_exchange_order_id(
+        exchange_response: dict[str, Any],
+    ) -> str | None:
+        uuid_value = exchange_response.get("uuid")
+
+        if uuid_value is None:
+            return None
+
+        return str(uuid_value)

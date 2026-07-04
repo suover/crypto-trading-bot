@@ -1,10 +1,12 @@
 from decimal import Decimal
+from typing import Any
 
 import pytest
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import TradeRecommendation
+from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
+    LIVE_ORDER_STATUS,
     LiveOrderExecutionError,
     LiveOrderExecutionService,
 )
@@ -26,7 +28,10 @@ def set_live_order_env(
 ) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("UPBIT_ACCESS_KEY", "access")
-    monkeypatch.setenv("UPBIT_SECRET_KEY", "secret")
+    monkeypatch.setenv(
+        "UPBIT_SECRET_KEY",
+        "test-secret-key-for-live-order-service-unit-test-0123456789abcdef",
+    )
     monkeypatch.setenv("ALLOWED_MARKETS", "KRW-BTC,KRW-ETH")
     monkeypatch.setenv("MAX_ORDER_AMOUNT_KRW", "10000")
     monkeypatch.setenv("DAILY_MAX_ORDER_AMOUNT_KRW", "30000")
@@ -65,8 +70,17 @@ def build_recommendation(
 
 
 class FakeSession:
-    def __init__(self, recommendation: TradeRecommendation | None) -> None:
+    def __init__(
+        self,
+        recommendation: TradeRecommendation | None,
+        order_log: OrderLog | None = None,
+    ) -> None:
         self.recommendation = recommendation
+        self.order_log = order_log
+        self.added_objects: list[object] = []
+        self.committed = False
+        self.flushed = False
+        self.refreshed_objects: list[object] = []
 
     def get(
         self,
@@ -77,6 +91,89 @@ class FakeSession:
         assert object_id == 1
 
         return self.recommendation
+
+    def scalar(
+        self,
+        statement: object,
+    ) -> object:
+        statement_text = str(statement)
+
+        if "order_logs" in statement_text:
+            return self.order_log
+
+        return self.recommendation
+
+    def add(
+        self,
+        instance: object,
+    ) -> None:
+        self.added_objects.append(instance)
+
+        if isinstance(instance, OrderLog):
+            instance.id = 10
+            self.order_log = instance
+
+    def flush(self) -> None:
+        self.flushed = True
+
+    def commit(self) -> None:
+        self.committed = True
+
+    def refresh(
+        self,
+        instance: object,
+    ) -> None:
+        self.refreshed_objects.append(instance)
+
+
+class FakeUpbitClient:
+    def __init__(self) -> None:
+        self.buy_orders: list[dict[str, Any]] = []
+        self.sell_orders: list[dict[str, Any]] = []
+
+    def create_market_buy_order(
+        self,
+        market: str,
+        amount_krw: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        order = {
+            "market": market,
+            "amount_krw": amount_krw,
+            "identifier": identifier,
+        }
+        self.buy_orders.append(order)
+
+        return {
+            "uuid": "live-buy-order-uuid",
+            "market": market,
+            "side": "bid",
+            "ord_type": "price",
+            "price": str(amount_krw),
+            "identifier": identifier,
+        }
+
+    def create_market_sell_order(
+        self,
+        market: str,
+        quantity: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        order = {
+            "market": market,
+            "quantity": quantity,
+            "identifier": identifier,
+        }
+        self.sell_orders.append(order)
+
+        return {
+            "uuid": "live-sell-order-uuid",
+            "market": market,
+            "side": "ask",
+            "ord_type": "market",
+            "volume": str(quantity),
+            "identifier": identifier,
+        }
 
 
 def test_build_execution_plan_allows_valid_live_buy(
@@ -183,22 +280,133 @@ def test_build_execution_plan_allows_valid_live_sell(
     assert plan.ready_to_execute is True
 
 
-def test_execute_is_intentionally_not_implemented(
+def test_execute_places_live_buy_order_and_records_order_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     set_live_order_env(monkeypatch)
 
+    recommendation = build_recommendation()
+    fake_session = FakeSession(recommendation)
+    fake_upbit_client = FakeUpbitClient()
+
     service = LiveOrderExecutionService(
-        session=FakeSession(build_recommendation()),  # type: ignore[arg-type]
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(
-        NotImplementedError,
-        match="intentionally not implemented",
-    ):
-        service.execute(
-            recommendation_id=1,
-        )
+    result = service.execute(
+        recommendation_id=1,
+        approval_request_id=20,
+    )
+
+    assert result.already_executed is False
+    assert recommendation.status == "LIVE_EXECUTED"
+    assert fake_session.flushed is True
+    assert fake_session.committed is True
+    assert len(fake_upbit_client.buy_orders) == 1
+    assert fake_upbit_client.buy_orders[0] == {
+        "market": "KRW-BTC",
+        "amount_krw": Decimal("5000"),
+        "identifier": "recommendation-1",
+    }
+
+    order_log = result.order_log
+
+    assert order_log.trading_mode == "LIVE"
+    assert order_log.approval_request_id == 20
+    assert order_log.side == "BUY"
+    assert order_log.order_type == "MARKET"
+    assert order_log.amount_krw == Decimal("5000")
+    assert order_log.quantity is None
+    assert order_log.status == LIVE_ORDER_STATUS
+    assert order_log.exchange_order_id == "live-buy-order-uuid"
+    assert order_log.raw_response["actual_order_executed"] is True
+
+
+def test_execute_places_live_sell_order_and_records_order_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    fake_session = FakeSession(recommendation)
+    fake_upbit_client = FakeUpbitClient()
+
+    service = LiveOrderExecutionService(
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
+    )
+
+    result = service.execute(
+        recommendation_id=1,
+        approval_request_id=20,
+    )
+
+    assert result.already_executed is False
+    assert recommendation.status == "LIVE_EXECUTED"
+    assert len(fake_upbit_client.sell_orders) == 1
+    assert fake_upbit_client.sell_orders[0] == {
+        "market": "KRW-BTC",
+        "quantity": Decimal("0.0001"),
+        "identifier": "recommendation-1",
+    }
+
+    order_log = result.order_log
+
+    assert order_log.trading_mode == "LIVE"
+    assert order_log.approval_request_id == 20
+    assert order_log.side == "SELL"
+    assert order_log.order_type == "MARKET"
+    assert order_log.amount_krw is None
+    assert order_log.quantity == Decimal("0.0001")
+    assert order_log.status == LIVE_ORDER_STATUS
+    assert order_log.exchange_order_id == "live-sell-order-uuid"
+
+
+def test_execute_returns_existing_order_log_without_duplicate_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+
+    recommendation = build_recommendation()
+    existing_order_log = OrderLog(
+        id=99,
+        recommendation_id=1,
+        approval_request_id=20,
+        user_id=1,
+        trading_mode="LIVE",
+        exchange="UPBIT",
+        market="KRW-BTC",
+        side="BUY",
+        order_type="MARKET",
+        amount_krw=Decimal("5000"),
+        quantity=None,
+        price=None,
+        status=LIVE_ORDER_STATUS,
+        exchange_order_id="existing-order-id",
+        error_message=None,
+        raw_response={},
+    )
+    fake_upbit_client = FakeUpbitClient()
+
+    service = LiveOrderExecutionService(
+        session=FakeSession(recommendation, existing_order_log),  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
+    )
+
+    result = service.execute(
+        recommendation_id=1,
+        approval_request_id=20,
+    )
+
+    assert result.already_executed is True
+    assert result.order_log is existing_order_log
+    assert fake_upbit_client.buy_orders == []
+    assert fake_upbit_client.sell_orders == []
 
 
 @pytest.fixture(autouse=True)
