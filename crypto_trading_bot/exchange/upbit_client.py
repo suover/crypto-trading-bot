@@ -1,4 +1,8 @@
+from collections.abc import Mapping
+from decimal import Decimal
+from hashlib import sha512
 from typing import Any
+from urllib.parse import urlencode, unquote
 from uuid import uuid4
 
 import httpx
@@ -46,7 +50,83 @@ class UpbitClient:
 
         return data
 
-    def _create_authorization_header(self) -> str:
+    def create_market_buy_order(
+        self,
+        market: str,
+        amount_krw: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        if not market.strip():
+            raise ValueError("market must not be empty")
+
+        if amount_krw <= 0:
+            raise ValueError(
+                f"amount_krw must be greater than 0. amount_krw={amount_krw}"
+            )
+
+        body: dict[str, str] = {
+            "market": market,
+            "side": "bid",
+            "price": self._format_decimal(amount_krw),
+            "ord_type": "price",
+        }
+
+        if identifier:
+            body["identifier"] = identifier
+
+        return self._create_order(body=body)
+
+    def create_market_sell_order(
+        self,
+        market: str,
+        quantity: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        if not market.strip():
+            raise ValueError("market must not be empty")
+
+        if quantity <= 0:
+            raise ValueError(f"quantity must be greater than 0. quantity={quantity}")
+
+        body: dict[str, str] = {
+            "market": market,
+            "side": "ask",
+            "volume": self._format_decimal(quantity),
+            "ord_type": "market",
+        }
+
+        if identifier:
+            body["identifier"] = identifier
+
+        return self._create_order(body=body)
+
+    def _create_order(
+        self,
+        body: dict[str, str],
+    ) -> dict[str, Any]:
+        response = httpx.post(
+            f"{self.BASE_URL}/v1/orders",
+            json=body,
+            headers={
+                "Authorization": self._create_authorization_header(body),
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            },
+            timeout=5.0,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected Upbit order response format")
+
+        return data
+
+    def _create_authorization_header(
+        self,
+        params: Mapping[str, object] | None = None,
+    ) -> str:
         settings = get_settings()
 
         if not settings.upbit_access_key or not settings.upbit_secret_key:
@@ -57,13 +137,28 @@ class UpbitClient:
             "nonce": str(uuid4()),
         }
 
+        query_string = self._build_query_string(params)
+
+        if query_string:
+            payload["query_hash"] = sha512(query_string.encode("utf-8")).hexdigest()
+            payload["query_hash_alg"] = "SHA512"
+
         token = jwt.encode(
             payload,
             settings.upbit_secret_key,
-            algorithm="HS256",
+            algorithm="HS512",
         )
 
         return f"Bearer {token}"
+
+    @staticmethod
+    def _build_query_string(
+        params: Mapping[str, object] | None,
+    ) -> str:
+        if not params:
+            return ""
+
+        return unquote(urlencode(params))
 
     def get_minute_candles(
         self,
@@ -95,3 +190,7 @@ class UpbitClient:
             raise ValueError("Unexpected Upbit candle response format")
 
         return data
+
+    @staticmethod
+    def _format_decimal(value: Decimal) -> str:
+        return format(value.normalize(), "f")
