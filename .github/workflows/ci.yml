@@ -74,7 +74,7 @@ jobs:
         run: cp .env.example .env
 
       - name: Validate Docker Compose config
-        run: docker compose config > /dev/null
+        run: docker compose --profile manual config > /dev/null
 
       - name: Build Docker runtime images
-        run: docker compose build
+        run: docker compose --profile manual build
