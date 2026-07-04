@@ -1,4 +1,5 @@
-from datetime import UTC, datetime
+from argparse import ArgumentParser, Namespace
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 
 from sqlalchemy import select
@@ -6,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.database import SessionLocal
-from crypto_trading_bot.db.models import AnalysisRun, TradeRecommendation, User
+from crypto_trading_bot.db.models import (
+    AnalysisRun,
+    ApprovalRequest,
+    TradeRecommendation,
+    User,
+)
 from crypto_trading_bot.notification.approval_request_message import (
     build_approval_request_message,
     build_approval_request_reply_markup,
@@ -50,6 +56,18 @@ def get_test_buy_amount_krw() -> Decimal:
     return test_buy_amount_krw
 
 
+def normalize_expiration_minutes(
+    expires_in_minutes: int,
+) -> tuple[int, int, bool]:
+    if expires_in_minutes < 0:
+        raise ValueError("expires_in_minutes must be greater than or equal to 0")
+
+    if expires_in_minutes == 0:
+        return 1, 0, True
+
+    return expires_in_minutes, expires_in_minutes, False
+
+
 def get_test_user(
     session: Session,
     user_name: str = TEST_USER_NAME,
@@ -76,6 +94,7 @@ def create_test_buy_recommendation(
     session: Session,
     user: User,
     test_buy_amount_krw: Decimal,
+    expires_in_minutes: int,
 ) -> tuple[AnalysisRun, TradeRecommendation]:
     settings = get_settings()
     now = datetime.now(UTC)
@@ -87,6 +106,14 @@ def create_test_buy_recommendation(
         status="SUCCESS",
         finished_at=now,
         error_message=None,
+    )
+
+    session.add(analysis_run)
+    session.flush()
+
+    recommendation = TradeRecommendation(
+        analysis_run_id=analysis_run.id,
+        market=None,
     )
 
     session.add(analysis_run)
@@ -113,6 +140,7 @@ def create_test_buy_recommendation(
             "test_buy_amount_krw": str(test_buy_amount_krw),
             "max_order_amount_krw": str(settings.max_order_amount_krw),
             "daily_max_order_amount_krw": str(settings.daily_max_order_amount_krw),
+            "expires_in_minutes": expires_in_minutes,
         },
         status="CREATED",
     )
@@ -126,11 +154,29 @@ def create_test_buy_recommendation(
     return analysis_run, recommendation
 
 
-def send_test_approval_request() -> None:
+def expire_approval_request_immediately(
+    session: Session,
+    approval_request: ApprovalRequest,
+) -> ApprovalRequest:
+    approval_request.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+
+    session.commit()
+    session.refresh(approval_request)
+
+    return approval_request
+
+
+def send_test_approval_request(expires_in_minutes: int) -> None:
     settings = get_settings()
 
     if not settings.telegram_chat_id:
         raise ValueError("TELEGRAM_CHAT_ID is not configured")
+
+    (
+        request_expires_in_minutes,
+        display_expires_in_minutes,
+        expire_immediately,
+    ) = normalize_expiration_minutes(expires_in_minutes)
 
     test_buy_amount_krw = get_test_buy_amount_krw()
     telegram_client = TelegramClient()
@@ -142,6 +188,7 @@ def send_test_approval_request() -> None:
             session=session,
             user=user,
             test_buy_amount_krw=test_buy_amount_krw,
+            expires_in_minutes=display_expires_in_minutes,
         )
 
         approval_request_service = ApprovalRequestService(session)
@@ -150,14 +197,17 @@ def send_test_approval_request() -> None:
             approval_request_service.get_or_create_pending_request(
                 recommendation=recommendation,
                 telegram_chat_id=settings.telegram_chat_id,
-                expires_in_minutes=DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+                expires_in_minutes=request_expires_in_minutes,
             )
         )
 
         message = build_approval_request_message(
             recommendation=recommendation,
-            expires_in_minutes=DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+            expires_in_minutes=request_expires_in_minutes,
         )
+
+        if expire_immediately:
+            message += "\n\n[테스트] 이 승인 요청은 발송 직후 만료 처리됩니다."
 
         reply_markup = build_approval_request_reply_markup(
             action=recommendation.action,
@@ -178,10 +228,16 @@ def send_test_approval_request() -> None:
                 f"result={telegram_result}"
             )
 
-        approval_request_service.save_telegram_message_id(
+        approval_request = approval_request_service.save_telegram_message_id(
             approval_request=approval_request,
             telegram_message_id=telegram_message_id,
         )
+
+        if expire_immediately:
+            approval_request = expire_approval_request_immediately(
+                session=session,
+                approval_request=approval_request,
+            )
 
         print("Test approval request sent successfully.")
         print(f"analysis_run_id={analysis_run.id}")
@@ -190,9 +246,35 @@ def send_test_approval_request() -> None:
         print(f"approval_request_created={created}")
         print(f"telegram_message_id={telegram_message_id}")
         print(f"test_buy_amount_krw={test_buy_amount_krw}")
+        print(f"expires_in_minutes={display_expires_in_minutes}")
+        print(f"request_expires_in_minutes={request_expires_in_minutes}")
+        print(f"expire_immediately={expire_immediately}")
         print(f"expires_at={approval_request.expires_at}")
         print("Actual exchange order was not executed.")
 
 
+def parse_args() -> Namespace:
+    parser = ArgumentParser(
+        description="Send a test Telegram approval request.",
+    )
+
+    parser.add_argument(
+        "--expires-in-minutes",
+        type=int,
+        default=DEFAULT_APPROVAL_EXPIRATION_MINUTES,
+        help=(
+            "Approval request expiration minutes. "
+            "Use 0 to create an immediately expired test request. "
+            f"Defaults to {DEFAULT_APPROVAL_EXPIRATION_MINUTES}."
+        ),
+    )
+
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    send_test_approval_request()
+    args = parse_args()
+
+    send_test_approval_request(
+        expires_in_minutes=args.expires_in_minutes,
+    )
