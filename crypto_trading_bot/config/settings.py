@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     upbit_secret_key: str = ""
 
     trading_mode: str = "AI_APPROVAL"
+    order_execution_mode: str = "MOCK"
     max_order_amount_krw: int = 10000
     daily_max_order_amount_krw: int = 30000
     allowed_markets: str = "KRW-BTC,KRW-ETH"
