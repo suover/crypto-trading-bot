@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     daily_max_order_amount_krw: int = 30000
     allowed_markets: str = "KRW-BTC,KRW-ETH"
 
+    live_order_enabled: bool = False
+    live_order_confirmation: str = ""
+
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
 
