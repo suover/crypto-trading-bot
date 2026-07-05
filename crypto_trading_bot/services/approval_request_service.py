@@ -108,18 +108,17 @@ class ApprovalRequestService:
 
         return len(expired_requests)
 
-    def get_active_pending_request_for_market(
+    def supersede_active_pending_requests_for_market(
         self,
         recommendation: TradeRecommendation,
-    ) -> ApprovalRequest | None:
+    ) -> int:
         """
-        같은 사용자/거래소/마켓에 대해 아직 만료되지 않은 PENDING 승인 요청을 조회한다.
+        같은 사용자/거래소/마켓의 기존 PENDING 승인 요청을 최신 추천으로 대체 처리한다.
 
-        recommendation_id 기준이 아니라 market 기준으로 조회한다.
-        새 AI 분석 run에서 같은 마켓의 BUY/SELL 추천이 다시 생성되더라도
-        기존 승인 요청이 살아 있으면 중복 승인 요청을 보내지 않기 위함이다.
+        BUY/SELL 추천뿐 아니라 HOLD 추천에서도 호출된다.
+        새 AI 분석 결과가 HOLD라면 기존 BUY/SELL 승인 요청은 더 이상 유효하지 않아야 한다.
         """
-        self._validate_recommendation(recommendation)
+        self._validate_saved_recommendation(recommendation)
 
         now = datetime.now(UTC)
 
@@ -133,15 +132,36 @@ class ApprovalRequestService:
                 ApprovalRequest.user_id == recommendation.user_id,
                 ApprovalRequest.status == "PENDING",
                 ApprovalRequest.expires_at > now,
+                ApprovalRequest.recommendation_id != recommendation.id,
                 TradeRecommendation.exchange == recommendation.exchange,
                 TradeRecommendation.market == recommendation.market,
                 TradeRecommendation.action.in_(SUPPORTED_APPROVAL_ACTIONS),
             )
-            .order_by(ApprovalRequest.id.desc())
-            .limit(1)
+            .with_for_update()
         )
 
-        return self.session.scalar(statement)
+        pending_requests = list(self.session.scalars(statement))
+
+        if not pending_requests:
+            return 0
+
+        for approval_request in pending_requests:
+            approval_request.status = "SUPERSEDED"
+
+            previous_recommendation = self.session.get(
+                TradeRecommendation,
+                approval_request.recommendation_id,
+            )
+
+            if (
+                previous_recommendation is not None
+                and previous_recommendation.status == "APPROVAL_PENDING"
+            ):
+                previous_recommendation.status = "APPROVAL_SUPERSEDED"
+
+        self.session.commit()
+
+        return len(pending_requests)
 
     def save_telegram_message_id(
         self,
@@ -178,13 +198,19 @@ class ApprovalRequestService:
         return self.session.scalar(statement)
 
     @staticmethod
-    def _validate_recommendation(
+    def _validate_saved_recommendation(
         recommendation: TradeRecommendation,
     ) -> None:
         if recommendation.id is None:
             raise ValueError(
-                "Trade recommendation must be saved before approval request creation"
+                "Trade recommendation must be saved before approval request handling"
             )
+
+    @staticmethod
+    def _validate_recommendation(
+        recommendation: TradeRecommendation,
+    ) -> None:
+        ApprovalRequestService._validate_saved_recommendation(recommendation)
 
         action = recommendation.action.strip().upper()
 

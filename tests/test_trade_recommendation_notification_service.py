@@ -55,7 +55,7 @@ class FakeSession:
 
 
 class FakeApprovalRequestService:
-    active_pending_request: ApprovalRequest | None = None
+    supersede_call_count = 0
     get_or_create_call_count = 0
     save_telegram_message_id_call_count = 0
     expire_pending_requests_call_count = 0
@@ -67,11 +67,12 @@ class FakeApprovalRequestService:
         type(self).expire_pending_requests_call_count += 1
         return 0
 
-    def get_active_pending_request_for_market(
+    def supersede_active_pending_requests_for_market(
         self,
         recommendation: TradeRecommendation,
-    ) -> ApprovalRequest | None:
-        return type(self).active_pending_request
+    ) -> int:
+        type(self).supersede_call_count += 1
+        return 1
 
     def get_or_create_pending_request(
         self,
@@ -104,7 +105,7 @@ class FakeApprovalRequestService:
 
 
 def reset_fake_approval_request_service() -> None:
-    FakeApprovalRequestService.active_pending_request = None
+    FakeApprovalRequestService.supersede_call_count = 0
     FakeApprovalRequestService.get_or_create_call_count = 0
     FakeApprovalRequestService.save_telegram_message_id_call_count = 0
     FakeApprovalRequestService.expire_pending_requests_call_count = 0
@@ -146,80 +147,10 @@ def build_recommendation(
     )
 
 
-def build_active_pending_request(
-    *,
-    recommendation_id: int = 999,
-) -> ApprovalRequest:
-    return ApprovalRequest(
-        id=300,
-        recommendation_id=recommendation_id,
-        user_id=1,
-        status="PENDING",
-        telegram_chat_id=123456,
-        telegram_message_id=654321,
-        callback_token="old-token",
-        expires_at=datetime.now(UTC) + timedelta(minutes=20),
-    )
-
-
-def test_send_latest_ai_recommendation_skips_duplicate_market_approval_request(
+def build_service_with_recommendations(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
-    monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
-    clear_settings_cache()
-
-    reset_fake_approval_request_service()
-
-    FakeApprovalRequestService.active_pending_request = build_active_pending_request(
-        recommendation_id=999,
-    )
-
-    monkeypatch.setattr(
-        trade_recommendation_notification_service,
-        "ApprovalRequestService",
-        FakeApprovalRequestService,
-    )
-
-    telegram_client = FakeTelegramClient()
-    service = TradeRecommendationNotificationService(
-        session=FakeSession(),  # type: ignore[arg-type]
-        telegram_client=telegram_client,  # type: ignore[arg-type]
-    )
-
-    monkeypatch.setattr(
-        service,
-        "_get_latest_ai_analysis_run",
-        build_analysis_run,
-    )
-    monkeypatch.setattr(
-        service,
-        "_get_recommendations",
-        lambda analysis_run_id: [
-            build_recommendation(
-                recommendation_id=1,
-                market="KRW-BTC",
-                action="BUY",
-            )
-        ],
-    )
-
-    analysis_run, recommendation_count = service.send_latest_ai_recommendation_summary()
-
-    assert analysis_run.id == 1
-    assert recommendation_count == 1
-
-    # 요약 메시지는 전송된다.
-    assert len(telegram_client.sent_messages) == 1
-
-    # 기존 활성 PENDING 승인 요청이 있으므로 새 승인 요청은 만들지 않는다.
-    assert FakeApprovalRequestService.get_or_create_call_count == 0
-    assert FakeApprovalRequestService.save_telegram_message_id_call_count == 0
-
-
-def test_send_latest_ai_recommendation_sends_approval_when_no_duplicate_exists(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    recommendations: list[TradeRecommendation],
+) -> tuple[TradeRecommendationNotificationService, FakeTelegramClient]:
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "123456")
     clear_settings_cache()
@@ -246,7 +177,18 @@ def test_send_latest_ai_recommendation_sends_approval_when_no_duplicate_exists(
     monkeypatch.setattr(
         service,
         "_get_recommendations",
-        lambda analysis_run_id: [
+        lambda analysis_run_id: recommendations,
+    )
+
+    return service, telegram_client
+
+
+def test_send_latest_ai_recommendation_supersedes_old_pending_and_sends_new_buy_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, telegram_client = build_service_with_recommendations(
+        monkeypatch=monkeypatch,
+        recommendations=[
             build_recommendation(
                 recommendation_id=1,
                 market="KRW-BTC",
@@ -259,12 +201,46 @@ def test_send_latest_ai_recommendation_sends_approval_when_no_duplicate_exists(
 
     assert analysis_run.id == 1
     assert recommendation_count == 1
+
+    # 기존 PENDING 요청을 최신 추천 기준으로 대체 처리한다.
+    assert FakeApprovalRequestService.supersede_call_count == 1
+
+    # BUY는 최신 추천 기준으로 새 승인 요청을 보낸다.
+    assert FakeApprovalRequestService.get_or_create_call_count == 1
+    assert FakeApprovalRequestService.save_telegram_message_id_call_count == 1
 
     # 요약 메시지 + 승인 요청 메시지
     assert len(telegram_client.sent_messages) == 2
 
-    assert FakeApprovalRequestService.get_or_create_call_count == 1
-    assert FakeApprovalRequestService.save_telegram_message_id_call_count == 1
+
+def test_send_latest_ai_recommendation_supersedes_old_pending_and_does_not_send_hold_approval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, telegram_client = build_service_with_recommendations(
+        monkeypatch=monkeypatch,
+        recommendations=[
+            build_recommendation(
+                recommendation_id=1,
+                market="KRW-BTC",
+                action="HOLD",
+            )
+        ],
+    )
+
+    analysis_run, recommendation_count = service.send_latest_ai_recommendation_summary()
+
+    assert analysis_run.id == 1
+    assert recommendation_count == 1
+
+    # HOLD도 기존 PENDING 승인 요청은 무효화해야 한다.
+    assert FakeApprovalRequestService.supersede_call_count == 1
+
+    # HOLD는 승인 요청 대상이 아니므로 새 승인 요청을 만들지 않는다.
+    assert FakeApprovalRequestService.get_or_create_call_count == 0
+    assert FakeApprovalRequestService.save_telegram_message_id_call_count == 0
+
+    # 요약 메시지만 전송된다.
+    assert len(telegram_client.sent_messages) == 1
 
 
 @pytest.fixture(autouse=True)

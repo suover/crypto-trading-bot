@@ -49,6 +49,33 @@ class TradeRecommendationNotificationService:
                 f"No trade recommendations found. analysis_run_id={analysis_run.id}"
             )
 
+        approval_request_service = ApprovalRequestService(self.session)
+
+        expired_request_count = approval_request_service.expire_pending_requests()
+
+        if expired_request_count > 0:
+            print(
+                "Expired pending approval requests before notification. "
+                f"count={expired_request_count}"
+            )
+
+        for recommendation in recommendations:
+            superseded_request_count = (
+                approval_request_service.supersede_active_pending_requests_for_market(
+                    recommendation=recommendation,
+                )
+            )
+
+            if superseded_request_count > 0:
+                print(
+                    "Superseded stale pending approval requests. "
+                    f"recommendation_id={recommendation.id}, "
+                    f"exchange={recommendation.exchange}, "
+                    f"market={recommendation.market}, "
+                    f"action={recommendation.action}, "
+                    f"count={superseded_request_count}"
+                )
+
         # 모든 분석 대상의 BUY/SELL/HOLD 판단과 사유를 요약해서 먼저 전송
         summary_message = build_trade_recommendation_summary_message(
             analysis_run=analysis_run,
@@ -60,48 +87,11 @@ class TradeRecommendationNotificationService:
             text=summary_message,
         )
 
-        approval_request_service = ApprovalRequestService(self.session)
-
-        expired_request_count = approval_request_service.expire_pending_requests()
-
-        if expired_request_count > 0:
-            print(
-                "Expired pending approval requests before notification. "
-                f"count={expired_request_count}"
-            )
-
         # 실제 행동이 필요한 BUY/SELL 추천에만 개별 승인 요청 전송
         for recommendation in recommendations:
             action = recommendation.action.strip().upper()
 
             if action not in SUPPORTED_APPROVAL_ACTIONS:
-                continue
-
-            active_pending_request = (
-                approval_request_service.get_active_pending_request_for_market(
-                    recommendation=recommendation,
-                )
-            )
-
-            if (
-                active_pending_request is not None
-                and active_pending_request.recommendation_id != recommendation.id
-            ):
-                recommendation.status = "APPROVAL_SKIPPED_DUPLICATE"
-
-                self.session.commit()
-
-                print(
-                    "Approval request skipped because active pending request exists. "
-                    f"recommendation_id={recommendation.id}, "
-                    f"active_approval_request_id={active_pending_request.id}, "
-                    f"active_recommendation_id="
-                    f"{active_pending_request.recommendation_id}, "
-                    f"exchange={recommendation.exchange}, "
-                    f"market={recommendation.market}, "
-                    f"action={recommendation.action}"
-                )
-
                 continue
 
             approval_request, _ = (
