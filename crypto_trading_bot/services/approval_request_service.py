@@ -108,6 +108,41 @@ class ApprovalRequestService:
 
         return len(expired_requests)
 
+    def get_active_pending_request_for_market(
+        self,
+        recommendation: TradeRecommendation,
+    ) -> ApprovalRequest | None:
+        """
+        같은 사용자/거래소/마켓에 대해 아직 만료되지 않은 PENDING 승인 요청을 조회한다.
+
+        recommendation_id 기준이 아니라 market 기준으로 조회한다.
+        새 AI 분석 run에서 같은 마켓의 BUY/SELL 추천이 다시 생성되더라도
+        기존 승인 요청이 살아 있으면 중복 승인 요청을 보내지 않기 위함이다.
+        """
+        self._validate_recommendation(recommendation)
+
+        now = datetime.now(UTC)
+
+        statement = (
+            select(ApprovalRequest)
+            .join(
+                TradeRecommendation,
+                ApprovalRequest.recommendation_id == TradeRecommendation.id,
+            )
+            .where(
+                ApprovalRequest.user_id == recommendation.user_id,
+                ApprovalRequest.status == "PENDING",
+                ApprovalRequest.expires_at > now,
+                TradeRecommendation.exchange == recommendation.exchange,
+                TradeRecommendation.market == recommendation.market,
+                TradeRecommendation.action.in_(SUPPORTED_APPROVAL_ACTIONS),
+            )
+            .order_by(ApprovalRequest.id.desc())
+            .limit(1)
+        )
+
+        return self.session.scalar(statement)
+
     def save_telegram_message_id(
         self,
         approval_request: ApprovalRequest,
