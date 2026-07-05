@@ -59,6 +59,8 @@ class TradeRecommendationNotificationService:
                 f"count={expired_request_count}"
             )
 
+        superseded_request_counts_by_recommendation_id: dict[int, int] = {}
+
         for recommendation in recommendations:
             superseded_request_count = (
                 approval_request_service.supersede_active_pending_requests_for_market(
@@ -67,6 +69,13 @@ class TradeRecommendationNotificationService:
             )
 
             if superseded_request_count > 0:
+                if recommendation.id is None:
+                    raise ValueError("Trade recommendation ID must not be None")
+
+                superseded_request_counts_by_recommendation_id[recommendation.id] = (
+                    superseded_request_count
+                )
+
                 print(
                     "Superseded stale pending approval requests. "
                     f"recommendation_id={recommendation.id}, "
@@ -80,6 +89,9 @@ class TradeRecommendationNotificationService:
         summary_message = build_trade_recommendation_summary_message(
             analysis_run=analysis_run,
             recommendations=recommendations,
+            superseded_request_counts_by_recommendation_id=(
+                superseded_request_counts_by_recommendation_id
+            ),
         )
 
         self.telegram_client.send_message(
