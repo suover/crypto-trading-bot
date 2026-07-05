@@ -13,7 +13,11 @@ from crypto_trading_bot.services.live_order_execution_service import (
 from crypto_trading_bot.services.mock_order_attempt_service import (
     MockOrderAttemptResult,
 )
-from scripts.run_telegram_approval_listener import build_decision_result_message
+from scripts.run_telegram_approval_listener import (
+    build_decision_result_message,
+    build_superseded_message,
+    get_user_error_message,
+)
 
 
 def build_approval_decision_result(
@@ -175,3 +179,23 @@ def test_build_decision_result_message_for_reject() -> None:
 
     assert "처리 결과: 거절 완료" in message
     assert "주문 상태: 미실행" in message
+
+
+def test_build_superseded_message_removes_action_prompt() -> None:
+    message = build_superseded_message(
+        "테스트 승인 요청\n\n아래 버튼을 눌러 승인 또는 거절해 주세요."
+    )
+
+    assert "테스트 승인 요청" in message
+    assert "아래 버튼을 눌러 승인 또는 거절해 주세요." not in message
+    assert "처리 결과: 최신 AI 분석으로 대체됨" in message
+    assert "주문 상태: 미실행" in message
+    assert "최신 Telegram 승인 요청 또는 최신 요약 메시지" in message
+
+
+def test_get_user_error_message_for_superseded_request() -> None:
+    message = get_user_error_message(
+        ValueError("Approval request is not pending. status=SUPERSEDED")
+    )
+
+    assert message == "최신 AI 분석 결과로 대체된 승인 요청입니다."

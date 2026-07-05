@@ -340,6 +340,22 @@ def build_expired_message(original_text: str) -> str:
     )
 
 
+def build_superseded_message(original_text: str) -> str:
+    base_text = remove_action_prompt(original_text)
+
+    return "\n".join(
+        [
+            base_text,
+            "",
+            "------------------------------",
+            "처리 결과: 최신 AI 분석으로 대체됨",
+            "주문 상태: 미실행",
+            "※ 이 승인 요청은 이후 AI 분석 결과로 대체되어 더 이상 처리할 수 없습니다.",
+            "※ 최신 Telegram 승인 요청 또는 최신 요약 메시지를 확인해 주세요.",
+        ]
+    )
+
+
 def remove_action_prompt(original_text: str) -> str:
     lines = original_text.rstrip().splitlines()
 
@@ -357,6 +373,9 @@ def get_user_error_message(error: ValueError) -> str:
 
     if "expired" in error_message:
         return "승인 요청의 유효시간이 만료되었습니다."
+
+    if "superseded" in error_message:
+        return "최신 AI 분석 결과로 대체된 승인 요청입니다."
 
     if "already been processed with a different decision" in error_message:
         return "이미 다른 결정으로 처리된 요청입니다."
@@ -631,10 +650,11 @@ def process_callback_update(
 
     except ValueError as error:
         user_message = get_user_error_message(error)
+        normalized_error_message = str(error).lower()
 
         # 만료 요청은 버튼을 제거하고 메시지에도 만료 상태 표시
         if (
-            "expired" in str(error).lower()
+            "expired" in normalized_error_message
             and chat_id is not None
             and message_id is not None
             and original_text
@@ -643,6 +663,20 @@ def process_callback_update(
                 chat_id=chat_id,
                 message_id=message_id,
                 text=build_expired_message(original_text),
+                reply_markup=EMPTY_INLINE_KEYBOARD,
+            )
+
+        # 최신 AI 분석으로 대체된 요청도 버튼을 제거하고 대체 상태 표시
+        if (
+            "superseded" in normalized_error_message
+            and chat_id is not None
+            and message_id is not None
+            and original_text
+        ):
+            telegram_client.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=build_superseded_message(original_text),
                 reply_markup=EMPTY_INLINE_KEYBOARD,
             )
 
