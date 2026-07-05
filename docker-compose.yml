@@ -56,6 +56,30 @@
         condition: service_completed_successfully
     command: ["python", "-m", "scripts.run_ai_trade_analysis"]
 
+  ai-trade-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-ai-trade-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
+      TZ: Asia/Seoul
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command:
+      [
+        "python",
+        "-m",
+        "scripts.run_ai_trade_scheduler",
+      ]
+
   telegram-listener:
     build:
       context: .

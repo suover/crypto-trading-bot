@@ -6,38 +6,41 @@
 
 ## 주요 구성
 
-- Python 3.14
-- uv
-- PostgreSQL 17
-- Docker Compose
-- SQLAlchemy / Alembic
-- Telegram Bot 연동
-- OpenAI API 연동
-- 거래소 API 연동 준비
-- Ruff / Pytest 기반 품질 검증
+* Python 3.14
+* uv
+* PostgreSQL 17
+* Docker Compose
+* SQLAlchemy / Alembic
+* Telegram Bot 연동
+* OpenAI API 연동
+* 거래소 API 연동 준비
+* Ruff / Pytest 기반 품질 검증
 
 ## 실행 서비스
 
 Docker Compose 기준으로 다음 서비스가 실행됩니다.
 
-| 서비스 | 실행 방식 | 역할 |
-| --- | --- | --- |
-| `postgres` | 상시 실행 | 로컬 PostgreSQL 17 데이터베이스 |
-| `migrate` | 1회 실행 후 종료 | Alembic DB 마이그레이션 실행 |
-| `telegram-listener` | 상시 실행 | Telegram 승인/거절 버튼 콜백 수신 |
-| `mock-order-retry-worker` | 상시 실행 | 실패한 모의 주문 및 알림 재시도 처리 |
-| `ai-trade-analysis` | 수동 실행 | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
+| 서비스                       | 실행 방식      | 역할                                    |
+| ------------------------- | ---------- | ------------------------------------- |
+| `postgres`                | 상시 실행      | 로컬 PostgreSQL 17 데이터베이스               |
+| `migrate`                 | 1회 실행 후 종료 | Alembic DB 마이그레이션 실행                  |
+| `ai-trade-scheduler`      | 상시 실행      | 설정된 시각에 AI 분석 파이프라인 실행                |
+| `telegram-listener`       | 상시 실행      | Telegram 승인/거절 버튼 콜백 수신               |
+| `mock-order-retry-worker` | 상시 실행      | 실패한 모의 주문 및 알림 재시도 처리                 |
+| `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
-`ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 기본 런타임 실행 명령인 `docker compose up -d --build`만으로는 자동 실행되지 않습니다.
+`ai-trade-scheduler`는 기본 런타임 실행 명령인 `docker compose up -d --build`로 함께 실행됩니다.
+
+`ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
 
-- Python 3.14
-- uv
-- Docker Desktop
-- Git
+* Python 3.14
+* uv
+* Docker Desktop
+* Git
 
 PostgreSQL은 별도로 로컬에 설치하지 않아도 됩니다. 개발용 PostgreSQL은 Docker Compose의 `postgres` 서비스로 실행합니다.
 
@@ -64,10 +67,22 @@ UPBIT_ACCESS_KEY=
 UPBIT_SECRET_KEY=
 
 TRADING_MODE=AI_APPROVAL
+ORDER_EXECUTION_MODE=MOCK
+
 MAX_ORDER_AMOUNT_KRW=10000
 DAILY_MAX_ORDER_AMOUNT_KRW=30000
 
 ALLOWED_MARKETS=KRW-BTC,KRW-ETH
+
+LIVE_ORDER_ENABLED=false
+LIVE_ORDER_CONFIRMATION=
+
+MOCK_ORDER_RETRY_MAX_RETRIES=3
+MOCK_ORDER_RETRY_DELAYS_MINUTES=5,15,30
+
+AI_ANALYSIS_SCHEDULER_ENABLED=true
+AI_ANALYSIS_SCHEDULE_TIMES=09:00
+AI_ANALYSIS_RUN_ON_STARTUP=false
 ```
 
 비밀값은 로컬 `.env`에서만 관리합니다. `.env.example`에는 실제 API 키, Telegram 토큰, 거래소 키를 넣지 않습니다.
@@ -126,8 +141,9 @@ docker compose up -d --build
 1. `postgres` 컨테이너 실행
 2. PostgreSQL healthcheck 통과 대기
 3. `migrate` 컨테이너에서 Alembic 마이그레이션 실행
-4. 마이그레이션 성공 후 `telegram-listener` 실행
-5. 마이그레이션 성공 후 `mock-order-retry-worker` 실행
+4. 마이그레이션 성공 후 `ai-trade-scheduler` 실행
+5. 마이그레이션 성공 후 `telegram-listener` 실행
+6. 마이그레이션 성공 후 `mock-order-retry-worker` 실행
 
 서비스 상태 확인:
 
@@ -139,6 +155,7 @@ docker compose ps -a
 
 ```powershell
 docker compose logs --tail=100 migrate
+docker compose logs --tail=100 ai-trade-scheduler
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
 ```
@@ -147,6 +164,42 @@ docker compose logs --tail=100 mock-order-retry-worker
 
 ```powershell
 docker compose logs -f
+```
+
+## AI 분석 스케줄러
+
+`ai-trade-scheduler`는 `.env`의 `AI_ANALYSIS_SCHEDULE_TIMES`에 설정된 시각마다 AI 분석 파이프라인을 실행합니다.
+
+기본 설정은 하루 1회입니다.
+
+```env
+AI_ANALYSIS_SCHEDULER_ENABLED=true
+AI_ANALYSIS_SCHEDULE_TIMES=09:00
+AI_ANALYSIS_RUN_ON_STARTUP=false
+```
+
+하루 2~3회로 늘리고 싶으면 아래처럼 설정합니다.
+
+```env
+AI_ANALYSIS_SCHEDULE_TIMES=09:00,15:00,21:00
+```
+
+스케줄러는 다음 파이프라인을 실행합니다.
+
+1. 시장 현재가 스냅샷 수집
+2. 계좌 잔고 스냅샷 수집
+3. 시장 캔들 수집
+4. AI 매매 추천 생성
+5. AI 추천 결과 Telegram 알림 및 승인 요청 발송
+
+`BUY` 또는 `SELL` 추천은 Telegram 승인 요청으로 이어지고, 사용자가 승인해야 주문 흐름이 진행됩니다.
+
+`HOLD` 추천은 주문 실행 대상이 아니므로 매매 판단 참고용 알림으로 취급합니다.
+
+스케줄러 로그 확인:
+
+```powershell
+docker compose logs --tail=100 ai-trade-scheduler
 ```
 
 ## AI 분석 파이프라인 수동 실행
@@ -169,11 +222,15 @@ docker compose --profile manual run --rm ai-trade-analysis
 
 ## 중복 실행 방지
 
-`telegram-listener`와 `mock-order-retry-worker`는 PostgreSQL advisory lock을 사용해 중복 실행을 방지합니다.
+`ai-trade-scheduler`, `telegram-listener`, `mock-order-retry-worker`는 PostgreSQL advisory lock을 사용해 중복 실행을 방지합니다.
 
 이미 같은 프로세스가 실행 중이면 추가 실행된 프로세스는 바로 종료됩니다.
 
 예상 메시지 예시:
+
+```text
+Another AI trade scheduler is already running. Scheduler will exit.
+```
 
 ```text
 Another Telegram approval listener is already running. Listener will exit.
@@ -217,6 +274,12 @@ docker compose up -d postgres
 
 ```powershell
 docker compose up -d --build
+```
+
+### AI 분석 스케줄러 로그 확인
+
+```powershell
+docker compose logs --tail=100 ai-trade-scheduler
 ```
 
 ### AI 분석 파이프라인 1회 실행

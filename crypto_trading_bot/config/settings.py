@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
 
+    ai_analysis_scheduler_enabled: bool = True
+    ai_analysis_schedule_times: str = "09:00"
+    ai_analysis_run_on_startup: bool = False
+
     @property
     def allowed_market_list(self) -> list[str]:
         return [
