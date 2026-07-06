@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -122,6 +122,10 @@ class LiveOrderExecutionService:
             plan=plan,
         )
 
+        self._validate_sell_balance(
+            plan=plan,
+        )
+
         exchange_response = self._place_live_order(
             plan=plan,
         )
@@ -235,6 +239,65 @@ class LiveOrderExecutionService:
         next_day_start_kst = start_kst + timedelta(days=1)
 
         return start_kst.astimezone(UTC), next_day_start_kst.astimezone(UTC)
+
+    def _validate_sell_balance(
+        self,
+        plan: LiveOrderExecutionPlan,
+    ) -> None:
+        if plan.action != "SELL":
+            return
+
+        if plan.quantity is None:
+            raise LiveOrderExecutionError("SELL live order requires quantity")
+
+        currency = self._get_currency_from_market(plan.market)
+        accounts = self.upbit_client.get_accounts()
+
+        for account in accounts:
+            if account.get("currency") != currency:
+                continue
+
+            raw_balance = account.get("balance")
+
+            try:
+                available_balance = Decimal(str(raw_balance))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise LiveOrderExecutionError(
+                    "Live sell account balance is invalid. "
+                    f"market={plan.market}, "
+                    f"currency={currency}, "
+                    f"balance={raw_balance}"
+                ) from exc
+
+            if available_balance < plan.quantity:
+                raise LiveOrderExecutionError(
+                    "Insufficient available balance for live sell order. "
+                    f"market={plan.market}, "
+                    f"currency={currency}, "
+                    f"required_quantity={plan.quantity}, "
+                    f"available_balance={available_balance}"
+                )
+
+            return
+
+        raise LiveOrderExecutionError(
+            "Live sell account balance was not found. "
+            f"market={plan.market}, "
+            f"currency={currency}"
+        )
+
+    @staticmethod
+    def _get_currency_from_market(
+        market: str,
+    ) -> str:
+        market_parts = market.split("-", maxsplit=1)
+
+        if len(market_parts) != 2 or not market_parts[0] or not market_parts[1]:
+            raise LiveOrderExecutionError(
+                f"Live sell order market format is invalid. market={market}"
+            )
+
+        return market_parts[1]
 
     def _place_live_order(
         self,

@@ -132,9 +132,16 @@ class FakeSession:
 
 
 class FakeUpbitClient:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        accounts: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.buy_orders: list[dict[str, Any]] = []
         self.sell_orders: list[dict[str, Any]] = []
+        self.accounts = accounts or []
+
+    def get_accounts(self) -> list[dict[str, Any]]:
+        return self.accounts
 
     def create_market_buy_order(
         self,
@@ -342,7 +349,15 @@ def test_execute_places_live_sell_order_and_records_order_log(
         recommended_quantity=Decimal("0.0001"),
     )
     fake_session = FakeSession(recommendation)
-    fake_upbit_client = FakeUpbitClient()
+    fake_upbit_client = FakeUpbitClient(
+        accounts=[
+            {
+                "currency": "BTC",
+                "balance": "0.0002",
+                "locked": "0",
+            }
+        ]
+    )
 
     service = LiveOrderExecutionService(
         session=fake_session,  # type: ignore[arg-type]
@@ -373,6 +388,91 @@ def test_execute_places_live_sell_order_and_records_order_log(
     assert order_log.quantity == Decimal("0.0001")
     assert order_log.status == LIVE_ORDER_STATUS
     assert order_log.exchange_order_id == "live-sell-order-uuid"
+
+
+def test_execute_blocks_live_sell_when_available_balance_is_insufficient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0002"),
+    )
+    fake_session = FakeSession(recommendation)
+    fake_upbit_client = FakeUpbitClient(
+        accounts=[
+            {
+                "currency": "BTC",
+                "balance": "0.0001",
+                "locked": "0",
+            }
+        ]
+    )
+
+    service = LiveOrderExecutionService(
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(
+        LiveOrderExecutionError,
+        match="Insufficient available balance",
+    ):
+        service.execute(
+            recommendation_id=1,
+            approval_request_id=20,
+        )
+
+    assert fake_upbit_client.sell_orders == []
+    assert fake_upbit_client.buy_orders == []
+    assert fake_session.added_objects == []
+    assert fake_session.committed is False
+    assert fake_session.flushed is False
+    assert recommendation.status == "APPROVED"
+
+
+def test_execute_blocks_live_sell_when_account_balance_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    fake_session = FakeSession(recommendation)
+    fake_upbit_client = FakeUpbitClient(
+        accounts=[
+            {
+                "currency": "ETH",
+                "balance": "1",
+                "locked": "0",
+            }
+        ]
+    )
+
+    service = LiveOrderExecutionService(
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(
+        LiveOrderExecutionError,
+        match="account balance was not found",
+    ):
+        service.execute(
+            recommendation_id=1,
+            approval_request_id=20,
+        )
+
+    assert fake_upbit_client.sell_orders == []
+    assert fake_upbit_client.buy_orders == []
+    assert fake_session.added_objects == []
+    assert fake_session.committed is False
+    assert fake_session.flushed is False
 
 
 def test_execute_returns_existing_order_log_without_duplicate_order(
