@@ -74,9 +74,11 @@ class FakeSession:
         self,
         recommendation: TradeRecommendation | None,
         order_log: OrderLog | None = None,
+        today_live_order_amount_krw: Decimal = Decimal("0"),
     ) -> None:
         self.recommendation = recommendation
         self.order_log = order_log
+        self.today_live_order_amount_krw = today_live_order_amount_krw
         self.added_objects: list[object] = []
         self.committed = False
         self.flushed = False
@@ -97,6 +99,9 @@ class FakeSession:
         statement: object,
     ) -> object:
         statement_text = str(statement)
+
+        if "sum(order_logs.amount_krw)" in statement_text:
+            return self.today_live_order_amount_krw
 
         if "order_logs" in statement_text:
             return self.order_log
@@ -286,7 +291,10 @@ def test_execute_places_live_buy_order_and_records_order_log(
     set_live_order_env(monkeypatch)
 
     recommendation = build_recommendation()
-    fake_session = FakeSession(recommendation)
+    fake_session = FakeSession(
+        recommendation,
+        today_live_order_amount_krw=Decimal("25000"),
+    )
     fake_upbit_client = FakeUpbitClient()
 
     service = LiveOrderExecutionService(
@@ -407,6 +415,41 @@ def test_execute_returns_existing_order_log_without_duplicate_order(
     assert result.order_log is existing_order_log
     assert fake_upbit_client.buy_orders == []
     assert fake_upbit_client.sell_orders == []
+
+
+def test_execute_blocks_when_daily_live_order_amount_limit_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+
+    recommendation = build_recommendation(
+        recommended_amount_krw=Decimal("6000"),
+    )
+    fake_session = FakeSession(
+        recommendation,
+        today_live_order_amount_krw=Decimal("25000"),
+    )
+    fake_upbit_client = FakeUpbitClient()
+
+    service = LiveOrderExecutionService(
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=fake_upbit_client,  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(
+        LiveOrderExecutionError,
+        match="Daily live order amount limit exceeded",
+    ):
+        service.execute(
+            recommendation_id=1,
+            approval_request_id=20,
+        )
+
+    assert fake_upbit_client.buy_orders == []
+    assert fake_upbit_client.sell_orders == []
+    assert fake_session.added_objects == []
+    assert fake_session.committed is False
+    assert fake_session.flushed is False
 
 
 @pytest.fixture(autouse=True)

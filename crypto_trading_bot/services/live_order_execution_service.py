@@ -1,8 +1,10 @@
 from dataclasses import dataclass
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
@@ -14,6 +16,7 @@ from crypto_trading_bot.services.live_order_safety import (
 
 
 LIVE_ORDER_STATUS = "LIVE_PLACED"
+KST = ZoneInfo("Asia/Seoul")
 
 
 class LiveOrderExecutionError(ValueError):
@@ -114,6 +117,11 @@ class LiveOrderExecutionService:
             recommendation_id=recommendation.id,
         )
 
+        self._validate_daily_live_order_limit(
+            user_id=recommendation.user_id,
+            plan=plan,
+        )
+
         exchange_response = self._place_live_order(
             plan=plan,
         )
@@ -166,6 +174,67 @@ class LiveOrderExecutionService:
             recommendation=recommendation,
             already_executed=False,
         )
+
+    def _validate_daily_live_order_limit(
+        self,
+        user_id: int,
+        plan: LiveOrderExecutionPlan,
+    ) -> None:
+        plan_amount_krw = self._get_plan_amount_for_daily_limit(plan)
+
+        if plan_amount_krw is None:
+            return
+
+        settings = get_settings()
+        today_live_order_amount_krw = self._get_today_live_order_amount_krw(
+            user_id=user_id,
+        )
+        expected_total_amount_krw = today_live_order_amount_krw + plan_amount_krw
+
+        if expected_total_amount_krw > settings.daily_max_order_amount_krw:
+            raise LiveOrderExecutionError(
+                "Daily live order amount limit exceeded. "
+                f"today_live_order_amount_krw={today_live_order_amount_krw}, "
+                f"new_order_amount_krw={plan_amount_krw}, "
+                f"expected_total_amount_krw={expected_total_amount_krw}, "
+                "daily_max_order_amount_krw="
+                f"{settings.daily_max_order_amount_krw}"
+            )
+
+    def _get_today_live_order_amount_krw(
+        self,
+        user_id: int,
+    ) -> Decimal:
+        start_utc, end_utc = self._get_today_range_in_utc()
+        statement = select(func.coalesce(func.sum(OrderLog.amount_krw), 0)).where(
+            OrderLog.user_id == user_id,
+            OrderLog.trading_mode == "LIVE",
+            OrderLog.status == LIVE_ORDER_STATUS,
+            OrderLog.amount_krw.is_not(None),
+            OrderLog.created_at >= start_utc,
+            OrderLog.created_at < end_utc,
+        )
+
+        total_amount = self.session.scalar(statement)
+
+        return Decimal(str(total_amount or 0))
+
+    @staticmethod
+    def _get_plan_amount_for_daily_limit(
+        plan: LiveOrderExecutionPlan,
+    ) -> Decimal | None:
+        if plan.amount_krw is None:
+            return None
+
+        return Decimal(str(plan.amount_krw))
+
+    @staticmethod
+    def _get_today_range_in_utc() -> tuple[datetime, datetime]:
+        today_kst = datetime.now(KST).date()
+        start_kst = datetime.combine(today_kst, time.min, tzinfo=KST)
+        next_day_start_kst = start_kst + timedelta(days=1)
+
+        return start_kst.astimezone(UTC), next_day_start_kst.astimezone(UTC)
 
     def _place_live_order(
         self,
