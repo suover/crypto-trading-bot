@@ -3,8 +3,6 @@
     image: postgres:17
     container_name: crypto-trading-postgres
     restart: unless-stopped
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: crypto_trading_bot
       POSTGRES_USER: trading_user
@@ -61,6 +59,8 @@
       context: .
       dockerfile: Dockerfile
     container_name: crypto-trading-ai-trade-scheduler
+    profiles:
+      - scheduler
     restart: unless-stopped
     env_file:
       - .env

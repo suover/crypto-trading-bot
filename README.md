@@ -24,12 +24,12 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | ------------------------- | ---------- | ------------------------------------- |
 | `postgres`                | 상시 실행      | 로컬 PostgreSQL 17 데이터베이스               |
 | `migrate`                 | 1회 실행 후 종료 | Alembic DB 마이그레이션 실행                  |
-| `ai-trade-scheduler`      | 상시 실행      | 설정된 시각에 AI 분석 파이프라인 실행                |
+| `ai-trade-scheduler`      | `scheduler` profile | 설정된 시각에 AI 분석 파이프라인 실행                |
 | `telegram-listener`       | 상시 실행      | Telegram 승인/거절 버튼 콜백 수신               |
 | `mock-order-retry-worker` | 상시 실행      | 실패한 모의 주문 및 알림 재시도 처리                 |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
-`ai-trade-scheduler`는 기본 런타임 실행 명령인 `docker compose up -d --build`로 함께 실행됩니다.
+기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`만 실행합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
 
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
@@ -43,6 +43,8 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 * Git
 
 PostgreSQL은 별도로 로컬에 설치하지 않아도 됩니다. 개발용 PostgreSQL은 Docker Compose의 `postgres` 서비스로 실행합니다.
+
+서버/프로덕션 유사 런타임에서는 PostgreSQL을 호스트 포트로 공개하지 않습니다. 호스트에서 `localhost:5432`로 접속해야 하는 로컬 개발에서만 `docker-compose.local.yml`을 함께 사용합니다.
 
 ## 환경 변수 설정
 
@@ -94,7 +96,7 @@ AI_ANALYSIS_RUN_ON_STARTUP=false
 ### 1. PostgreSQL 실행
 
 ```powershell
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres
 ```
 
 상태 확인:
@@ -130,7 +132,7 @@ uv run ruff check .
 
 ## Docker Compose 전체 런타임 실행
 
-전체 런타임을 Docker Compose로 실행합니다.
+서버/프로덕션 유사 런타임을 Docker Compose로 실행합니다. 이 런타임은 PostgreSQL을 공개 포트로 노출하지 않습니다.
 
 ```powershell
 docker compose up -d --build
@@ -141,9 +143,10 @@ docker compose up -d --build
 1. `postgres` 컨테이너 실행
 2. PostgreSQL healthcheck 통과 대기
 3. `migrate` 컨테이너에서 Alembic 마이그레이션 실행
-4. 마이그레이션 성공 후 `ai-trade-scheduler` 실행
-5. 마이그레이션 성공 후 `telegram-listener` 실행
-6. 마이그레이션 성공 후 `mock-order-retry-worker` 실행
+4. 마이그레이션 성공 후 `telegram-listener` 실행
+5. 마이그레이션 성공 후 `mock-order-retry-worker` 실행
+
+`ai-trade-scheduler`는 기본 런타임에서 시작되지 않습니다. 예약 분석을 켜야 할 때만 `scheduler` profile로 명시적으로 실행합니다.
 
 서비스 상태 확인:
 
@@ -155,7 +158,6 @@ docker compose ps -a
 
 ```powershell
 docker compose logs --tail=100 migrate
-docker compose logs --tail=100 ai-trade-scheduler
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
 ```
@@ -196,10 +198,16 @@ AI_ANALYSIS_SCHEDULE_TIMES=09:00,15:00,21:00
 
 `HOLD` 추천은 주문 실행 대상이 아니므로 매매 판단 참고용 알림으로 취급합니다.
 
+스케줄러 명시 실행:
+
+```powershell
+docker compose --profile scheduler up -d --build ai-trade-scheduler
+```
+
 스케줄러 로그 확인:
 
 ```powershell
-docker compose logs --tail=100 ai-trade-scheduler
+docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 ```
 
 ## AI 분석 파이프라인 수동 실행
@@ -250,7 +258,7 @@ docker compose down
 
 `docker compose down`은 컨테이너와 네트워크를 제거하지만, PostgreSQL 데이터 볼륨은 유지합니다.
 
-로컬 DB 데이터까지 초기화해야 할 때만 다음 명령을 사용합니다.
+`docker compose down -v`는 `postgres_data` 데이터베이스 볼륨을 삭제합니다. 로컬 DB 데이터까지 초기화해야 할 때만 사용하고, 서버/프로덕션 유사 런타임에서는 가볍게 실행하지 않습니다.
 
 ```powershell
 docker compose down -v
@@ -264,10 +272,10 @@ docker compose down -v
 
 ## 자주 쓰는 명령어
 
-### PostgreSQL만 실행
+### PostgreSQL만 로컬 포트로 공개해서 실행
 
 ```powershell
-docker compose up -d postgres
+docker compose -f docker-compose.yml -f docker-compose.local.yml up -d postgres
 ```
 
 ### 전체 런타임 실행
@@ -276,10 +284,16 @@ docker compose up -d postgres
 docker compose up -d --build
 ```
 
+### AI 분석 스케줄러 명시 실행
+
+```powershell
+docker compose --profile scheduler up -d --build ai-trade-scheduler
+```
+
 ### AI 분석 스케줄러 로그 확인
 
 ```powershell
-docker compose logs --tail=100 ai-trade-scheduler
+docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 ```
 
 ### AI 분석 파이프라인 1회 실행
