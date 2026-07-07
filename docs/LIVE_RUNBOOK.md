@@ -22,6 +22,8 @@
 - Upbit API 허용 IP가 서버 IP로 올바르게 설정되어 있습니다.
 - 서버 `.env` 권한이 `600`입니다.
 - 백업 파일 권한이 `600`입니다.
+- 서버 런타임 안전 점검이 `--strict-live` 모드로 통과했습니다.
+- Python 라이브 준비 상태 점검이 strict 모드로 통과했습니다.
 
 권한 확인 예시:
 
@@ -46,9 +48,19 @@ AI_ANALYSIS_SCHEDULER_ENABLED=false
 
 실제 API 키와 토큰은 문서에 기록하지 않습니다. 서버 `.env`에서만 관리합니다.
 
+## 서버 런타임 안전 점검
+
+Python 라이브 준비 상태 점검 전에 서버 런타임 구성이 안전한지 확인합니다.
+
+```bash
+bash scripts/check_server_runtime_safety.sh --strict-live
+```
+
+이 스크립트는 컨테이너를 변경하지 않고 주문도 실행하지 않습니다.
+
 ## 라이브 준비 상태 확인
 
-엄격 모드로 라이브 준비 상태를 확인합니다.
+서버 런타임 안전 점검을 통과한 뒤 Python 레벨 라이브 준비 상태를 엄격 모드로 확인합니다.
 
 ```bash
 docker compose --profile manual run --rm ai-trade-analysis python -m scripts.check_live_trading_readiness --strict

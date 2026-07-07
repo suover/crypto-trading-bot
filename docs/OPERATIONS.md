@@ -98,6 +98,24 @@ docker compose logs --tail=100 mock-order-retry-worker
 docker compose logs -f
 ```
 
+## 서버 런타임 안전 점검
+
+제한적 라이브 테스트 전이나 운영 상태 점검 시 서버 런타임 안전 점검 스크립트를 실행합니다.
+
+일반 점검:
+
+```bash
+bash scripts/check_server_runtime_safety.sh
+```
+
+제한적 라이브 테스트 직전 엄격 점검:
+
+```bash
+bash scripts/check_server_runtime_safety.sh --strict-live
+```
+
+이 스크립트는 읽기 전용 점검만 수행합니다. 컨테이너를 시작, 중지, 재생성, 삭제하지 않으며 주문도 실행하지 않습니다.
+
 ## 수동 AI 분석 실행
 
 서버에서 1회 AI 분석을 수동 실행합니다.

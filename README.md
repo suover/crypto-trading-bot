@@ -24,6 +24,7 @@
 * [서버 운영 가이드](docs/OPERATIONS.md)
 * [제한적 라이브 테스트 런북](docs/LIVE_RUNBOOK.md)
 * [PostgreSQL 백업 스크립트](scripts/backup_db.sh)
+* [서버 런타임 안전 점검 스크립트](scripts/check_server_runtime_safety.sh)
 
 ## 실행 서비스
 
@@ -315,6 +316,13 @@ docker compose --profile manual run --rm ai-trade-analysis
 
 ```powershell
 docker compose ps -a
+```
+
+### 서버 런타임 안전 점검
+
+```powershell
+bash scripts/check_server_runtime_safety.sh
+bash scripts/check_server_runtime_safety.sh --strict-live
 ```
 
 ### Docker Compose 설정 확인
