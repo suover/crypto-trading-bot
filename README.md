@@ -16,6 +16,15 @@
 * 거래소 API 연동 준비
 * Ruff / Pytest 기반 품질 검증
 
+
+## 운영 문서
+
+서버 운영과 제한적 라이브 테스트 절차는 별도 문서를 참고합니다.
+
+* [서버 운영 가이드](docs/OPERATIONS.md)
+* [제한적 라이브 테스트 런북](docs/LIVE_RUNBOOK.md)
+* [PostgreSQL 백업 스크립트](scripts/backup_db.sh)
+
 ## 실행 서비스
 
 Docker Compose 기준으로 다음 서비스가 실행됩니다.
