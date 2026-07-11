@@ -7,6 +7,9 @@ from sqlalchemy.orm import Session
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import AnalysisRun, MarketSnapshot, User
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
+from crypto_trading_bot.services.exchange_market_registry_service import (
+    ExchangeMarketRegistryService,
+)
 
 
 def to_decimal(value: Any) -> Decimal | None:
@@ -21,9 +24,13 @@ class MarketSnapshotService:
         self,
         session: Session,
         upbit_client: UpbitClient | None = None,
+        registry_service: ExchangeMarketRegistryService | None = None,
     ) -> None:
         self.session = session
         self.upbit_client = upbit_client or UpbitClient()
+        self.registry_service = registry_service or ExchangeMarketRegistryService(
+            session
+        )
 
     def collect_market_snapshots(
         self,
@@ -47,7 +54,12 @@ class MarketSnapshotService:
         self.session.flush()
 
         try:
-            tickers = self.upbit_client.get_tickers(settings.allowed_market_list)
+            active_markets = self.registry_service.load_active_markets_for_exchange(
+                "UPBIT"
+            )
+            tickers = self.upbit_client.get_tickers(
+                [registry_market.market for registry_market in active_markets]
+            )
 
             snapshots = [
                 MarketSnapshot(

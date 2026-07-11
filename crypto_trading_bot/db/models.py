@@ -21,6 +21,79 @@ from sqlalchemy.orm import Mapped, mapped_column
 from crypto_trading_bot.db.base import Base
 
 
+class Exchange(Base):
+    __tablename__ = "exchanges"
+
+    code: Mapped[str] = mapped_column(String(30), primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
+    tradable: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    default_quote_asset: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    default_max_order_amount: Mapped[float | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    default_daily_max_order_amount: Mapped[float | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ExchangeMarket(Base):
+    __tablename__ = "exchange_markets"
+    __table_args__ = (
+        UniqueConstraint(
+            "exchange_code", "market", name="uq_exchange_markets_exchange_market"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    exchange_code: Mapped[str] = mapped_column(
+        ForeignKey("exchanges.code"), nullable=False, index=True
+    )
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+    base_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    coingecko_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'ACTIVE'")
+    )
+    priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("100")
+    )
+    max_order_amount_override: Mapped[float | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    daily_max_order_amount_override: Mapped[float | None] = mapped_column(
+        Numeric(20, 2), nullable=True
+    )
+    min_24h_quote_volume: Mapped[float | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    exclude_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    memo: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class User(Base):
     __tablename__ = "users"
 

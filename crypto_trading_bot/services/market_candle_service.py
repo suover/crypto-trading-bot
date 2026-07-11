@@ -4,9 +4,11 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import MarketCandle
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
+from crypto_trading_bot.services.exchange_market_registry_service import (
+    ExchangeMarketRegistryService,
+)
 
 
 def to_decimal(value: Any) -> Decimal:
@@ -22,19 +24,25 @@ class MarketCandleService:
         self,
         session: Session,
         upbit_client: UpbitClient | None = None,
+        registry_service: ExchangeMarketRegistryService | None = None,
     ) -> None:
         self.session = session
         self.upbit_client = upbit_client or UpbitClient()
+
+        self.registry_service = registry_service or ExchangeMarketRegistryService(
+            session
+        )
 
     def collect_minute_candles(
         self,
         unit: int = 15,
         count: int = 50,
     ) -> dict[str, int]:
-        settings = get_settings()
         saved_counts: dict[str, int] = {}
 
-        for market in settings.allowed_market_list:
+        active_markets = self.registry_service.load_active_markets_for_exchange("UPBIT")
+        for registry_market in active_markets:
+            market = registry_market.market
             candles = self.upbit_client.get_minute_candles(
                 market=market,
                 unit=unit,
