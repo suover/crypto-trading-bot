@@ -14,36 +14,30 @@ from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import (
     AccountSnapshot,
     AnalysisRun,
+    ExchangeMarket,
     MarketCandle,
     TradeRecommendation,
     User,
 )
+from crypto_trading_bot.services.exchange_market_registry_service import (
+    ExchangeMarketRegistryService,
+)
 
 
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
+MIN_CANDLES_FOR_ADVICE = 20
 
 
 def to_decimal(value: object | None) -> Decimal:
     if value is None:
         return Decimal("0")
-
     return Decimal(str(value))
 
 
 def decimal_to_string_or_none(value: Decimal | None) -> str | None:
     if value is None:
         return None
-
     return str(value)
-
-
-def get_base_currency(market: str) -> str:
-    parts = market.split("-")
-
-    if len(parts) != 2:
-        raise ValueError(f"Unexpected market format. market={market}")
-
-    return parts[1]
 
 
 class AiTradeRecommendationService:
@@ -51,9 +45,13 @@ class AiTradeRecommendationService:
         self,
         session: Session,
         trade_advisor: OpenAITradeAdvisor | None = None,
+        registry_service: ExchangeMarketRegistryService | None = None,
     ) -> None:
         self.session = session
         self.trade_advisor = trade_advisor or OpenAITradeAdvisor()
+        self.registry_service = registry_service or ExchangeMarketRegistryService(
+            session
+        )
 
     def create_ai_recommendations(
         self,
@@ -63,122 +61,200 @@ class AiTradeRecommendationService:
     ) -> tuple[AnalysisRun, list[TradeRecommendation]]:
         settings = get_settings()
         user = self._get_user(user_name)
-
         analysis_run = AnalysisRun(
             user_id=user.id,
             run_type="AI_RECOMMENDATION",
             trading_mode=settings.trading_mode,
             status="STARTED",
         )
-
         self.session.add(analysis_run)
         self.session.flush()
 
         try:
-            recommendations: list[TradeRecommendation] = []
-
             krw_balance = self._get_latest_balance(
                 user_id=user.id,
                 exchange="UPBIT",
                 currency="KRW",
             )
+            registry_markets = self.registry_service.load_active_markets_for_exchange(
+                "UPBIT"
+            )
+            if not registry_markets:
+                raise ValueError("No active UPBIT markets found in registry")
 
-            for market in settings.allowed_market_list:
-                candles = self._get_recent_candles(
-                    market=market,
-                    candle_unit=candle_unit,
-                    count=candle_count,
-                )
-
-                if len(candles) < 20:
-                    recommendation = self._create_hold_recommendation(
-                        analysis_run_id=analysis_run.id,
-                        user_id=user.id,
-                        market=market,
-                        reason="AI 판단에 필요한 캔들 데이터가 부족하여 보류",
-                        ai_response={
-                            "source": "system_guard",
-                            "reason": "not_enough_candles",
-                        },
-                    )
-                    self.session.add(recommendation)
-                    recommendations.append(recommendation)
-                    continue
-
-                indicators = self._calculate_indicators(
-                    market=market,
-                    candle_unit=candle_unit,
-                    candles=candles,
-                )
-
-                base_currency = get_base_currency(market)
-                coin_balance = self._get_latest_balance(
+            candidates = [
+                self._build_candidate(
                     user_id=user.id,
-                    exchange="UPBIT",
-                    currency=base_currency,
-                )
-
-                context = self._build_ai_context(
-                    market=market,
-                    indicators=indicators,
+                    registry_market=registry_market,
+                    candle_unit=candle_unit,
+                    candle_count=candle_count,
                     krw_balance=krw_balance,
-                    coin_balance=coin_balance,
-                    max_order_amount_krw=Decimal(settings.max_order_amount_krw),
                 )
+                for registry_market in registry_markets
+            ]
+            context = {
+                "account": {
+                    "exchange": "UPBIT",
+                    "quote_asset": "KRW",
+                    "quote_balance_krw": str(krw_balance),
+                },
+                "trading_mode": settings.trading_mode,
+                "candidates": candidates,
+                "rules": {
+                    "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
+                    "allowed_actions": ["BUY", "SELL", "HOLD"],
+                    "spot_only": True,
+                    "conservative": True,
+                },
+            }
 
+            if all(not candidate["enough_candles"] for candidate in candidates):
+                advice = self._create_system_guard_advice(candidates[0])
+                source = "system_guard"
+                raw_ai_response: dict[str, Any] | None = None
+            else:
                 advice = self.trade_advisor.create_advice(context)
+                source = "openai"
+                raw_ai_response = advice.raw_response
 
-                safe_advice = self._apply_safety_rules(
-                    advice=advice,
-                    krw_balance=krw_balance,
-                    coin_balance=coin_balance,
-                    max_order_amount_krw=Decimal(settings.max_order_amount_krw),
-                )
-
-                recommendation = TradeRecommendation(
-                    analysis_run_id=analysis_run.id,
-                    market_snapshot_id=None,
-                    user_id=user.id,
-                    exchange="UPBIT",
-                    market=market,
-                    action=safe_advice.action,
-                    confidence=safe_advice.confidence,
-                    reason=self._build_reason(safe_advice),
-                    recommended_amount_krw=safe_advice.recommended_amount_krw,
-                    recommended_quantity=safe_advice.recommended_quantity,
-                    ai_model=self.trade_advisor.model,
-                    ai_response={
-                        "context": context,
-                        "advice": safe_advice.raw_response,
-                    },
-                    status="CREATED",
-                )
-
-                self.session.add(recommendation)
-                recommendations.append(recommendation)
-
+            safe_advice = self._apply_safety_rules(
+                advice=advice,
+                candidates=candidates,
+            )
+            safety_override = safe_advice.raw_response.get("system_override")
+            recommendation = TradeRecommendation(
+                analysis_run_id=analysis_run.id,
+                market_snapshot_id=None,
+                user_id=user.id,
+                exchange=safe_advice.exchange,
+                market=safe_advice.market,
+                action=safe_advice.action,
+                confidence=safe_advice.confidence,
+                reason=self._build_reason(safe_advice),
+                recommended_amount_krw=safe_advice.recommended_amount_krw,
+                recommended_quantity=safe_advice.recommended_quantity,
+                ai_model=self.trade_advisor.model,
+                ai_response={
+                    "source": source,
+                    "context": context,
+                    "raw_ai_response": raw_ai_response,
+                    "safe_advice": self._advice_to_dict(safe_advice),
+                    "safety_override": safety_override,
+                    "alternatives_considered": safe_advice.alternatives_considered,
+                },
+                status="CREATED",
+            )
+            self.session.add(recommendation)
             analysis_run.status = "SUCCESS"
             analysis_run.finished_at = datetime.now(UTC)
-
             self.session.commit()
-
-            return analysis_run, recommendations
+            return analysis_run, [recommendation]
 
         except Exception as error:
             analysis_run.status = "FAILED"
             analysis_run.error_message = str(error)
             analysis_run.finished_at = datetime.now(UTC)
-
             self.session.commit()
-
             raise
+
+    def _build_candidate(
+        self,
+        user_id: int,
+        registry_market: ExchangeMarket,
+        candle_unit: int,
+        candle_count: int,
+        krw_balance: Decimal,
+    ) -> dict[str, Any]:
+        candles = self._get_recent_candles(
+            market=registry_market.market,
+            candle_unit=candle_unit,
+            count=candle_count,
+        )
+        coin_balance = self._get_latest_balance(
+            user_id=user_id,
+            exchange=registry_market.exchange_code,
+            currency=registry_market.base_asset,
+        )
+        max_order_amount = self.registry_service.calculate_final_max_order_amount(
+            registry_market
+        )
+        enough_candles = len(candles) >= MIN_CANDLES_FOR_ADVICE
+        indicators = (
+            self._calculate_indicators(
+                market=registry_market.market,
+                candle_unit=candle_unit,
+                candles=candles,
+            )
+            if enough_candles
+            else None
+        )
+        return self._candidate_to_dict(
+            registry_market=registry_market,
+            candle_unit=candle_unit,
+            candles=candles,
+            indicators=indicators,
+            krw_balance=krw_balance,
+            coin_balance=coin_balance,
+            max_order_amount=max_order_amount,
+        )
+
+    def _candidate_to_dict(
+        self,
+        registry_market: ExchangeMarket,
+        candle_unit: int,
+        candles: list[MarketCandle],
+        indicators: MarketIndicatorResult | None,
+        krw_balance: Decimal,
+        coin_balance: Decimal,
+        max_order_amount: Decimal,
+    ) -> dict[str, Any]:
+        enough_candles = indicators is not None
+        latest_price = to_decimal(candles[-1].trade_price) if candles else None
+        return {
+            "exchange": registry_market.exchange_code,
+            "market": registry_market.market,
+            "base_asset": registry_market.base_asset,
+            "quote_asset": registry_market.quote_asset,
+            "coingecko_id": registry_market.coingecko_id,
+            "candle_unit": candle_unit,
+            "candle_count": len(candles),
+            "data_quality": "SUFFICIENT" if enough_candles else "INSUFFICIENT",
+            "enough_candles": enough_candles,
+            "latest_price": decimal_to_string_or_none(
+                indicators.latest_price if indicators else latest_price
+            ),
+            "sma_5": decimal_to_string_or_none(
+                indicators.sma_5 if indicators else None
+            ),
+            "sma_20": decimal_to_string_or_none(
+                indicators.sma_20 if indicators else None
+            ),
+            "ema_5": decimal_to_string_or_none(
+                indicators.ema_5 if indicators else None
+            ),
+            "ema_20": decimal_to_string_or_none(
+                indicators.ema_20 if indicators else None
+            ),
+            "rsi_14": decimal_to_string_or_none(
+                indicators.rsi_14 if indicators else None
+            ),
+            "recent_10_candle_change_rate": decimal_to_string_or_none(
+                indicators.recent_10_candle_change_rate if indicators else None
+            ),
+            "volume_ratio_5_to_20": decimal_to_string_or_none(
+                indicators.volume_ratio_5_to_20 if indicators else None
+            ),
+            "trend_label": indicators.trend_label if indicators else "판단 보류",
+            "quote_balance_krw": str(krw_balance),
+            "coin_balance": str(coin_balance),
+            "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
+            "max_order_amount_krw": str(max_order_amount),
+        }
 
     def _get_user(self, user_name: str) -> User:
         user = self.session.scalar(select(User).where(User.name == user_name))
-
         if user is None:
             raise ValueError(f"User not found. name={user_name}")
-
         return user
 
     def _get_recent_candles(
@@ -198,10 +274,7 @@ class AiTradeRecommendationService:
             .order_by(MarketCandle.candle_at.desc())
             .limit(count)
         )
-
-        candles = list(self.session.scalars(statement))
-
-        return list(reversed(candles))
+        return list(reversed(list(self.session.scalars(statement))))
 
     def _get_latest_balance(
         self,
@@ -219,13 +292,8 @@ class AiTradeRecommendationService:
             .order_by(AccountSnapshot.created_at.desc())
             .limit(1)
         )
-
         snapshot = self.session.scalar(statement)
-
-        if snapshot is None:
-            return Decimal("0")
-
-        return to_decimal(snapshot.balance)
+        return Decimal("0") if snapshot is None else to_decimal(snapshot.balance)
 
     def _calculate_indicators(
         self,
@@ -233,176 +301,199 @@ class AiTradeRecommendationService:
         candle_unit: int,
         candles: list[MarketCandle],
     ) -> MarketIndicatorResult:
-        close_prices = [to_decimal(candle.trade_price) for candle in candles]
-        volumes = [to_decimal(candle.candle_acc_trade_volume) for candle in candles]
-
         return calculate_market_indicators(
             market=market,
             candle_unit=candle_unit,
-            close_prices=close_prices,
-            volumes=volumes,
+            close_prices=[to_decimal(candle.trade_price) for candle in candles],
+            volumes=[to_decimal(candle.candle_acc_trade_volume) for candle in candles],
         )
-
-    def _build_ai_context(
-        self,
-        market: str,
-        indicators: MarketIndicatorResult,
-        krw_balance: Decimal,
-        coin_balance: Decimal,
-        max_order_amount_krw: Decimal,
-    ) -> dict[str, Any]:
-        return {
-            "exchange": "UPBIT",
-            "market": market,
-            "candle_unit": indicators.candle_unit,
-            "candle_count": indicators.candle_count,
-            "latest_price": str(indicators.latest_price),
-            "sma_5": decimal_to_string_or_none(indicators.sma_5),
-            "sma_20": decimal_to_string_or_none(indicators.sma_20),
-            "ema_5": decimal_to_string_or_none(indicators.ema_5),
-            "ema_20": decimal_to_string_or_none(indicators.ema_20),
-            "rsi_14": decimal_to_string_or_none(indicators.rsi_14),
-            "recent_10_candle_change_rate": decimal_to_string_or_none(
-                indicators.recent_10_candle_change_rate
-            ),
-            "volume_ratio_5_to_20": decimal_to_string_or_none(
-                indicators.volume_ratio_5_to_20
-            ),
-            "trend_label": indicators.trend_label,
-            "krw_balance": str(krw_balance),
-            "coin_balance": str(coin_balance),
-            "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
-            "max_order_amount_krw": str(max_order_amount_krw),
-            "trading_mode": get_settings().trading_mode,
-        }
 
     def _apply_safety_rules(
         self,
         advice: AiTradeAdvice,
-        krw_balance: Decimal,
-        coin_balance: Decimal,
-        max_order_amount_krw: Decimal,
+        candidates: list[dict[str, Any]],
     ) -> AiTradeAdvice:
-        if advice.action not in {"BUY", "SELL", "HOLD"}:
+        candidate_lookup = {
+            (str(candidate["exchange"]), str(candidate["market"])): candidate
+            for candidate in candidates
+        }
+        selected_candidate = candidate_lookup.get((advice.exchange, advice.market))
+        if selected_candidate is None:
+            fallback = candidates[0]
             return self._override_to_hold(
-                advice=advice,
-                reason="AI 응답 action 값이 허용 범위를 벗어나 보류",
+                advice,
+                exchange=str(fallback["exchange"]),
+                market=str(fallback["market"]),
+                reason="AI가 활성 후보 목록에 없는 마켓을 선택하여 보류했습니다.",
             )
 
         confidence = min(max(advice.confidence, Decimal("0")), Decimal("1"))
-
-        if advice.action == "BUY":
-            if krw_balance < MIN_RECOMMENDED_ORDER_AMOUNT_KRW:
-                return self._override_to_hold(
-                    advice=advice,
-                    reason="KRW 잔고가 내부 최소 추천 금액보다 적어 AI 매수 의견을 보류",
-                )
-
-            recommended_amount = advice.recommended_amount_krw
-
-            if recommended_amount is None or recommended_amount <= 0:
-                recommended_amount = min(max_order_amount_krw, krw_balance)
-
-            recommended_amount = min(
-                recommended_amount,
-                max_order_amount_krw,
-                krw_balance,
+        if advice.action not in {"BUY", "SELL", "HOLD"}:
+            return self._override_to_hold(
+                advice,
+                exchange=advice.exchange,
+                market=advice.market,
+                reason="AI 응답의 action 값이 허용 범위를 벗어나 보류했습니다.",
+            )
+        if advice.action in {"BUY", "SELL"} and not bool(
+            selected_candidate["enough_candles"]
+        ):
+            return self._override_to_hold(
+                advice,
+                exchange=advice.exchange,
+                market=advice.market,
+                reason="선택한 마켓의 캔들 데이터가 부족하여 거래를 보류했습니다.",
             )
 
-            if recommended_amount < MIN_RECOMMENDED_ORDER_AMOUNT_KRW:
+        if advice.action == "BUY":
+            quote_balance = to_decimal(selected_candidate["quote_balance_krw"])
+            maximum = to_decimal(selected_candidate["max_order_amount_krw"])
+            minimum = to_decimal(selected_candidate["minimum_order_amount_krw"])
+            if quote_balance < minimum:
                 return self._override_to_hold(
-                    advice=advice,
-                    reason="최종 매수 추천 금액이 최소 주문 기준보다 작아 보류",
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="KRW 잔고가 최소 주문 금액보다 적어 매수를 보류했습니다.",
                 )
-
-            return AiTradeAdvice(
+            amount = advice.recommended_amount_krw
+            if amount is None or amount <= 0:
+                amount = min(maximum, quote_balance)
+            amount = min(amount, maximum, quote_balance)
+            if amount < minimum:
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="최종 매수 금액이 최소 주문 금액보다 적어 보류했습니다.",
+                )
+            return self._replace_advice(
+                advice,
                 action="BUY",
                 confidence=confidence,
-                recommended_amount_krw=recommended_amount,
+                recommended_amount_krw=amount,
                 recommended_quantity=None,
-                reason=advice.reason,
-                risk_notes=advice.risk_notes,
-                raw_response=advice.raw_response,
             )
 
         if advice.action == "SELL":
+            coin_balance = to_decimal(selected_candidate["coin_balance"])
             if coin_balance <= 0:
                 return self._override_to_hold(
-                    advice=advice,
-                    reason="보유 수량이 없어 AI 매도 의견을 보류",
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="선택한 자산의 보유 수량이 없어 매도를 보류했습니다.",
                 )
-
-            recommended_quantity = advice.recommended_quantity
-
-            if recommended_quantity is None or recommended_quantity <= 0:
-                recommended_quantity = coin_balance
-
-            recommended_quantity = min(recommended_quantity, coin_balance)
-
-            return AiTradeAdvice(
+            quantity = advice.recommended_quantity
+            if quantity is None or quantity <= 0:
+                quantity = coin_balance
+            return self._replace_advice(
+                advice,
                 action="SELL",
                 confidence=confidence,
                 recommended_amount_krw=None,
-                recommended_quantity=recommended_quantity,
-                reason=advice.reason,
-                risk_notes=advice.risk_notes,
-                raw_response=advice.raw_response,
+                recommended_quantity=min(quantity, coin_balance),
             )
 
-        return AiTradeAdvice(
+        return self._replace_advice(
+            advice,
             action="HOLD",
             confidence=confidence,
             recommended_amount_krw=None,
             recommended_quantity=None,
+        )
+
+    def _replace_advice(
+        self,
+        advice: AiTradeAdvice,
+        *,
+        action: str,
+        confidence: Decimal,
+        recommended_amount_krw: Decimal | None,
+        recommended_quantity: Decimal | None,
+    ) -> AiTradeAdvice:
+        return AiTradeAdvice(
+            action=action,
+            exchange=advice.exchange,
+            market=advice.market,
+            confidence=confidence,
+            recommended_amount_krw=recommended_amount_krw,
+            recommended_quantity=recommended_quantity,
             reason=advice.reason,
             risk_notes=advice.risk_notes,
+            primary_factors=advice.primary_factors,
+            alternatives_considered=advice.alternatives_considered,
             raw_response=advice.raw_response,
         )
 
     def _override_to_hold(
         self,
         advice: AiTradeAdvice,
+        *,
+        exchange: str,
+        market: str,
         reason: str,
     ) -> AiTradeAdvice:
-        raw_response = {
-            **advice.raw_response,
-            "system_override": reason,
-            "original_action": advice.action,
-        }
-
         return AiTradeAdvice(
             action="HOLD",
+            exchange=exchange,
+            market=market,
             confidence=Decimal("0.8000"),
             recommended_amount_krw=None,
             recommended_quantity=None,
             reason=reason,
             risk_notes=advice.risk_notes,
+            primary_factors=advice.primary_factors,
+            alternatives_considered=advice.alternatives_considered,
+            raw_response={
+                **advice.raw_response,
+                "system_override": reason,
+                "original_action": advice.action,
+                "original_exchange": advice.exchange,
+                "original_market": advice.market,
+            },
+        )
+
+    def _create_system_guard_advice(
+        self,
+        candidate: dict[str, Any],
+    ) -> AiTradeAdvice:
+        reason = "모든 활성 후보의 캔들 데이터가 부족하여 AI 호출 없이 보류했습니다."
+        raw_response = {
+            "source": "system_guard",
+            "reason": "all_candidates_not_enough_candles",
+        }
+        return AiTradeAdvice(
+            action="HOLD",
+            exchange=str(candidate["exchange"]),
+            market=str(candidate["market"]),
+            confidence=Decimal("0.8000"),
+            recommended_amount_krw=None,
+            recommended_quantity=None,
+            reason=reason,
+            risk_notes="충분한 시계열 데이터가 쌓인 뒤 다시 비교해야 합니다.",
+            primary_factors=["모든 후보의 캔들 데이터 부족"],
+            alternatives_considered=[],
             raw_response=raw_response,
         )
 
+    def _advice_to_dict(self, advice: AiTradeAdvice) -> dict[str, Any]:
+        return {
+            "action": advice.action,
+            "exchange": advice.exchange,
+            "market": advice.market,
+            "confidence": str(advice.confidence),
+            "recommended_amount_krw": decimal_to_string_or_none(
+                advice.recommended_amount_krw
+            ),
+            "recommended_quantity": decimal_to_string_or_none(
+                advice.recommended_quantity
+            ),
+            "reason": advice.reason,
+            "risk_notes": advice.risk_notes,
+            "primary_factors": advice.primary_factors,
+            "alternatives_considered": advice.alternatives_considered,
+        }
+
     def _build_reason(self, advice: AiTradeAdvice) -> str:
         return f"{advice.reason} / 리스크 메모: {advice.risk_notes}"
-
-    def _create_hold_recommendation(
-        self,
-        analysis_run_id: int,
-        user_id: int,
-        market: str,
-        reason: str,
-        ai_response: dict[str, Any],
-    ) -> TradeRecommendation:
-        return TradeRecommendation(
-            analysis_run_id=analysis_run_id,
-            market_snapshot_id=None,
-            user_id=user_id,
-            exchange="UPBIT",
-            market=market,
-            action="HOLD",
-            confidence=Decimal("0.8000"),
-            reason=reason,
-            recommended_amount_krw=None,
-            recommended_quantity=None,
-            ai_model=self.trade_advisor.model,
-            ai_response=ai_response,
-            status="CREATED",
-        )
