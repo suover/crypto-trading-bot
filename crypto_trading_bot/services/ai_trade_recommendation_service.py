@@ -22,6 +22,9 @@ from crypto_trading_bot.db.models import (
 from crypto_trading_bot.services.exchange_market_registry_service import (
     ExchangeMarketRegistryService,
 )
+from crypto_trading_bot.services.market_data_context_service import (
+    MarketDataContextService,
+)
 
 
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
@@ -46,11 +49,15 @@ class AiTradeRecommendationService:
         session: Session,
         trade_advisor: OpenAITradeAdvisor | None = None,
         registry_service: ExchangeMarketRegistryService | None = None,
+        market_data_context_service: MarketDataContextService | None = None,
     ) -> None:
         self.session = session
         self.trade_advisor = trade_advisor or OpenAITradeAdvisor()
         self.registry_service = registry_service or ExchangeMarketRegistryService(
             session
+        )
+        self.market_data_context_service = (
+            market_data_context_service or MarketDataContextService()
         )
 
     def create_ai_recommendations(
@@ -82,7 +89,7 @@ class AiTradeRecommendationService:
             if not registry_markets:
                 raise ValueError("No active UPBIT markets found in registry")
 
-            candidates = [
+            base_candidates = [
                 self._build_candidate(
                     user_id=user.id,
                     registry_market=registry_market,
@@ -92,6 +99,10 @@ class AiTradeRecommendationService:
                 )
                 for registry_market in registry_markets
             ]
+            market_data_result = self.market_data_context_service.enrich_candidates(
+                base_candidates
+            )
+            candidates = market_data_result.candidates
             context = {
                 "account": {
                     "exchange": "UPBIT",
@@ -99,6 +110,8 @@ class AiTradeRecommendationService:
                     "quote_balance_krw": str(krw_balance),
                 },
                 "trading_mode": settings.trading_mode,
+                "external_data_status": market_data_result.external_data_status,
+                "market_sentiment": market_data_result.market_sentiment,
                 "candidates": candidates,
                 "rules": {
                     "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),

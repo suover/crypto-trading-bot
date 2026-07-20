@@ -7,6 +7,9 @@ from crypto_trading_bot.db.models import ExchangeMarket, MarketCandle
 from crypto_trading_bot.services.ai_trade_recommendation_service import (
     AiTradeRecommendationService,
 )
+from crypto_trading_bot.services.market_data_context_service import (
+    MarketDataContextResult,
+)
 
 
 def build_market(market: str, base_asset: str, priority: int) -> ExchangeMarket:
@@ -110,10 +113,36 @@ def build_service(
     registry.calculate_final_max_order_amount.side_effect = lambda market: maximums[
         market.market
     ]
+    market_data = MagicMock()
+
+    def enrich(candidates: list[dict[str, object]]) -> MarketDataContextResult:
+        enriched = [
+            {
+                **candidate,
+                "orderbook": {"available": True, "pressure_label": "BALANCED"},
+                "global_market": {
+                    "available": True,
+                    "id": candidate["coingecko_id"],
+                },
+            }
+            for candidate in candidates
+        ]
+        return MarketDataContextResult(
+            candidates=enriched,
+            market_sentiment={"available": True, "value": 50},
+            external_data_status={
+                "upbit_orderbook": "AVAILABLE",
+                "coingecko": "AVAILABLE",
+                "fear_greed": "AVAILABLE",
+            },
+        )
+
+    market_data.enrich_candidates.side_effect = enrich
     service = StubRecommendationService(
         session,
         trade_advisor=advisor,
         registry_service=registry,
+        market_data_context_service=market_data,
     )
     service.candles_by_market = candles_by_market
     service.balances_by_currency = balances_by_currency
@@ -151,14 +180,62 @@ def test_builds_registry_candidates_and_calls_advisor_once() -> None:
 
     registry.load_active_markets_for_exchange.assert_called_once_with("UPBIT")
     advisor.create_advice.assert_called_once()
-    candidates = advisor.create_advice.call_args.args[0]["candidates"]
+    market_data = service.market_data_context_service
+    market_data.enrich_candidates.assert_called_once()
+    base_candidates = market_data.enrich_candidates.call_args.args[0]
+    assert [candidate["market"] for candidate in base_candidates] == [
+        "KRW-BTC",
+        "KRW-ETH",
+        "KRW-XRP",
+    ]
+    context = advisor.create_advice.call_args.args[0]
+    candidates = context["candidates"]
     assert [candidate["market"] for candidate in candidates] == [
         "KRW-BTC",
         "KRW-ETH",
         "KRW-XRP",
     ]
+    assert all("orderbook" in candidate for candidate in candidates)
+    assert all("global_market" in candidate for candidate in candidates)
+    assert context["market_sentiment"] == {"available": True, "value": 50}
+    assert context["external_data_status"]["coingecko"] == "AVAILABLE"
     assert recommendations[0].market == "KRW-ETH"
     assert recommendations[0].recommended_amount_krw == Decimal("6000")
+    assert recommendations[0].ai_response["context"] == context
+    assert len(recommendations) == 1
+
+
+def test_unavailable_external_source_does_not_prevent_advisor_call() -> None:
+    market = build_market("KRW-BTC", "BTC", 1)
+    service, _, advisor, _ = build_service(
+        markets=[market],
+        candles_by_market={"KRW-BTC": build_candles(20)},
+        balances_by_currency={"KRW": Decimal("10000"), "BTC": Decimal("0")},
+        advice=build_advice(action="HOLD", market="KRW-BTC"),
+    )
+    market_data = service.market_data_context_service
+    default_enrich = market_data.enrich_candidates.side_effect
+
+    def unavailable(candidates: list[dict[str, object]]) -> MarketDataContextResult:
+        default_result = default_enrich(candidates)
+        return MarketDataContextResult(
+            candidates=default_result.candidates,
+            market_sentiment=default_result.market_sentiment,
+            external_data_status={
+                **default_result.external_data_status,
+                "coingecko": "UNAVAILABLE",
+            },
+        )
+
+    market_data.enrich_candidates.side_effect = unavailable
+
+    _, recommendations = service.create_ai_recommendations()
+
+    advisor.create_advice.assert_called_once()
+    assert (
+        advisor.create_advice.call_args.args[0]["external_data_status"]["coingecko"]
+        == "UNAVAILABLE"
+    )
     assert len(recommendations) == 1
 
 
@@ -228,6 +305,8 @@ def test_all_candidates_without_enough_candles_create_system_guard_hold() -> Non
     assert recommendations[0].ai_response["source"] == "system_guard"
     candidates = recommendations[0].ai_response["context"]["candidates"]
     assert all(candidate["enough_candles"] is False for candidate in candidates)
+    assert all("orderbook" in candidate for candidate in candidates)
+    service.market_data_context_service.enrich_candidates.assert_called_once()
 
 
 def test_buy_amount_is_also_capped_by_krw_balance() -> None:
