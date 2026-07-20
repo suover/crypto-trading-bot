@@ -14,6 +14,27 @@ from crypto_trading_bot.config.settings import get_settings
 class UpbitClient:
     BASE_URL = "https://api.upbit.com"
 
+    def get_orderbooks(
+        self,
+        markets: list[str],
+        count: int = 15,
+    ) -> list[dict[str, Any]]:
+        if not markets:
+            raise ValueError("markets must not be empty")
+        if count < 1 or count > 30:
+            raise ValueError("count must be between 1 and 30")
+
+        response = httpx.get(
+            f"{self.BASE_URL}/v1/orderbook",
+            params={"markets": ",".join(markets), "count": count},
+            timeout=5.0,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, list):
+            raise ValueError("Unexpected Upbit orderbook response format")
+        return data
+
     def get_tickers(self, markets: list[str]) -> list[dict[str, Any]]:
         if not markets:
             raise ValueError("markets must not be empty")

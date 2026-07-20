@@ -15,6 +15,17 @@ class Settings(BaseSettings):
 
     upbit_access_key: str = ""
     upbit_secret_key: str = ""
+    upbit_orderbook_enabled: bool = True
+    upbit_orderbook_count: int = 15
+
+    coingecko_enabled: bool = True
+    coingecko_api_base_url: str = "https://api.coingecko.com/api/v3"
+    coingecko_api_key: str = ""
+    coingecko_request_timeout_seconds: float = 5.0
+
+    fear_greed_enabled: bool = True
+    fear_greed_api_base_url: str = "https://api.alternative.me"
+    fear_greed_request_timeout_seconds: float = 5.0
 
     trading_mode: str = "AI_APPROVAL"
     order_execution_mode: str = "MOCK"
