@@ -7,7 +7,10 @@ from crypto_trading_bot.services.approved_order_execution_service import (
     ApprovedOrderExecutionResult,
 )
 from crypto_trading_bot.services.live_order_execution_service import (
+    LIVE_ORDER_FAILED_STATUS,
     LIVE_ORDER_STATUS,
+    LIVE_ORDER_UNKNOWN_STATUS,
+    LIVE_ORDER_WAIT_STATUS,
     LiveOrderExecutionResult,
 )
 from crypto_trading_bot.services.mock_order_attempt_service import (
@@ -144,9 +147,84 @@ def test_build_decision_result_message_for_live_execution() -> None:
 
     assert "처리 결과: 승인 완료" in message
     assert "주문 실행 모드: LIVE" in message
-    assert "주문 상태: 실거래 주문 접수" in message
+    assert "주문 상태: 실거래 주문 확인" in message
+    assert "로컬 상태: LIVE_PLACED" in message
     assert "거래소 주문 ID: live-order-id" in message
-    assert "※ 실제 업비트 주문이 요청되었습니다." in message
+
+
+def test_build_decision_result_message_for_live_unknown() -> None:
+    result = build_approval_decision_result()
+    order_log = build_order_log(trading_mode="LIVE", status=LIVE_ORDER_UNKNOWN_STATUS)
+    order_log.raw_response = {"identifier": "recommendation-1"}
+    live_result = LiveOrderExecutionResult(
+        order_log=order_log,
+        recommendation=result.recommendation,
+        already_executed=False,
+        outcome="UNKNOWN",
+    )
+    message = build_decision_result_message(
+        original_text="승인 요청",
+        result=result,
+        order_execution_result=ApprovedOrderExecutionResult(
+            execution_mode="LIVE",
+            order_log=order_log,
+            live_order_execution_result=live_result,
+        ),
+    )
+    assert "주문 상태: 실거래 결과 확인 필요" in message
+    assert "실제 주문 실행 여부: 확인 불가" in message
+    assert "동일 추천을 다시 승인하거나 수동으로 재주문하지 마세요" in message
+
+
+def test_build_decision_result_message_for_recovered_pending_live_order() -> None:
+    result = build_approval_decision_result()
+    order_log = build_order_log(
+        trading_mode="LIVE",
+        status=LIVE_ORDER_WAIT_STATUS,
+        exchange_order_id="recovered-uuid",
+    )
+    live_result = LiveOrderExecutionResult(
+        order_log=order_log,
+        recommendation=result.recommendation,
+        already_executed=False,
+        recovered=True,
+        pending=True,
+    )
+    message = build_decision_result_message(
+        original_text="승인 요청",
+        result=result,
+        order_execution_result=ApprovedOrderExecutionResult(
+            execution_mode="LIVE",
+            order_log=order_log,
+            live_order_execution_result=live_result,
+        ),
+    )
+    assert "실거래 주문 접수(완료 확인 대기)" in message
+    assert "identifier 조회를 통해 기존 주문을 복구했습니다" in message
+
+
+def test_build_decision_result_message_for_confirmed_live_failure() -> None:
+    result = build_approval_decision_result()
+    order_log = build_order_log(trading_mode="LIVE", status=LIVE_ORDER_FAILED_STATUS)
+    order_log.error_message = "safe rejection"
+    live_result = LiveOrderExecutionResult(
+        order_log=order_log,
+        recommendation=result.recommendation,
+        already_executed=True,
+        outcome="FAILED",
+    )
+    message = build_decision_result_message(
+        original_text="승인 요청",
+        result=result,
+        order_execution_result=ApprovedOrderExecutionResult(
+            execution_mode="LIVE",
+            order_log=order_log,
+            live_order_execution_result=live_result,
+        ),
+    )
+    assert "실거래 주문 실패" in message
+    assert "실제 주문 실행 여부: 실행되지 않음" in message
+    assert "이미 처리된 실거래 주문 결과" in message
 
 
 def test_build_decision_result_message_for_order_execution_error() -> None:

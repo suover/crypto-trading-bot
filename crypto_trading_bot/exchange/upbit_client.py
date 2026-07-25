@@ -9,6 +9,13 @@ import httpx
 import jwt
 
 from crypto_trading_bot.config.settings import get_settings
+from crypto_trading_bot.exchange.upbit_order_exceptions import (
+    UpbitOrderAmbiguousError,
+    UpbitOrderNotFoundError,
+    UpbitOrderOperationError,
+    UpbitOrderRejectedError,
+    UpbitSafeError,
+)
 
 
 class UpbitClient:
@@ -77,24 +84,7 @@ class UpbitClient:
         amount_krw: Decimal,
         identifier: str | None = None,
     ) -> dict[str, Any]:
-        if not market.strip():
-            raise ValueError("market must not be empty")
-
-        if amount_krw <= 0:
-            raise ValueError(
-                f"amount_krw must be greater than 0. amount_krw={amount_krw}"
-            )
-
-        body: dict[str, str] = {
-            "market": market,
-            "side": "bid",
-            "price": self._format_decimal(amount_krw),
-            "ord_type": "price",
-        }
-
-        if identifier:
-            body["identifier"] = identifier
-
+        body = self._build_market_buy_body(market, amount_krw, identifier)
         return self._create_order(body=body)
 
     def create_market_sell_order(
@@ -103,46 +93,239 @@ class UpbitClient:
         quantity: Decimal,
         identifier: str | None = None,
     ) -> dict[str, Any]:
-        if not market.strip():
-            raise ValueError("market must not be empty")
-
-        if quantity <= 0:
-            raise ValueError(f"quantity must be greater than 0. quantity={quantity}")
-
-        body: dict[str, str] = {
-            "market": market,
-            "side": "ask",
-            "volume": self._format_decimal(quantity),
-            "ord_type": "market",
-        }
-
-        if identifier:
-            body["identifier"] = identifier
-
+        body = self._build_market_sell_body(market, quantity, identifier)
         return self._create_order(body=body)
+
+    def test_market_buy_order(
+        self,
+        market: str,
+        amount_krw: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        body = self._build_market_buy_body(market, amount_krw, identifier)
+        return self._submit_order_test(body)
+
+    def test_market_sell_order(
+        self,
+        market: str,
+        quantity: Decimal,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        body = self._build_market_sell_body(market, quantity, identifier)
+        return self._submit_order_test(body)
+
+    def get_order(
+        self,
+        *,
+        uuid: str | None = None,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        if (uuid is None) == (identifier is None):
+            raise ValueError("Exactly one of uuid and identifier must be supplied")
+
+        parameter_name = "uuid" if uuid is not None else "identifier"
+        raw_value = uuid if uuid is not None else identifier
+        value = raw_value.strip() if raw_value is not None else ""
+        if not value:
+            raise ValueError(f"{parameter_name} must not be blank")
+
+        params = {parameter_name: value}
+        response = self._request_order(
+            method="GET",
+            path="/v1/order",
+            operation="get_order",
+            params=params,
+        )
+        return self._decode_order_response(response, "get_order")
 
     def _create_order(
         self,
         body: dict[str, str],
     ) -> dict[str, Any]:
-        response = httpx.post(
-            f"{self.BASE_URL}/v1/orders",
-            json=body,
-            headers={
-                "Authorization": self._create_authorization_header(body),
-                "Content-Type": "application/json",
-                "accept": "application/json",
-            },
-            timeout=5.0,
+        response = self._request_order(
+            method="POST",
+            path="/v1/orders",
+            operation="create_order",
+            json_body=body,
         )
-        response.raise_for_status()
+        return self._decode_order_response(response, "create_order")
 
-        data = response.json()
+    def _submit_order_test(self, body: dict[str, str]) -> dict[str, Any]:
+        response = self._request_order(
+            method="POST",
+            path="/v1/orders/test",
+            operation="test_order",
+            json_body=body,
+        )
+        return self._decode_order_response(response, "test_order")
 
+    def _request_order(
+        self,
+        *,
+        method: str,
+        path: str,
+        operation: str,
+        params: dict[str, str] | None = None,
+        json_body: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        authorization_params = params if params is not None else json_body
+        try:
+            if method == "GET":
+                response = httpx.get(
+                    f"{self.BASE_URL}{path}",
+                    params=params,
+                    headers={
+                        "Authorization": self._create_authorization_header(
+                            authorization_params
+                        ),
+                        "accept": "application/json",
+                    },
+                    timeout=5.0,
+                )
+            else:
+                response = httpx.post(
+                    f"{self.BASE_URL}{path}",
+                    json=json_body,
+                    headers={
+                        "Authorization": self._create_authorization_header(
+                            authorization_params
+                        ),
+                        "Content-Type": "application/json",
+                        "accept": "application/json",
+                    },
+                    timeout=5.0,
+                )
+            response.raise_for_status()
+            return response
+        except httpx.HTTPStatusError as error:
+            raise self._classify_http_error(error, operation) from None
+        except (httpx.TimeoutException, httpx.TransportError) as error:
+            raise UpbitOrderAmbiguousError(
+                UpbitSafeError(
+                    error_type=type(error).__name__,
+                    operation=operation,
+                    message="Upbit response was not confirmed",
+                )
+            ) from None
+
+    @staticmethod
+    def _decode_order_response(
+        response: httpx.Response,
+        operation: str,
+    ) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except ValueError, TypeError:
+            raise UpbitOrderAmbiguousError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an invalid response",
+                )
+            ) from None
         if not isinstance(data, dict):
-            raise ValueError("Unexpected Upbit order response format")
-
+            raise UpbitOrderAmbiguousError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an unexpected response type",
+                )
+            )
         return data
+
+    @staticmethod
+    def _classify_http_error(
+        error: httpx.HTTPStatusError,
+        operation: str,
+    ) -> UpbitOrderOperationError:
+        status_code = error.response.status_code
+        error_name: str | None = None
+        message = "Upbit rejected the order operation"
+        try:
+            payload = error.response.json()
+            error_payload = payload.get("error") if isinstance(payload, dict) else None
+            if isinstance(error_payload, dict):
+                raw_name = error_payload.get("name")
+                raw_message = error_payload.get("message")
+                error_name = (
+                    UpbitClient._sanitize_error_text(str(raw_name), 100)
+                    if raw_name is not None
+                    else None
+                )
+                if raw_message is not None:
+                    message = UpbitClient._sanitize_error_text(str(raw_message), 300)
+        except ValueError, TypeError:
+            message = "Upbit returned an HTTP error with no valid JSON body"
+
+        safe_error = UpbitSafeError(
+            error_type="HTTPStatusError",
+            operation=operation,
+            status_code=status_code,
+            upbit_error_name=error_name,
+            message=message,
+        )
+        if operation == "get_order" and status_code == 404:
+            return UpbitOrderNotFoundError(safe_error)
+        if status_code >= 500:
+            return UpbitOrderAmbiguousError(safe_error)
+        if operation == "create_order":
+            return UpbitOrderRejectedError(safe_error)
+        if 400 <= status_code < 500:
+            return UpbitOrderRejectedError(safe_error)
+        return UpbitOrderAmbiguousError(safe_error)
+
+    @staticmethod
+    def _sanitize_error_text(value: str, limit: int) -> str:
+        sanitized = value
+        settings = get_settings()
+        for secret in (settings.upbit_access_key, settings.upbit_secret_key):
+            if secret:
+                sanitized = sanitized.replace(secret, "[REDACTED]")
+        if "Bearer " in sanitized:
+            sanitized = sanitized.split("Bearer ", maxsplit=1)[0] + "Bearer [REDACTED]"
+        return sanitized[:limit]
+
+    @staticmethod
+    def _build_market_buy_body(
+        market: str,
+        amount_krw: Decimal,
+        identifier: str | None,
+    ) -> dict[str, str]:
+        if not market.strip():
+            raise ValueError("market must not be empty")
+        if amount_krw <= 0:
+            raise ValueError("amount_krw must be greater than 0")
+        body = {
+            "market": market,
+            "side": "bid",
+            "price": UpbitClient._format_decimal(amount_krw),
+            "ord_type": "price",
+        }
+        if identifier:
+            body["identifier"] = identifier
+        return body
+
+    @staticmethod
+    def _build_market_sell_body(
+        market: str,
+        quantity: Decimal,
+        identifier: str | None,
+    ) -> dict[str, str]:
+        if not market.strip():
+            raise ValueError("market must not be empty")
+        if quantity <= 0:
+            raise ValueError("quantity must be greater than 0")
+        body = {
+            "market": market,
+            "side": "ask",
+            "volume": UpbitClient._format_decimal(quantity),
+            "ord_type": "market",
+        }
+        if identifier:
+            body["identifier"] = identifier
+        return body
 
     def _create_authorization_header(
         self,

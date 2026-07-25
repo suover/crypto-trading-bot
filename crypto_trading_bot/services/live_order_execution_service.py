@@ -1,6 +1,8 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from time import sleep
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -10,17 +12,34 @@ from sqlalchemy.orm import Session
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
-from crypto_trading_bot.services.live_order_safety import (
-    validate_live_order_request,
+from crypto_trading_bot.exchange.upbit_order_exceptions import (
+    UpbitOrderAmbiguousError,
+    UpbitOrderNotFoundError,
+    UpbitOrderOperationError,
+    UpbitOrderRejectedError,
 )
+from crypto_trading_bot.services.live_order_safety import validate_live_order_request
 
 
-LIVE_ORDER_STATUS = "LIVE_PLACED"
+LIVE_ORDER_PLACED_STATUS = "LIVE_PLACED"
+LIVE_ORDER_WAIT_STATUS = "LIVE_WAIT"
+LIVE_ORDER_DONE_STATUS = "LIVE_DONE"
+LIVE_ORDER_CANCELLED_STATUS = "LIVE_CANCELLED"
+LIVE_ORDER_FAILED_STATUS = "LIVE_FAILED"
+LIVE_ORDER_UNKNOWN_STATUS = "LIVE_UNKNOWN"
+LIVE_ORDER_STATUS = LIVE_ORDER_PLACED_STATUS
+COUNTED_DAILY_LIVE_ORDER_STATUSES = (
+    LIVE_ORDER_PLACED_STATUS,
+    LIVE_ORDER_WAIT_STATUS,
+    LIVE_ORDER_DONE_STATUS,
+    LIVE_ORDER_CANCELLED_STATUS,
+    LIVE_ORDER_UNKNOWN_STATUS,
+)
 KST = ZoneInfo("Asia/Seoul")
 
 
 class LiveOrderExecutionError(ValueError):
-    """실거래 주문 실행 전 검증 또는 실행 중 문제가 있을 때 발생하는 예외."""
+    """실거래 주문 검증 또는 실행 준비 문제."""
 
 
 @dataclass(frozen=True)
@@ -39,6 +58,48 @@ class LiveOrderExecutionResult:
     order_log: OrderLog
     recommendation: TradeRecommendation
     already_executed: bool
+    outcome: str = "CONFIRMED"
+    recovered: bool = False
+    pending: bool = False
+
+    @property
+    def confirmed(self) -> bool:
+        return self.outcome == "CONFIRMED"
+
+    @property
+    def failed(self) -> bool:
+        return self.outcome == "FAILED"
+
+    @property
+    def unknown(self) -> bool:
+        return self.outcome == "UNKNOWN"
+
+
+def map_upbit_order_state(state: object) -> str:
+    normalized = str(state or "").strip().lower()
+    if normalized == "done":
+        return LIVE_ORDER_DONE_STATUS
+    if normalized in {"wait", "watch"}:
+        return LIVE_ORDER_WAIT_STATUS
+    if normalized == "cancel":
+        return LIVE_ORDER_CANCELLED_STATUS
+    return LIVE_ORDER_PLACED_STATUS
+
+
+def recommendation_status_for_live_order(local_status: str) -> str:
+    if local_status == LIVE_ORDER_FAILED_STATUS:
+        return "LIVE_EXECUTION_FAILED"
+    if local_status == LIVE_ORDER_UNKNOWN_STATUS:
+        return "LIVE_EXECUTION_UNKNOWN"
+    return "LIVE_EXECUTED"
+
+
+def outcome_for_live_order_status(local_status: str) -> str:
+    if local_status == LIVE_ORDER_FAILED_STATUS:
+        return "FAILED"
+    if local_status == LIVE_ORDER_UNKNOWN_STATUS:
+        return "UNKNOWN"
+    return "CONFIRMED"
 
 
 class LiveOrderExecutionService:
@@ -46,36 +107,30 @@ class LiveOrderExecutionService:
         self,
         session: Session,
         upbit_client: UpbitClient | None = None,
+        *,
+        reconciliation_attempts: int = 3,
+        retry_delay_seconds: float = 1.0,
+        sleep_fn: Callable[[float], None] = sleep,
     ) -> None:
         self.session = session
         self.upbit_client = upbit_client or UpbitClient()
+        self.reconciliation_attempts = max(1, reconciliation_attempts)
+        self.retry_delay_seconds = retry_delay_seconds
+        self.sleep_fn = sleep_fn
 
-    def build_execution_plan(
-        self,
-        recommendation_id: int,
-    ) -> LiveOrderExecutionPlan:
-        recommendation = self._get_recommendation(
-            recommendation_id=recommendation_id,
-        )
-
-        self._validate_recommendation_for_live_order(
-            recommendation=recommendation,
-        )
-
+    def build_execution_plan(self, recommendation_id: int) -> LiveOrderExecutionPlan:
+        recommendation = self._get_recommendation(recommendation_id)
+        self._validate_recommendation_for_live_order(recommendation)
         action = recommendation.action.strip().upper()
         amount_krw = self._to_decimal_or_none(recommendation.recommended_amount_krw)
         quantity = self._to_decimal_or_none(recommendation.recommended_quantity)
-
-        settings = get_settings()
-
         validate_live_order_request(
-            settings=settings,
+            settings=get_settings(),
             action=action,
             market=recommendation.market,
             amount_krw=amount_krw,
             quantity=quantity,
         )
-
         return LiveOrderExecutionPlan(
             recommendation_id=recommendation.id,
             exchange=recommendation.exchange,
@@ -92,48 +147,200 @@ class LiveOrderExecutionService:
         approval_request_id: int | None = None,
         commit: bool = True,
     ) -> LiveOrderExecutionResult:
-        recommendation = self._get_recommendation_for_update(
-            recommendation_id=recommendation_id,
-        )
-
+        recommendation = self._get_recommendation_for_update(recommendation_id)
         if recommendation is None:
             raise LiveOrderExecutionError(
-                "Trade recommendation was not found. "
-                f"recommendation_id={recommendation_id}"
+                f"Trade recommendation was not found. recommendation_id={recommendation_id}"
             )
+        existing = self._get_order_log(recommendation.id)
+        if existing is not None:
+            return self._existing_result(existing, recommendation)
 
-        existing_order_log = self._get_order_log(
-            recommendation_id=recommendation.id,
-        )
+        plan = self.build_execution_plan(recommendation.id)
+        self._validate_daily_live_order_limit(recommendation.user_id, plan)
+        self._validate_sell_balance(plan)
+        identifier = f"recommendation-{recommendation.id}"
 
-        if existing_order_log is not None:
-            return LiveOrderExecutionResult(
-                order_log=existing_order_log,
+        try:
+            existing_exchange_order = self.upbit_client.get_order(identifier=identifier)
+        except UpbitOrderNotFoundError:
+            existing_exchange_order = None
+        except UpbitOrderOperationError as error:
+            return self._persist_result(
                 recommendation=recommendation,
-                already_executed=True,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                status=LIVE_ORDER_FAILED_STATUS,
+                exchange_order_id=None,
+                audit=self._audit(
+                    executed=False,
+                    identifier=identifier,
+                    safe_error=error.safe_error.as_dict(),
+                ),
+                error_message=str(error),
+                commit=commit,
             )
 
-        plan = self.build_execution_plan(
-            recommendation_id=recommendation.id,
-        )
+        if existing_exchange_order is not None:
+            return self._persist_exchange_order(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                order_response=existing_exchange_order,
+                recovered=True,
+                create_response=None,
+                commit=commit,
+            )
 
-        self._validate_daily_live_order_limit(
-            user_id=recommendation.user_id,
+        try:
+            create_response = self._place_live_order(plan, identifier)
+        except UpbitOrderRejectedError as error:
+            return self._persist_result(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                status=LIVE_ORDER_FAILED_STATUS,
+                exchange_order_id=None,
+                audit=self._audit(
+                    executed=False,
+                    identifier=identifier,
+                    safe_error=error.safe_error.as_dict(),
+                ),
+                error_message=str(error),
+                commit=commit,
+            )
+        except UpbitOrderAmbiguousError as error:
+            return self._recover_ambiguous_create(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                create_error=error,
+                commit=commit,
+            )
+
+        exchange_order_id = self._extract_exchange_order_id(create_response)
+        try:
+            if exchange_order_id:
+                order_response = self.upbit_client.get_order(uuid=exchange_order_id)
+            else:
+                order_response = self.upbit_client.get_order(identifier=identifier)
+        except UpbitOrderOperationError as error:
+            return self._persist_result(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                status=LIVE_ORDER_PLACED_STATUS,
+                exchange_order_id=exchange_order_id,
+                audit=self._audit(
+                    executed=True,
+                    identifier=identifier,
+                    create_response=create_response,
+                    safe_error=error.safe_error.as_dict(),
+                ),
+                error_message=str(error),
+                commit=commit,
+            )
+
+        return self._persist_exchange_order(
+            recommendation=recommendation,
             plan=plan,
+            approval_request_id=approval_request_id,
+            identifier=identifier,
+            order_response=order_response,
+            recovered=False,
+            create_response=create_response,
+            commit=commit,
         )
 
-        self._validate_sell_balance(
+    def _recover_ambiguous_create(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        identifier: str,
+        create_error: UpbitOrderAmbiguousError,
+        commit: bool,
+    ) -> LiveOrderExecutionResult:
+        last_error: UpbitOrderOperationError = create_error
+        for attempt in range(self.reconciliation_attempts):
+            if attempt:
+                self.sleep_fn(self.retry_delay_seconds)
+            try:
+                order_response = self.upbit_client.get_order(identifier=identifier)
+            except UpbitOrderOperationError as error:
+                last_error = error
+                continue
+            return self._persist_exchange_order(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                order_response=order_response,
+                recovered=True,
+                create_response=None,
+                commit=commit,
+            )
+        return self._persist_result(
+            recommendation=recommendation,
             plan=plan,
+            approval_request_id=approval_request_id,
+            status=LIVE_ORDER_UNKNOWN_STATUS,
+            exchange_order_id=None,
+            audit=self._audit(
+                executed=None,
+                identifier=identifier,
+                safe_error=last_error.safe_error.as_dict(),
+            ),
+            error_message=str(last_error),
+            commit=commit,
         )
 
-        exchange_response = self._place_live_order(
+    def _persist_exchange_order(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        identifier: str,
+        order_response: dict[str, Any],
+        recovered: bool,
+        create_response: dict[str, Any] | None,
+        commit: bool,
+    ) -> LiveOrderExecutionResult:
+        return self._persist_result(
+            recommendation=recommendation,
             plan=plan,
+            approval_request_id=approval_request_id,
+            status=map_upbit_order_state(order_response.get("state")),
+            exchange_order_id=self._extract_exchange_order_id(order_response),
+            audit=self._audit(
+                executed=True,
+                identifier=identifier,
+                recovered=recovered,
+                create_response=create_response,
+                order_status_response=order_response,
+            ),
+            error_message=None,
+            recovered=recovered,
+            commit=commit,
         )
 
-        exchange_order_id = self._extract_exchange_order_id(
-            exchange_response=exchange_response,
-        )
-
+    def _persist_result(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        status: str,
+        exchange_order_id: str | None,
+        audit: dict[str, Any],
+        error_message: str | None,
+        commit: bool,
+        recovered: bool = False,
+    ) -> LiveOrderExecutionResult:
         order_log = OrderLog(
             recommendation_id=recommendation.id,
             approval_request_id=approval_request_id,
@@ -146,11 +353,11 @@ class LiveOrderExecutionService:
             amount_krw=plan.amount_krw,
             quantity=plan.quantity,
             price=None,
-            status=LIVE_ORDER_STATUS,
+            status=status,
             exchange_order_id=exchange_order_id,
-            error_message=None,
+            error_message=error_message,
             raw_response={
-                "actual_order_executed": True,
+                **audit,
                 "recommendation_id": recommendation.id,
                 "approval_request_id": approval_request_id,
                 "market": recommendation.market,
@@ -159,211 +366,180 @@ class LiveOrderExecutionService:
                 if plan.amount_krw is not None
                 else None,
                 "quantity": str(plan.quantity) if plan.quantity is not None else None,
-                "exchange_response": exchange_response,
             },
         )
-
-        recommendation.status = "LIVE_EXECUTED"
-
+        recommendation.status = recommendation_status_for_live_order(status)
         self.session.add(order_log)
         self.session.flush()
-
         if commit:
             self.session.commit()
             self.session.refresh(order_log)
             self.session.refresh(recommendation)
-
+        outcome = outcome_for_live_order_status(status)
         return LiveOrderExecutionResult(
             order_log=order_log,
             recommendation=recommendation,
             already_executed=False,
+            outcome=outcome,
+            recovered=recovered,
+            pending=status in {LIVE_ORDER_PLACED_STATUS, LIVE_ORDER_WAIT_STATUS},
+        )
+
+    @staticmethod
+    def _audit(
+        *,
+        executed: bool | None,
+        identifier: str,
+        recovered: bool = False,
+        create_response: dict[str, Any] | None = None,
+        order_status_response: dict[str, Any] | None = None,
+        safe_error: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "actual_order_executed": executed,
+            "identifier": identifier,
+            "recovered_by_identifier": recovered,
+            "create_response": create_response,
+            "order_status_response": order_status_response,
+            "safe_error": safe_error,
+        }
+
+    @staticmethod
+    def _existing_result(
+        order_log: OrderLog,
+        recommendation: TradeRecommendation,
+    ) -> LiveOrderExecutionResult:
+        outcome = outcome_for_live_order_status(order_log.status)
+        raw_response = order_log.raw_response or {}
+        return LiveOrderExecutionResult(
+            order_log=order_log,
+            recommendation=recommendation,
+            already_executed=True,
+            outcome=outcome,
+            recovered=bool(raw_response.get("recovered_by_identifier")),
+            pending=order_log.status
+            in {LIVE_ORDER_PLACED_STATUS, LIVE_ORDER_WAIT_STATUS},
         )
 
     def _validate_daily_live_order_limit(
-        self,
-        user_id: int,
-        plan: LiveOrderExecutionPlan,
+        self, user_id: int, plan: LiveOrderExecutionPlan
     ) -> None:
-        plan_amount_krw = self._get_plan_amount_for_daily_limit(plan)
-
-        if plan_amount_krw is None:
+        plan_amount = self._get_plan_amount_for_daily_limit(plan)
+        if plan_amount is None:
             return
-
-        settings = get_settings()
-        today_live_order_amount_krw = self._get_today_live_order_amount_krw(
-            user_id=user_id,
-        )
-        expected_total_amount_krw = today_live_order_amount_krw + plan_amount_krw
-
-        if expected_total_amount_krw > settings.daily_max_order_amount_krw:
+        current = self._get_today_live_order_amount_krw(user_id)
+        maximum = Decimal(str(get_settings().daily_max_order_amount_krw))
+        if current + plan_amount > maximum:
             raise LiveOrderExecutionError(
                 "Daily live order amount limit exceeded. "
-                f"today_live_order_amount_krw={today_live_order_amount_krw}, "
-                f"new_order_amount_krw={plan_amount_krw}, "
-                f"expected_total_amount_krw={expected_total_amount_krw}, "
-                "daily_max_order_amount_krw="
-                f"{settings.daily_max_order_amount_krw}"
+                f"today_live_order_amount_krw={current}, "
+                f"new_order_amount_krw={plan_amount}, "
+                f"daily_max_order_amount_krw={maximum}"
             )
 
-    def _get_today_live_order_amount_krw(
-        self,
-        user_id: int,
-    ) -> Decimal:
+    def _get_today_live_order_amount_krw(self, user_id: int) -> Decimal:
         start_utc, end_utc = self._get_today_range_in_utc()
         statement = select(func.coalesce(func.sum(OrderLog.amount_krw), 0)).where(
             OrderLog.user_id == user_id,
             OrderLog.trading_mode == "LIVE",
-            OrderLog.status == LIVE_ORDER_STATUS,
+            OrderLog.status.in_(COUNTED_DAILY_LIVE_ORDER_STATUSES),
             OrderLog.amount_krw.is_not(None),
             OrderLog.created_at >= start_utc,
             OrderLog.created_at < end_utc,
         )
-
-        total_amount = self.session.scalar(statement)
-
-        return Decimal(str(total_amount or 0))
+        return Decimal(str(self.session.scalar(statement) or 0))
 
     @staticmethod
     def _get_plan_amount_for_daily_limit(
         plan: LiveOrderExecutionPlan,
     ) -> Decimal | None:
-        if plan.amount_krw is None:
-            return None
-
-        return Decimal(str(plan.amount_krw))
+        return Decimal(str(plan.amount_krw)) if plan.amount_krw is not None else None
 
     @staticmethod
     def _get_today_range_in_utc() -> tuple[datetime, datetime]:
         today_kst = datetime.now(KST).date()
         start_kst = datetime.combine(today_kst, time.min, tzinfo=KST)
-        next_day_start_kst = start_kst + timedelta(days=1)
+        return start_kst.astimezone(UTC), (start_kst + timedelta(days=1)).astimezone(
+            UTC
+        )
 
-        return start_kst.astimezone(UTC), next_day_start_kst.astimezone(UTC)
-
-    def _validate_sell_balance(
-        self,
-        plan: LiveOrderExecutionPlan,
-    ) -> None:
+    def _validate_sell_balance(self, plan: LiveOrderExecutionPlan) -> None:
         if plan.action != "SELL":
             return
-
         if plan.quantity is None:
             raise LiveOrderExecutionError("SELL live order requires quantity")
-
         currency = self._get_currency_from_market(plan.market)
-        accounts = self.upbit_client.get_accounts()
-
-        for account in accounts:
+        for account in self.upbit_client.get_accounts():
             if account.get("currency") != currency:
                 continue
-
             raw_balance = account.get("balance")
-
             try:
-                available_balance = Decimal(str(raw_balance))
-            except (InvalidOperation, TypeError, ValueError) as exc:
+                available = Decimal(str(raw_balance))
+            except (InvalidOperation, TypeError, ValueError) as error:
                 raise LiveOrderExecutionError(
-                    "Live sell account balance is invalid. "
-                    f"market={plan.market}, "
-                    f"currency={currency}, "
-                    f"balance={raw_balance}"
-                ) from exc
-
-            if available_balance < plan.quantity:
+                    f"Live sell account balance is invalid. market={plan.market}"
+                ) from error
+            if available < plan.quantity:
                 raise LiveOrderExecutionError(
                     "Insufficient available balance for live sell order. "
-                    f"market={plan.market}, "
-                    f"currency={currency}, "
-                    f"required_quantity={plan.quantity}, "
-                    f"available_balance={available_balance}"
+                    f"required_quantity={plan.quantity}, available_balance={available}"
                 )
-
             return
-
         raise LiveOrderExecutionError(
-            "Live sell account balance was not found. "
-            f"market={plan.market}, "
-            f"currency={currency}"
+            f"Live sell account balance was not found. market={plan.market}"
         )
 
     @staticmethod
-    def _get_currency_from_market(
-        market: str,
-    ) -> str:
-        market_parts = market.split("-", maxsplit=1)
-
-        if len(market_parts) != 2 or not market_parts[0] or not market_parts[1]:
+    def _get_currency_from_market(market: str) -> str:
+        parts = market.split("-", maxsplit=1)
+        if len(parts) != 2 or not all(parts):
             raise LiveOrderExecutionError(
                 f"Live sell order market format is invalid. market={market}"
             )
-
-        return market_parts[1]
+        return parts[1]
 
     def _place_live_order(
-        self,
-        plan: LiveOrderExecutionPlan,
+        self, plan: LiveOrderExecutionPlan, identifier: str
     ) -> dict[str, Any]:
-        identifier = f"recommendation-{plan.recommendation_id}"
-
         if plan.action == "BUY":
             if plan.amount_krw is None:
                 raise LiveOrderExecutionError("BUY live order requires amount_krw")
-
             return self.upbit_client.create_market_buy_order(
                 market=plan.market,
                 amount_krw=plan.amount_krw,
                 identifier=identifier,
             )
-
         if plan.quantity is None:
             raise LiveOrderExecutionError("SELL live order requires quantity")
-
         return self.upbit_client.create_market_sell_order(
             market=plan.market,
             quantity=plan.quantity,
             identifier=identifier,
         )
 
-    def _get_recommendation(
-        self,
-        recommendation_id: int,
-    ) -> TradeRecommendation:
-        recommendation = self.session.get(
-            TradeRecommendation,
-            recommendation_id,
-        )
-
+    def _get_recommendation(self, recommendation_id: int) -> TradeRecommendation:
+        recommendation = self.session.get(TradeRecommendation, recommendation_id)
         if recommendation is None:
             raise LiveOrderExecutionError(
-                "Trade recommendation was not found. "
-                f"recommendation_id={recommendation_id}"
+                f"Trade recommendation was not found. recommendation_id={recommendation_id}"
             )
-
         return recommendation
 
     def _get_recommendation_for_update(
-        self,
-        recommendation_id: int,
+        self, recommendation_id: int
     ) -> TradeRecommendation | None:
-        statement = (
+        return self.session.scalar(
             select(TradeRecommendation)
             .where(TradeRecommendation.id == recommendation_id)
             .with_for_update()
         )
 
-        return self.session.scalar(statement)
-
-    def _get_order_log(
-        self,
-        recommendation_id: int,
-    ) -> OrderLog | None:
-        statement = (
+    def _get_order_log(self, recommendation_id: int) -> OrderLog | None:
+        return self.session.scalar(
             select(OrderLog)
             .where(OrderLog.recommendation_id == recommendation_id)
             .with_for_update()
         )
-
-        return self.session.scalar(statement)
 
     @staticmethod
     def _validate_recommendation_for_live_order(
@@ -373,35 +549,23 @@ class LiveOrderExecutionService:
             raise LiveOrderExecutionError(
                 f"Live order only supports UPBIT. exchange={recommendation.exchange}"
             )
-
         if recommendation.status != "APPROVED":
             raise LiveOrderExecutionError(
                 "Trade recommendation must be APPROVED for live order. "
-                f"recommendation_id={recommendation.id}, "
-                f"status={recommendation.status}"
+                f"recommendation_id={recommendation.id}, status={recommendation.status}"
             )
-
         if recommendation.action not in {"BUY", "SELL"}:
             raise LiveOrderExecutionError(
-                "Trade recommendation action must be BUY or SELL for live order. "
-                f"recommendation_id={recommendation.id}, "
-                f"action={recommendation.action}"
+                f"Trade recommendation action must be BUY or SELL. action={recommendation.action}"
             )
 
     @staticmethod
     def _to_decimal_or_none(value: object) -> Decimal | None:
-        if value is None:
-            return None
-
-        return Decimal(str(value))
+        return Decimal(str(value)) if value is not None else None
 
     @staticmethod
     def _extract_exchange_order_id(
         exchange_response: dict[str, Any],
     ) -> str | None:
-        uuid_value = exchange_response.get("uuid")
-
-        if uuid_value is None:
-            return None
-
-        return str(uuid_value)
+        value = exchange_response.get("uuid")
+        return str(value) if value is not None else None

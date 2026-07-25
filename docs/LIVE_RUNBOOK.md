@@ -1,40 +1,45 @@
-# 제한적 라이브 테스트 런북
+# 첫 5,000 KRW 제한적 LIVE 주문 런북
 
-이 문서는 첫 제한적 라이브 주문 테스트를 위한 운영 절차입니다. 투자 조언이 아니며, 이 프로젝트는 수익을 보장하지 않습니다. 라이브 거래는 실제 손실을 만들 수 있으므로 작은 금액으로 수동 확인 절차를 거쳐야 합니다.
+이 절차는 수동 승인된 `KRW-BTC` BUY 1건만 검증하기 위한 것입니다. 예약 LIVE 거래는 이 기능에서 활성화하지 않습니다.
 
-## 현재 권장 라이브 테스트 정책
+## Phase 1: 안전 준비
 
-- 수동 AI 분석만 사용합니다.
-- Telegram 승인이 반드시 필요합니다.
-- 스케줄러는 OFF 상태로 유지합니다.
-- 첫 테스트는 1회 5,000 KRW로 제한합니다.
-- 허용 마켓은 `ALLOWED_MARKETS=KRW-BTC`만 사용합니다.
+서버를 다음 안전 상태로 유지합니다.
 
-## 사전 체크리스트
-
-라이브 테스트 전에 다음 항목을 모두 확인합니다.
-
-- DB 백업이 완료되었습니다.
-- `telegram-listener`가 실행 중입니다.
-- `mock-order-retry-worker`가 실행 중입니다.
-- `ai-trade-scheduler`가 중지되어 있습니다.
-- Upbit API 키에 출금 권한이 없습니다.
-- Upbit API 허용 IP가 서버 IP로 올바르게 설정되어 있습니다.
-- 서버 `.env` 권한이 `600`입니다.
-- 백업 파일 권한이 `600`입니다.
-- 서버 런타임 안전 점검이 `--strict-live` 모드로 통과했습니다.
-- Python 라이브 준비 상태 점검이 strict 모드로 통과했습니다.
-
-권한 확인 예시:
-
-```bash
-ls -l .env
-ls -l ${HOME}/backups/crypto_trading_bot_*.sql
+```env
+ORDER_EXECUTION_MODE=MOCK
+LIVE_ORDER_ENABLED=false
+LIVE_ORDER_CONFIRMATION=
+MAX_ORDER_AMOUNT_KRW=5000
+DAILY_MAX_ORDER_AMOUNT_KRW=5000
+ALLOWED_MARKETS=KRW-BTC
+AI_ANALYSIS_SCHEDULER_ENABLED=false
 ```
 
-## 제한적 라이브 테스트용 `.env` 값
+진행 전에 다음을 모두 확인합니다.
 
-첫 제한적 라이브 테스트에서는 다음 값을 사용합니다.
+- DB 백업과 `.env` 백업이 존재합니다.
+- `.env`와 백업 파일 권한이 모두 `600`입니다.
+- AI 스케줄러가 중지되어 있고 시작되지 않습니다.
+- Telegram listener가 실행 중입니다.
+- Upbit 키에 주문 및 주문 조회 권한이 있습니다.
+- Upbit 키에 출금 권한이 없습니다.
+- 서버 IP가 Upbit 허용 IP에 정확히 등록되어 있습니다.
+
+## Phase 2: 공식 안전 주문 테스트
+
+```bash
+docker compose --profile manual run --rm ai-trade-analysis \
+  python -m scripts.check_upbit_order_test \
+  --market KRW-BTC \
+  --amount-krw 5000
+```
+
+이 명령은 Upbit `/v1/orders/test`만 호출합니다. 실제 주문과 실제 수수료는 발생하지 않으며, recommendation·approval request·`order_logs`를 변경하지 않습니다. 매 실행마다 만든 테스트 identifier는 실제 주문 identifier로 재사용하지 않습니다. 실패하면 LIVE 테스트를 중단합니다.
+
+## Phase 3: 제한된 LIVE 주문 1건
+
+공식 주문 테스트 성공 후에만 다음 값으로 변경합니다.
 
 ```env
 ORDER_EXECUTION_MODE=LIVE
@@ -46,88 +51,35 @@ ALLOWED_MARKETS=KRW-BTC
 AI_ANALYSIS_SCHEDULER_ENABLED=false
 ```
 
-실제 API 키와 토큰은 문서에 기록하지 않습니다. 서버 `.env`에서만 관리합니다.
-
-## 서버 런타임 안전 점검
-
-Python 라이브 준비 상태 점검 전에 서버 런타임 구성이 안전한지 확인합니다.
+필요한 장기 실행 서비스만 재시작하며 스케줄러는 시작하지 않습니다. 이어서 엄격 점검을 실행합니다.
 
 ```bash
 bash scripts/check_server_runtime_safety.sh --strict-live
+docker compose --profile manual run --rm ai-trade-analysis \
+  python -m scripts.check_live_trading_readiness --strict
 ```
 
-이 스크립트는 컨테이너를 변경하지 않고 주문도 실행하지 않습니다.
+점검이 모두 성공한 뒤 수동 AI 분석을 한 번만 실행합니다. 만료되지 않은 `KRW-BTC` BUY 추천 중 정확히 5,000 KRW인 한 건만 Telegram에서 승인합니다. 다른 마켓·액션·금액은 승인하지 않습니다.
 
-## 라이브 준비 상태 확인
-
-서버 런타임 안전 점검을 통과한 뒤 Python 레벨 라이브 준비 상태를 엄격 모드로 확인합니다.
+## Phase 4: 주문 재조정
 
 ```bash
-docker compose --profile manual run --rm ai-trade-analysis python -m scripts.check_live_trading_readiness --strict
+docker compose --profile manual run --rm ai-trade-analysis \
+  python -m scripts.check_live_order_status \
+  --recommendation-id <ID>
 ```
 
-실패 항목이 있으면 라이브 테스트를 진행하지 않습니다.
+Telegram 결과, Upbit 앱 주문 내역, 로컬 `order_logs`, recommendation 상태, exchange UUID, 체결 수량과 지급 수수료를 서로 대조합니다. `LIVE_UNKNOWN`이면 동일 추천을 다시 승인하거나 수동 재주문하지 말고 이 조회와 Upbit 주문 내역 확인을 먼저 수행합니다.
 
-## 수동 AI 분석 실행
+## Phase 5: 즉시 롤백
 
-스케줄러를 사용하지 않고 수동으로 1회 분석합니다.
-
-```bash
-docker compose --profile manual run --rm ai-trade-analysis
-```
-
-## Telegram 승인 규칙
-
-Telegram 승인 요청을 받은 뒤 다음 기준을 확인합니다.
-
-- 마켓이 예상한 `KRW-BTC`인지 확인합니다.
-- 주문 금액이 예상한 5,000 KRW 범위인지 확인합니다.
-- 액션이 예상과 다르면 승인하지 않습니다.
-- 마켓이나 금액이 예상과 다르면 승인하지 않습니다.
-- 조금이라도 이상하면 거절합니다.
-
-## 승인 후 확인
-
-승인 후에는 다음을 확인합니다.
-
-- Telegram 결과 메시지를 확인합니다.
-- Upbit 앱 또는 주문 내역에서 실제 주문 결과를 확인합니다.
-- 애플리케이션 로그를 확인합니다.
-
-로그 확인 예시:
-
-```bash
-docker compose logs --tail=100 telegram-listener
-docker compose logs --tail=100 mock-order-retry-worker
-```
-
-## 즉시 중지 또는 롤백
-
-이상이 있거나 라이브 테스트를 종료하려면 서버 `.env`를 안전 값으로 되돌립니다.
+한 건의 확인이 끝나거나 이상이 감지되면 즉시 다음 상태로 되돌립니다.
 
 ```env
 ORDER_EXECUTION_MODE=MOCK
 LIVE_ORDER_ENABLED=false
 LIVE_ORDER_CONFIRMATION=
+AI_ANALYSIS_SCHEDULER_ENABLED=false
 ```
 
-변경 후 listener와 worker를 재시작합니다.
-
-```bash
-docker compose up -d --build telegram-listener mock-order-retry-worker
-```
-
-스케줄러가 실행 중이면 중지합니다.
-
-```bash
-docker compose --profile scheduler stop ai-trade-scheduler
-```
-
-## 라이브 테스트 후 체크리스트
-
-- DB 주문 로그를 확인합니다.
-- Upbit 실제 주문 결과와 DB 기록이 맞는지 확인합니다.
-- 테스트 후 DB 백업을 새로 생성합니다.
-- 실행 시각, 설정값, Telegram 승인 내용, 실제 주문 결과를 수동으로 기록합니다.
-
-테스트 결과가 예상과 다르면 추가 라이브 테스트를 진행하지 말고 원인을 먼저 확인합니다.
+영향받는 장기 실행 서비스만 재시작하고 스케줄러는 계속 중지합니다. 이 기능으로 예약 LIVE 거래를 활성화하지 않습니다.

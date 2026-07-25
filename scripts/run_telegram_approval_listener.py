@@ -279,27 +279,71 @@ def append_live_order_result_message(
     live_order_error = order_execution_result.error_message
 
     if live_order_execution_result is not None and live_order_log is not None:
-        message_lines.extend(
-            [
-                "처리 결과: 승인 완료",
-                "주문 실행 모드: LIVE",
-                "주문 상태: 실거래 주문 접수",
-                f"마켓: {live_order_log.market}",
-                f"매매 구분: {live_order_log.side}",
-                f"주문 방식: {live_order_log.order_type}",
-                f"주문 금액: {format_decimal(live_order_log.amount_krw)}원",
-                f"주문 수량: {format_decimal(live_order_log.quantity, 10)}",
-                f"거래소 주문 ID: {live_order_log.exchange_order_id}",
-                "",
-                "※ 실제 업비트 주문이 요청되었습니다.",
-            ]
+        raw_response = live_order_log.raw_response or {}
+        identifier = raw_response.get(
+            "identifier", f"recommendation-{live_order_log.recommendation_id}"
         )
+
+        if live_order_execution_result.unknown:
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 실행 모드: LIVE",
+                    "주문 상태: 실거래 결과 확인 필요",
+                    "실제 주문 실행 여부: 확인 불가",
+                    f"로컬 상태: {live_order_log.status}",
+                    f"추천 ID: {live_order_log.recommendation_id}",
+                    f"identifier: {identifier}",
+                    "",
+                    "※ 동일 추천을 다시 승인하거나 수동으로 재주문하지 마세요.",
+                    "※ Upbit 주문 내역과 서버 주문 상태 조회 명령을 먼저 확인하세요.",
+                ]
+            )
+        elif live_order_execution_result.failed:
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 실행 모드: LIVE",
+                    "주문 상태: 실거래 주문 실패",
+                    "실제 주문 실행 여부: 실행되지 않음",
+                    f"로컬 상태: {live_order_log.status}",
+                    f"오류 사유: {live_order_log.error_message or '확정 거절'}",
+                ]
+            )
+        else:
+            status_text = (
+                "실거래 주문 확인"
+                if not live_order_execution_result.pending
+                else "실거래 주문 접수(완료 확인 대기)"
+            )
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 실행 모드: LIVE",
+                    f"주문 상태: {status_text}",
+                    f"로컬 상태: {live_order_log.status}",
+                    f"마켓: {live_order_log.market}",
+                    f"매매 구분: {live_order_log.side}",
+                    f"주문 방식: {live_order_log.order_type}",
+                    f"주문 금액: {format_decimal(live_order_log.amount_krw)}원",
+                    f"주문 수량: {format_decimal(live_order_log.quantity, 10)}",
+                    f"거래소 주문 ID: {live_order_log.exchange_order_id}",
+                ]
+            )
+            if live_order_execution_result.pending:
+                message_lines.append(
+                    "※ 주문은 제출되었으나 체결 완료 여부는 아직 확인 중입니다."
+                )
+            if live_order_execution_result.recovered:
+                message_lines.append(
+                    "※ 거래소 identifier 조회를 통해 기존 주문을 복구했습니다."
+                )
 
         if live_order_execution_result.already_executed:
             message_lines.extend(
                 [
                     "",
-                    "※ 이미 처리된 실거래 주문 결과입니다.",
+                    "※ 이미 처리된 실거래 주문 결과입니다. 새 주문은 제출하지 않았습니다.",
                 ]
             )
 

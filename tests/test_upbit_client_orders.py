@@ -1,10 +1,17 @@
 from decimal import Decimal
 from typing import Any
 
+import httpx
+import jwt
 import pytest
 
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
+from crypto_trading_bot.exchange.upbit_order_exceptions import (
+    UpbitOrderAmbiguousError,
+    UpbitOrderNotFoundError,
+    UpbitOrderRejectedError,
+)
 
 
 class FakeResponse:
@@ -179,3 +186,169 @@ def test_create_authorization_header_includes_query_hash_for_order_body() -> Non
     )
 
     assert header.startswith("Bearer ")
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "expected_body"),
+    [
+        (
+            "test_market_buy_order",
+            {"market": "KRW-BTC", "amount_krw": Decimal("5000")},
+            {
+                "market": "KRW-BTC",
+                "side": "bid",
+                "price": "5000",
+                "ord_type": "price",
+            },
+        ),
+        (
+            "test_market_sell_order",
+            {"market": "KRW-BTC", "quantity": Decimal("0.0001")},
+            {
+                "market": "KRW-BTC",
+                "side": "ask",
+                "volume": "0.0001",
+                "ord_type": "market",
+            },
+        ),
+    ],
+)
+def test_order_test_methods_use_only_test_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
+    kwargs: dict[str, object],
+    expected_body: dict[str, str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post(url: str, **request: object) -> FakeResponse:
+        captured.update({"url": url, **request})
+        return FakeResponse({"result": "success"})
+
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.post", fake_post
+    )
+    getattr(UpbitClient(), method_name)(**kwargs)
+    assert captured["url"] == "https://api.upbit.com/v1/orders/test"
+    assert captured["json"] == expected_body
+    assert captured["url"] != "https://api.upbit.com/v1/orders"
+
+
+@pytest.mark.parametrize(
+    ("lookup", "expected_params"),
+    [
+        ({"uuid": "order-uuid"}, {"uuid": "order-uuid"}),
+        ({"identifier": "recommendation-1"}, {"identifier": "recommendation-1"}),
+    ],
+)
+def test_get_order_uses_authenticated_lookup_parameter(
+    monkeypatch: pytest.MonkeyPatch,
+    lookup: dict[str, str],
+    expected_params: dict[str, str],
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get(url: str, **request: object) -> FakeResponse:
+        captured.update({"url": url, **request})
+        return FakeResponse({"uuid": "order-uuid"})
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", fake_get)
+    UpbitClient().get_order(**lookup)
+    assert captured["url"] == "https://api.upbit.com/v1/order"
+    assert captured["params"] == expected_params
+    token = str(captured["headers"]["Authorization"]).removeprefix("Bearer ")
+    payload = jwt.decode(
+        token,
+        "test-secret-key-for-jwt-hs512-unit-test-only-0123456789abcdef0123456789abcdef",
+        algorithms=["HS512"],
+    )
+    assert "query_hash" in payload
+
+
+@pytest.mark.parametrize(
+    "lookup",
+    [{}, {"uuid": "x", "identifier": "y"}, {"uuid": " "}, {"identifier": ""}],
+)
+def test_get_order_rejects_invalid_lookup_values(lookup: dict[str, str]) -> None:
+    with pytest.raises(ValueError):
+        UpbitClient().get_order(**lookup)
+
+
+def test_get_order_404_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    request = httpx.Request("GET", "https://api.upbit.com/v1/order")
+    response = httpx.Response(
+        404,
+        request=request,
+        json={"error": {"name": "order_not_found", "message": "not found"}},
+    )
+
+    def fake_get(*args: object, **kwargs: object) -> httpx.Response:
+        return response
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", fake_get)
+    with pytest.raises(UpbitOrderNotFoundError):
+        UpbitClient().get_order(identifier="recommendation-1")
+
+
+def test_create_4xx_is_rejected_and_sanitized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = httpx.Request("POST", "https://api.upbit.com/v1/orders")
+    response = httpx.Response(
+        400,
+        request=request,
+        json={
+            "error": {
+                "name": "validation_error",
+                "message": (
+                    "test-access-key "
+                    "test-secret-key-for-jwt-hs512-unit-test-only-"
+                    "0123456789abcdef0123456789abcdef"
+                ),
+            }
+        },
+    )
+
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.post",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderRejectedError) as captured:
+        UpbitClient().create_market_buy_order("KRW-BTC", Decimal("5000"))
+    assert "test-access-key" not in str(captured.value)
+    assert "test-secret-key-for-jwt" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout("timeout"),
+        httpx.ConnectError("connection failed"),
+    ],
+)
+def test_create_transport_failure_is_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    def fake_post(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.post", fake_post
+    )
+    with pytest.raises(UpbitOrderAmbiguousError):
+        UpbitClient().create_market_buy_order("KRW-BTC", Decimal("5000"))
+
+
+def test_create_5xx_with_malformed_body_is_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request = httpx.Request("POST", "https://api.upbit.com/v1/orders")
+    response = httpx.Response(503, request=request, content=b"not-json")
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.post",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderAmbiguousError) as captured:
+        UpbitClient().create_market_buy_order("KRW-BTC", Decimal("5000"))
+    assert "Authorization" not in str(captured.value)

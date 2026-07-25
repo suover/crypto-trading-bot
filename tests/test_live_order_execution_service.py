@@ -10,6 +10,10 @@ from crypto_trading_bot.services.live_order_execution_service import (
     LiveOrderExecutionError,
     LiveOrderExecutionService,
 )
+from crypto_trading_bot.exchange.upbit_order_exceptions import (
+    UpbitOrderNotFoundError,
+    UpbitSafeError,
+)
 from crypto_trading_bot.services.live_order_safety import (
     LIVE_ORDER_CONFIRMATION_TEXT,
     LiveOrderSafetyError,
@@ -139,9 +143,31 @@ class FakeUpbitClient:
         self.buy_orders: list[dict[str, Any]] = []
         self.sell_orders: list[dict[str, Any]] = []
         self.accounts = accounts or []
+        self.lookup_calls: list[dict[str, str | None]] = []
 
     def get_accounts(self) -> list[dict[str, Any]]:
         return self.accounts
+
+    def get_order(
+        self,
+        *,
+        uuid: str | None = None,
+        identifier: str | None = None,
+    ) -> dict[str, Any]:
+        self.lookup_calls.append({"uuid": uuid, "identifier": identifier})
+        if identifier is not None and not self.buy_orders and not self.sell_orders:
+            raise UpbitOrderNotFoundError(
+                UpbitSafeError(
+                    error_type="HTTPStatusError",
+                    operation="get_order",
+                    status_code=404,
+                    message="Order not found",
+                )
+            )
+        return {
+            "uuid": uuid or "recovered-order-uuid",
+            "identifier": identifier,
+        }
 
     def create_market_buy_order(
         self,
