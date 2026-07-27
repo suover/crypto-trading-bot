@@ -1,0 +1,127 @@
+from pathlib import Path
+
+import pytest
+from sqlalchemy.engine import make_url
+
+from crypto_trading_bot.config.settings import Settings
+
+
+SETTINGS_ENV_NAMES = (
+    "DATABASE_URL",
+    "DATABASE_HOST",
+    "DATABASE_PORT",
+    "DATABASE_NAME",
+    "DATABASE_USER",
+    "DATABASE_PASSWORD",
+    "DATABASE_PASSWORD_FILE",
+    "OPENAI_API_KEY",
+    "OPENAI_API_KEY_FILE",
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_BOT_TOKEN_FILE",
+    "UPBIT_ACCESS_KEY",
+    "UPBIT_ACCESS_KEY_FILE",
+    "UPBIT_SECRET_KEY",
+    "UPBIT_SECRET_KEY_FILE",
+)
+
+
+@pytest.fixture(autouse=True)
+def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in SETTINGS_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+
+
+def write_secret(path: Path, value: str) -> Path:
+    path.write_text(value, encoding="utf-8")
+    return path
+
+
+def test_secret_file_content_is_loaded_and_trimmed(tmp_path: Path) -> None:
+    secret_file = write_secret(tmp_path / "openai_api_key", "file-openai-key\n")
+
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+        openai_api_key_file=str(secret_file),
+    )
+
+    assert settings.openai_api_key == "file-openai-key"
+
+
+def test_secret_file_takes_priority_over_direct_value(tmp_path: Path) -> None:
+    secret_file = write_secret(tmp_path / "upbit_access_key", "file-access-key")
+
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+        upbit_access_key="direct-access-key",
+        upbit_access_key_file=str(secret_file),
+    )
+
+    assert settings.upbit_access_key == "file-access-key"
+
+
+def test_direct_value_is_used_without_secret_file() -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+        telegram_bot_token="direct-telegram-token",
+        telegram_bot_token_file="",
+    )
+
+    assert settings.telegram_bot_token == "direct-telegram-token"
+
+
+def test_database_url_supports_special_characters(tmp_path: Path) -> None:
+    password = "test@password:/#%?"
+    password_file = write_secret(tmp_path / "database_password", password)
+
+    settings = Settings(
+        _env_file=None,
+        database_host="database.test",
+        database_port=6543,
+        database_name="test_database",
+        database_user="test_user",
+        database_password_file=str(password_file),
+    )
+
+    parsed = make_url(settings.database_url)
+
+    assert parsed.username == "test_user"
+    assert parsed.password == password
+    assert parsed.host == "database.test"
+    assert parsed.port == 6543
+    assert parsed.database == "test_database"
+
+
+def test_missing_required_database_secret_file_fails_clearly(
+    tmp_path: Path,
+) -> None:
+    missing_file = tmp_path / "missing_database_password"
+
+    with pytest.raises(ValueError) as exc_info:
+        Settings(
+            _env_file=None,
+            database_password_file=str(missing_file),
+            openai_api_key="direct-unrelated-secret",
+        )
+
+    error_message = str(exc_info.value)
+    assert "DATABASE_PASSWORD_FILE" in error_message
+    assert str(missing_file) in error_message
+    assert "direct-unrelated-secret" not in error_message
+
+
+def test_empty_required_database_secret_file_fails_clearly(
+    tmp_path: Path,
+) -> None:
+    empty_file = write_secret(tmp_path / "empty_database_password", "")
+
+    with pytest.raises(ValueError) as exc_info:
+        Settings(
+            _env_file=None,
+            database_password_file=str(empty_file),
+        )
+
+    error_message = str(exc_info.value)
+    assert "DATABASE_PASSWORD_FILE must not be empty" in error_message

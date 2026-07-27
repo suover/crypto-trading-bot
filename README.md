@@ -16,7 +16,6 @@
 * 거래소 API 연동 준비
 * Ruff / Pytest 기반 품질 검증
 
-
 ## 운영 문서
 
 서버 운영과 제한적 라이브 테스트 절차는 별도 문서를 참고합니다.
@@ -64,19 +63,38 @@ PostgreSQL은 별도로 로컬에 설치하지 않아도 됩니다. 개발용 Po
 Copy-Item .env.example .env
 ```
 
-`.env` 파일에 필요한 값을 채웁니다.
+`.env`에는 실행 설정과 비밀 파일 경로를 입력하고, 실제 비밀값은 `.secrets/`의 개별 파일에 저장합니다.
 
 ```env
 APP_ENV=local
 
-DATABASE_URL=postgresql+psycopg://trading_user:trading_pass@localhost:5432/crypto_trading_bot
+SECRET_DIR=.secrets
 
-OPENAI_API_KEY=
-TELEGRAM_BOT_TOKEN=
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_NAME=crypto_trading_bot
+DATABASE_USER=trading_user
+DATABASE_PASSWORD_FILE=.secrets/postgres_password
+
+OPENAI_API_KEY_FILE=.secrets/openai_api_key
+
+TELEGRAM_BOT_TOKEN_FILE=.secrets/telegram_bot_token
 TELEGRAM_CHAT_ID=
 
-UPBIT_ACCESS_KEY=
-UPBIT_SECRET_KEY=
+UPBIT_ACCESS_KEY_FILE=.secrets/upbit_access_key
+UPBIT_SECRET_KEY_FILE=.secrets/upbit_secret_key
+
+UPBIT_ORDERBOOK_ENABLED=true
+UPBIT_ORDERBOOK_COUNT=15
+
+COINGECKO_ENABLED=true
+COINGECKO_API_BASE_URL=https://api.coingecko.com/api/v3
+COINGECKO_API_KEY=
+COINGECKO_REQUEST_TIMEOUT_SECONDS=5
+
+FEAR_GREED_ENABLED=true
+FEAR_GREED_API_BASE_URL=https://api.alternative.me
+FEAR_GREED_REQUEST_TIMEOUT_SECONDS=5
 
 TRADING_MODE=AI_APPROVAL
 ORDER_EXECUTION_MODE=MOCK
@@ -97,7 +115,20 @@ AI_ANALYSIS_SCHEDULE_TIMES=09:00
 AI_ANALYSIS_RUN_ON_STARTUP=false
 ```
 
-비밀값은 로컬 `.env`에서만 관리합니다. `.env.example`에는 실제 API 키, Telegram 토큰, 거래소 키를 넣지 않습니다.
+비밀값을 저장할 파일을 생성합니다.
+
+```powershell
+New-Item -ItemType Directory -Force .secrets
+New-Item -ItemType File -Force .secrets\postgres_password
+New-Item -ItemType File -Force .secrets\openai_api_key
+New-Item -ItemType File -Force .secrets\telegram_bot_token
+New-Item -ItemType File -Force .secrets\upbit_access_key
+New-Item -ItemType File -Force .secrets\upbit_secret_key
+```
+
+각 파일에는 비밀값만 입력합니다.
+
+`.env`와 `.secrets/`는 Git에 포함되지 않습니다. Docker Compose로 실행하면 `.secrets/`의 파일들이 컨테이너 내부 `/run/secrets/` 경로에 연결됩니다.
 
 ## 로컬 개발 실행
 

@@ -24,7 +24,7 @@ def build_settings(**overrides: object) -> Settings:
     }
     values.update(overrides)
 
-    return Settings(**values)
+    return Settings(_env_file=None, **values)
 
 
 def test_check_live_order_safety_blocks_when_disabled() -> None:

@@ -1,4 +1,24 @@
-﻿services:
+﻿x-app-environment: &app-environment
+  APP_ENV: docker
+  DATABASE_HOST: postgres
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: crypto_trading_bot
+  DATABASE_USER: trading_user
+  DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+  OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+  TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+  UPBIT_ACCESS_KEY_FILE: /run/secrets/upbit_access_key
+  UPBIT_SECRET_KEY_FILE: /run/secrets/upbit_secret_key
+  TZ: Asia/Seoul
+
+x-app-secrets: &app-secrets
+  - postgres_password
+  - openai_api_key
+  - telegram_bot_token
+  - upbit_access_key
+  - upbit_secret_key
+
+services:
   postgres:
     image: postgres:17
     container_name: crypto-trading-postgres
@@ -6,8 +26,10 @@
     environment:
       POSTGRES_DB: crypto_trading_bot
       POSTGRES_USER: trading_user
-      POSTGRES_PASSWORD: trading_pass
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       TZ: Asia/Seoul
+    secrets:
+      - postgres_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -25,9 +47,8 @@
     env_file:
       - .env
     environment:
-      APP_ENV: docker
-      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
-      TZ: Asia/Seoul
+      <<: *app-environment
+    secrets: *app-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,9 +65,8 @@
     env_file:
       - .env
     environment:
-      APP_ENV: docker
-      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
-      TZ: Asia/Seoul
+      <<: *app-environment
+    secrets: *app-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -65,9 +85,8 @@
     env_file:
       - .env
     environment:
-      APP_ENV: docker
-      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
-      TZ: Asia/Seoul
+      <<: *app-environment
+    secrets: *app-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,9 +108,8 @@
     env_file:
       - .env
     environment:
-      APP_ENV: docker
-      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
-      TZ: Asia/Seoul
+      <<: *app-environment
+    secrets: *app-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,9 +126,8 @@
     env_file:
       - .env
     environment:
-      APP_ENV: docker
-      DATABASE_URL: postgresql+psycopg://trading_user:trading_pass@postgres:5432/crypto_trading_bot
-      TZ: Asia/Seoul
+      <<: *app-environment
+    secrets: *app-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -124,6 +141,18 @@
         "--interval-seconds",
         "60",
       ]
+
+secrets:
+  postgres_password:
+    file: ${SECRET_DIR:-.secrets}/postgres_password
+  openai_api_key:
+    file: ${SECRET_DIR:-.secrets}/openai_api_key
+  telegram_bot_token:
+    file: ${SECRET_DIR:-.secrets}/telegram_bot_token
+  upbit_access_key:
+    file: ${SECRET_DIR:-.secrets}/upbit_access_key
+  upbit_secret_key:
+    file: ${SECRET_DIR:-.secrets}/upbit_secret_key
 
 volumes:
   postgres_data:

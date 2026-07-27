@@ -70,11 +70,18 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
-      - name: Prepare Docker Compose env file
-        run: cp .env.example .env
+      - name: Prepare Docker Compose config files
+        run: |
+          cp .env.example .env
+          mkdir -p .secrets
+          printf '%s' 'crypto' > .secrets/postgres_password
+          printf '%s' 'ci-placeholder' > .secrets/openai_api_key
+          printf '%s' 'ci-placeholder' > .secrets/telegram_bot_token
+          printf '%s' 'ci-placeholder' > .secrets/upbit_access_key
+          printf '%s' 'ci-placeholder' > .secrets/upbit_secret_key
 
       - name: Validate Docker Compose config
-        run: docker compose --profile manual config > /dev/null
+        run: docker compose --profile manual config --quiet
 
       - name: Build Docker runtime images
         run: docker compose --profile manual build

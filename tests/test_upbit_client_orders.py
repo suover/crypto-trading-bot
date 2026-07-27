@@ -31,7 +31,16 @@ def clear_settings_cache() -> None:
 
 @pytest.fixture(autouse=True)
 def upbit_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
+    monkeypatch.setenv("DATABASE_PASSWORD_FILE", "")
+    monkeypatch.setenv("OPENAI_API_KEY_FILE", "")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN_FILE", "")
+    monkeypatch.setenv("UPBIT_ACCESS_KEY_FILE", "")
+    monkeypatch.setenv("UPBIT_SECRET_KEY_FILE", "")
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql://test:test@localhost:5432/test",
+    )
     monkeypatch.setenv("UPBIT_ACCESS_KEY", "test-access-key")
     monkeypatch.setenv(
         "UPBIT_SECRET_KEY",
