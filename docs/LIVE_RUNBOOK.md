@@ -18,13 +18,17 @@ AI_ANALYSIS_SCHEDULER_ENABLED=false
 
 진행 전에 다음을 모두 확인합니다.
 
-- DB 백업과 `.env` 백업이 존재합니다.
-- `.env`와 백업 파일 권한이 모두 `600`입니다.
+- DB 백업과 `.env`, `/etc/crypto-trading-bot/secrets`의 안전한 백업이 존재합니다.
+- `/etc/crypto-trading-bot/secrets`와 필수 비밀 파일이 모두 존재합니다.
+- 비밀 디렉터리 권한은 `700`, 각 비밀 파일 권한은 `600`입니다.
+- `.env`에 올바른 `SECRET_DIR`이 설정되어 있고 `.env` 권한은 `600`입니다.
 - AI 스케줄러가 중지되어 있고 시작되지 않습니다.
 - Telegram listener가 실행 중입니다.
 - Upbit 키에 주문 및 주문 조회 권한이 있습니다.
 - Upbit 키에 출금 권한이 없습니다.
 - 서버 IP가 Upbit 허용 IP에 정확히 등록되어 있습니다.
+
+비밀 파일 준비 절차는 [서버 운영 가이드](OPERATIONS.md)를 따릅니다.
 
 ## Phase 2: 공식 안전 주문 테스트
 

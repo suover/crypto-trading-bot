@@ -33,19 +33,48 @@ git pull origin main
 
 운영 서버에서 직접 수정한 파일이 있다면 `git pull` 전에 반드시 내용을 확인합니다. 특히 `.env`는 Git에 포함하지 않습니다.
 
+## 서버 비밀 파일 준비
+
+서버 비밀 파일은 `/etc/crypto-trading-bot/secrets`에 준비합니다.
+
+```bash
+sudo mkdir -p /etc/crypto-trading-bot/secrets
+sudo chmod 700 /etc/crypto-trading-bot/secrets
+
+sudo touch /etc/crypto-trading-bot/secrets/postgres_password
+sudo touch /etc/crypto-trading-bot/secrets/openai_api_key
+sudo touch /etc/crypto-trading-bot/secrets/telegram_bot_token
+sudo touch /etc/crypto-trading-bot/secrets/upbit_access_key
+sudo touch /etc/crypto-trading-bot/secrets/upbit_secret_key
+
+sudo chmod 600 /etc/crypto-trading-bot/secrets/*
+```
+
+각 파일에는 비밀값만 저장하며 `KEY=`, 따옴표, 주석을 넣지 않습니다. 비밀 디렉터리는 Git에 포함하지 않습니다. 서버 `.env`에는 다음 경로와 기존 비밀이 아닌 런타임 설정을 유지합니다.
+
+```env
+SECRET_DIR=/etc/crypto-trading-bot/secrets
+```
+
+컨테이너 시작 전에 필수 비밀 파일이 모두 존재하는지 확인합니다.
+
+> **주의:** 기존 PostgreSQL 데이터 볼륨을 사용한다면 `postgres_password`에는 기존 데이터베이스 역할이 현재 사용하는 암호를 먼저 저장해야 합니다. 파일만 변경해도 기존 역할 암호는 회전되지 않습니다.
+
 ## Docker Compose 설정 확인
 
 컨테이너를 재생성하기 전에 Compose 설정을 확인합니다.
 
 ```bash
-docker compose config
+docker compose config --quiet
 ```
 
 수동 AI 분석 profile까지 포함해 확인하려면 다음 명령을 사용할 수 있습니다.
 
 ```bash
-docker compose --profile manual config
+docker compose --profile manual config --quiet
 ```
+
+두 명령은 해석된 환경값을 출력하지 않고 설정의 유효성을 검사합니다.
 
 ## 기본 런타임 시작 또는 재생성
 
@@ -222,7 +251,7 @@ docker compose down
 
 ## 단순 복구 메모
 
-- 최신 서버 `.env`를 안전하게 보관합니다.
+- 최신 서버 `.env`와 `/etc/crypto-trading-bot/secrets`를 안전하게 보관합니다.
 - DB 백업 파일을 유지합니다.
 - 복구는 자동으로 처리하지 말고, 상황을 확인한 뒤 수동으로 신중하게 진행합니다.
-- 복구 전에는 현재 컨테이너 상태, 백업 파일 시각, `.env` 값을 다시 확인합니다.
+- 복구 전에는 현재 컨테이너 상태, 백업 파일 시각, `.env`와 비밀 디렉터리를 다시 확인합니다.
