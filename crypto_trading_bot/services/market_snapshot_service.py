@@ -54,8 +54,8 @@ class MarketSnapshotService:
         self.session.flush()
 
         try:
-            active_markets = self.registry_service.load_active_markets_for_exchange(
-                "UPBIT"
+            active_markets = (
+                self.registry_service.load_allowed_active_markets_for_exchange("UPBIT")
             )
             tickers = self.upbit_client.get_tickers(
                 [registry_market.market for registry_market in active_markets]

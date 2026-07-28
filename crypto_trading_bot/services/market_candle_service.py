@@ -40,7 +40,9 @@ class MarketCandleService:
     ) -> dict[str, int]:
         saved_counts: dict[str, int] = {}
 
-        active_markets = self.registry_service.load_active_markets_for_exchange("UPBIT")
+        active_markets = self.registry_service.load_allowed_active_markets_for_exchange(
+            "UPBIT"
+        )
         for registry_market in active_markets:
             market = registry_market.market
             candles = self.upbit_client.get_minute_candles(

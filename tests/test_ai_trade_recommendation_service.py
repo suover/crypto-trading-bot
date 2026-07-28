@@ -108,7 +108,7 @@ def build_service(
     advisor.model = "test-model"
     advisor.create_advice.return_value = advice
     registry = MagicMock()
-    registry.load_active_markets_for_exchange.return_value = markets
+    registry.load_allowed_active_markets_for_exchange.return_value = markets
     maximums = maximums or {market.market: Decimal("10000") for market in markets}
     registry.calculate_final_max_order_amount.side_effect = lambda market: maximums[
         market.market
@@ -178,7 +178,7 @@ def test_builds_registry_candidates_and_calls_advisor_once() -> None:
 
     _, recommendations = service.create_ai_recommendations()
 
-    registry.load_active_markets_for_exchange.assert_called_once_with("UPBIT")
+    registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
     advisor.create_advice.assert_called_once()
     market_data = service.market_data_context_service
     market_data.enrich_candidates.assert_called_once()
@@ -203,6 +203,27 @@ def test_builds_registry_candidates_and_calls_advisor_once() -> None:
     assert recommendations[0].recommended_amount_krw == Decimal("6000")
     assert recommendations[0].ai_response["context"] == context
     assert len(recommendations) == 1
+
+
+def test_ai_context_and_enrichment_contain_only_allowed_market() -> None:
+    market = build_market("KRW-BTC", "BTC", 1)
+    service, _, advisor, registry = build_service(
+        markets=[market],
+        candles_by_market={"KRW-BTC": build_candles(20)},
+        balances_by_currency={"KRW": Decimal("10000"), "BTC": Decimal("0")},
+        advice=build_advice(action="HOLD", market="KRW-BTC"),
+    )
+
+    _, recommendations = service.create_ai_recommendations()
+
+    registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
+    enrichment_candidates = (
+        service.market_data_context_service.enrich_candidates.call_args.args[0]
+    )
+    assert [candidate["market"] for candidate in enrichment_candidates] == ["KRW-BTC"]
+    context = advisor.create_advice.call_args.args[0]
+    assert [candidate["market"] for candidate in context["candidates"]] == ["KRW-BTC"]
+    assert recommendations[0].market == "KRW-BTC"
 
 
 def test_unavailable_external_source_does_not_prevent_advisor_call() -> None:

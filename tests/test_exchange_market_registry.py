@@ -2,6 +2,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -89,6 +90,111 @@ def test_load_active_upbit_markets_uses_enabled_exchange_and_priority() -> None:
     assert [market.market for market in markets] == ["KRW-BTC", "KRW-ETH"]
 
 
+def test_load_allowed_active_markets_filters_and_preserves_configured_order() -> None:
+    session = build_registry_session()
+    session.add_all(
+        [
+            Exchange(code="UPBIT", name="Upbit", enabled=True, tradable=True),
+            ExchangeMarket(
+                id=1,
+                exchange_code="UPBIT",
+                market="KRW-BTC",
+                base_asset="BTC",
+                quote_asset="KRW",
+                status="ACTIVE",
+                priority=1,
+            ),
+            ExchangeMarket(
+                id=2,
+                exchange_code="UPBIT",
+                market="KRW-ETH",
+                base_asset="ETH",
+                quote_asset="KRW",
+                status="ACTIVE",
+                priority=2,
+            ),
+            ExchangeMarket(
+                id=3,
+                exchange_code="UPBIT",
+                market="KRW-XRP",
+                base_asset="XRP",
+                quote_asset="KRW",
+                status="ACTIVE",
+                priority=3,
+            ),
+        ]
+    )
+    session.commit()
+
+    markets = ExchangeMarketRegistryService(
+        session,
+        settings=build_settings(allowed_markets="KRW-XRP,KRW-BTC"),
+    ).load_allowed_active_markets_for_exchange("UPBIT")
+
+    assert [market.market for market in markets] == ["KRW-XRP", "KRW-BTC"]
+
+
+def test_load_allowed_active_markets_rejects_empty_allowlist() -> None:
+    session = MagicMock()
+    service = ExchangeMarketRegistryService(
+        session,
+        settings=build_settings(allowed_markets=""),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        service.load_allowed_active_markets_for_exchange("UPBIT")
+
+    assert str(exc_info.value) == "Allowed markets must not be empty. exchange=UPBIT"
+    session.query.assert_not_called()
+
+
+def test_load_allowed_active_markets_rejects_missing_inactive_and_disabled() -> None:
+    session = build_registry_session()
+    session.add_all(
+        [
+            Exchange(code="UPBIT", name="Upbit", enabled=True, tradable=True),
+            Exchange(code="DISABLED", name="Disabled", enabled=False, tradable=False),
+            ExchangeMarket(
+                id=1,
+                exchange_code="UPBIT",
+                market="KRW-BTC",
+                base_asset="BTC",
+                quote_asset="KRW",
+                status="ACTIVE",
+            ),
+            ExchangeMarket(
+                id=2,
+                exchange_code="UPBIT",
+                market="KRW-ETH",
+                base_asset="ETH",
+                quote_asset="KRW",
+                status="PAUSED",
+            ),
+            ExchangeMarket(
+                id=3,
+                exchange_code="DISABLED",
+                market="KRW-XRP",
+                base_asset="XRP",
+                quote_asset="KRW",
+                status="ACTIVE",
+            ),
+        ]
+    )
+    session.commit()
+    service = ExchangeMarketRegistryService(
+        session,
+        settings=build_settings(allowed_markets="KRW-BTC,KRW-ETH,KRW-XRP,KRW-DOGE"),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        service.load_allowed_active_markets_for_exchange("UPBIT")
+
+    assert str(exc_info.value) == (
+        "Allowed markets are missing or inactive for exchange. "
+        "exchange=UPBIT, markets=['KRW-ETH', 'KRW-XRP', 'KRW-DOGE']"
+    )
+
+
 def test_order_amounts_inherit_overrides_defaults_and_apply_env_caps() -> None:
     session = build_registry_session()
     exchange = Exchange(
@@ -145,8 +251,8 @@ def test_market_candle_service_uses_registry_markets() -> None:
         }
     ]
     registry = MagicMock()
-    registry.load_active_markets_for_exchange.return_value = [
-        SimpleNamespace(market="KRW-XRP")
+    registry.load_allowed_active_markets_for_exchange.return_value = [
+        SimpleNamespace(market="KRW-BTC")
     ]
 
     result = MarketCandleService(
@@ -155,13 +261,13 @@ def test_market_candle_service_uses_registry_markets() -> None:
         registry_service=registry,
     ).collect_minute_candles()
 
-    registry.load_active_markets_for_exchange.assert_called_once_with("UPBIT")
+    registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
     upbit_client.get_minute_candles.assert_called_once_with(
-        market="KRW-XRP",
+        market="KRW-BTC",
         unit=15,
         count=50,
     )
-    assert result == {"KRW-XRP": 1}
+    assert result == {"KRW-BTC": 1}
     assert session.add.call_args.args[0].exchange == "UPBIT"
     assert isinstance(session.add.call_args.args[0], MarketCandle)
 
@@ -174,15 +280,15 @@ def test_market_snapshot_service_uses_registry_markets() -> None:
     upbit_client = MagicMock()
     upbit_client.get_tickers.return_value = [
         {
-            "market": "KRW-XRP",
+            "market": "KRW-BTC",
             "trade_price": 1000,
             "signed_change_rate": 0.1,
             "acc_trade_volume_24h": 100,
         }
     ]
     registry = MagicMock()
-    registry.load_active_markets_for_exchange.return_value = [
-        SimpleNamespace(market="KRW-XRP")
+    registry.load_allowed_active_markets_for_exchange.return_value = [
+        SimpleNamespace(market="KRW-BTC")
     ]
 
     _, snapshots = MarketSnapshotService(
@@ -191,7 +297,7 @@ def test_market_snapshot_service_uses_registry_markets() -> None:
         registry_service=registry,
     ).collect_market_snapshots()
 
-    registry.load_active_markets_for_exchange.assert_called_once_with("UPBIT")
-    upbit_client.get_tickers.assert_called_once_with(["KRW-XRP"])
-    assert [snapshot.market for snapshot in snapshots] == ["KRW-XRP"]
+    registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
+    upbit_client.get_tickers.assert_called_once_with(["KRW-BTC"])
+    assert [snapshot.market for snapshot in snapshots] == ["KRW-BTC"]
     assert snapshots[0].exchange == "UPBIT"

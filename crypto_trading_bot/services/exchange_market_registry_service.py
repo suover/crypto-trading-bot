@@ -47,6 +47,32 @@ class ExchangeMarketRegistryService:
             .all()
         )
 
+    def load_allowed_active_markets_for_exchange(
+        self,
+        exchange_code: str,
+    ) -> list[ExchangeMarket]:
+        allowed_markets = self.settings.allowed_market_list
+        if not allowed_markets:
+            raise ValueError(
+                f"Allowed markets must not be empty. exchange={exchange_code}"
+            )
+
+        active_markets = self.load_active_markets_for_exchange(exchange_code)
+        active_market_by_name = {
+            exchange_market.market: exchange_market
+            for exchange_market in active_markets
+        }
+        unavailable_markets = [
+            market for market in allowed_markets if market not in active_market_by_name
+        ]
+        if unavailable_markets:
+            raise ValueError(
+                "Allowed markets are missing or inactive for exchange. "
+                f"exchange={exchange_code}, markets={unavailable_markets}"
+            )
+
+        return [active_market_by_name[market] for market in allowed_markets]
+
     def get_market(
         self,
         exchange_code: str,

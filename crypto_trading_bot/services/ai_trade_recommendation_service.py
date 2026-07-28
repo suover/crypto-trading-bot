@@ -83,8 +83,8 @@ class AiTradeRecommendationService:
                 exchange="UPBIT",
                 currency="KRW",
             )
-            registry_markets = self.registry_service.load_active_markets_for_exchange(
-                "UPBIT"
+            registry_markets = (
+                self.registry_service.load_allowed_active_markets_for_exchange("UPBIT")
             )
             if not registry_markets:
                 raise ValueError("No active UPBIT markets found in registry")
