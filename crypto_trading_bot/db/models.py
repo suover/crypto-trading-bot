@@ -216,6 +216,7 @@ class TradeRecommendation(Base):
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)
+    trade_ratio: Mapped[float | None] = mapped_column(Numeric(10, 9), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Numeric(5, 4), nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     recommended_amount_krw: Mapped[float | None] = mapped_column(

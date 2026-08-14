@@ -171,6 +171,16 @@ uv run ruff format --check .
 uv run ruff check .
 ```
 
+### AI trade sizing
+
+AI는 허용된 마켓, `BUY`/`SELL`/`HOLD`, 그리고 0~1의
+`trade_ratio`만 결정합니다. 정확한 BUY KRW 금액과 SELL 코인 수량/평가액은
+애플리케이션이 현재 가용 잔고와 유효한 가격으로 계산합니다.
+현재 `max_order_amount_krw` 및 `daily_max_order_amount_krw`는 노출을 늘리는
+BUY에만 적용됩니다. SELL 청산은 BUY 최대/일일 한도로 차단하지 않지만,
+실행 직전 정확한 마켓 ticker, Upbit 최소 주문 금액, 현재 가용 수량을
+다시 검증합니다. 모든 BUY/SELL은 Telegram 승인을 계속 필요로 합니다.
+
 ## Docker Compose 전체 런타임 실행
 
 서버/프로덕션 유사 런타임을 Docker Compose로 실행합니다. 이 런타임은 PostgreSQL을 공개 포트로 노출하지 않습니다.

@@ -99,6 +99,11 @@ def validate_live_order_request(
         if amount_krw is None:
             raise LiveOrderSafetyError("BUY live order requires amount_krw")
 
+        if not amount_krw.is_finite() or amount_krw <= 0:
+            raise LiveOrderSafetyError(
+                "BUY live order amount must be finite and positive"
+            )
+
         if amount_krw < MIN_UPBIT_ORDER_AMOUNT_KRW:
             raise LiveOrderSafetyError(
                 "BUY live order amount is below minimum Upbit order amount. "
@@ -118,14 +123,16 @@ def validate_live_order_request(
     if quantity is None:
         raise LiveOrderSafetyError("SELL live order requires quantity")
 
-    if quantity <= 0:
+    if not quantity.is_finite() or quantity <= 0:
         raise LiveOrderSafetyError(
             f"SELL live order quantity must be greater than 0. quantity={quantity}"
         )
 
-    if amount_krw is not None and amount_krw > max_order_amount_krw:
+    if amount_krw is not None and (
+        not amount_krw.is_finite() or amount_krw < MIN_UPBIT_ORDER_AMOUNT_KRW
+    ):
         raise LiveOrderSafetyError(
-            "SELL live order estimated amount exceeds max_order_amount_krw. "
+            "SELL live order estimated amount is invalid or below minimum. "
             f"amount_krw={amount_krw}, "
-            f"max_order_amount_krw={max_order_amount_krw}"
+            f"minimum={MIN_UPBIT_ORDER_AMOUNT_KRW}"
         )

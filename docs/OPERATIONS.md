@@ -249,6 +249,18 @@ docker compose down -v
 docker compose down
 ```
 
+## AI 거래 비율과 승인
+
+- `trade_ratio=1`의 BUY는 현재 KRW 100%를 의미하지만 BUY 최대 한도를 유지합니다.
+- 수수료를 임의로 하드코딩하지 않으므로, 잔고 전체 BUY의 정확한 최종 가능액은
+  향후 Upbit order-chance/수수료 정보 연동이 필요합니다.
+- `trade_ratio=1`의 SELL은 추천 산정 시점 선택 자산 수량 100%를 승인 수량으로 사용합니다.
+- SELL은 BUY용 최대 금액과 일일 BUY 한도를 적용하지 않습니다.
+- 승인 후 SELL 실행 직전에 ticker와 잔고를 재조회하며, 승인한 수량을
+  임의로 늘리거나 줄이지 않습니다.
+- 누락, NaN, 무한대, 음수, 1 초과 ratio는 승인 요청을 만들지 않도록 HOLD로
+  안전 변환됩니다.
+
 ## 단순 복구 메모
 
 - 최신 서버 `.env`와 `/etc/crypto-trading-bot/secrets`를 안전하게 보관합니다.

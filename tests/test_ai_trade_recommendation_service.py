@@ -50,16 +50,21 @@ def build_advice(
     market: str,
     amount: Decimal | None = None,
     quantity: Decimal | None = None,
+    ratio: Decimal | None = None,
 ) -> AiTradeAdvice:
+    if ratio is None:
+        ratio = Decimal("0") if action == "HOLD" else Decimal("1")
     raw_response = {
         "action": action,
         "exchange": "UPBIT",
         "market": market,
+        "trade_ratio": str(ratio),
     }
     return AiTradeAdvice(
         action=action,
         exchange="UPBIT",
         market=market,
+        trade_ratio=ratio,
         confidence=Decimal("0.9"),
         recommended_amount_krw=amount,
         recommended_quantity=quantity,
@@ -94,6 +99,14 @@ class StubRecommendationService(AiTradeRecommendationService):
     ) -> Decimal:
         return self.balances_by_currency.get(currency, Decimal("0"))
 
+    def _get_latest_avg_buy_price(
+        self,
+        user_id: int,
+        exchange: str,
+        currency: str,
+    ) -> Decimal:
+        return Decimal("0")
+
 
 def build_service(
     *,
@@ -104,6 +117,7 @@ def build_service(
     maximums: dict[str, Decimal] | None = None,
 ) -> tuple[StubRecommendationService, MagicMock, MagicMock, MagicMock]:
     session = MagicMock()
+    session.scalar.return_value = Decimal("0")
     advisor = MagicMock()
     advisor.model = "test-model"
     advisor.create_advice.return_value = advice

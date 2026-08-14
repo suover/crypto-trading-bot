@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from time import sleep
@@ -18,7 +18,12 @@ from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderOperationError,
     UpbitOrderRejectedError,
 )
-from crypto_trading_bot.services.live_order_safety import validate_live_order_request
+from crypto_trading_bot.services.live_order_safety import (
+    MIN_UPBIT_ORDER_AMOUNT_KRW,
+    LiveOrderSafetyError,
+    assert_live_order_safety_enabled,
+    validate_live_order_request,
+)
 
 
 LIVE_ORDER_PLACED_STATUS = "LIVE_PLACED"
@@ -156,9 +161,7 @@ class LiveOrderExecutionService:
         if existing is not None:
             return self._existing_result(existing, recommendation)
 
-        plan = self.build_execution_plan(recommendation.id)
-        self._validate_daily_live_order_limit(recommendation.user_id, plan)
-        self._validate_sell_balance(plan)
+        self._validate_recommendation_for_remote_lookup(recommendation)
         identifier = f"recommendation-{recommendation.id}"
 
         try:
@@ -166,6 +169,7 @@ class LiveOrderExecutionService:
         except UpbitOrderNotFoundError:
             existing_exchange_order = None
         except UpbitOrderOperationError as error:
+            plan = self.build_execution_plan(recommendation.id)
             return self._persist_result(
                 recommendation=recommendation,
                 plan=plan,
@@ -182,9 +186,10 @@ class LiveOrderExecutionService:
             )
 
         if existing_exchange_order is not None:
+            recovery_plan = self._build_recovery_plan(recommendation)
             return self._persist_exchange_order(
                 recommendation=recommendation,
-                plan=plan,
+                plan=recovery_plan,
                 approval_request_id=approval_request_id,
                 identifier=identifier,
                 order_response=existing_exchange_order,
@@ -192,6 +197,11 @@ class LiveOrderExecutionService:
                 create_response=None,
                 commit=commit,
             )
+
+        plan = self.build_execution_plan(recommendation.id)
+        plan = self._revalidate_sell_at_execution(plan)
+        self._validate_daily_live_order_limit(recommendation.user_id, plan)
+        self._validate_sell_balance(plan)
 
         try:
             create_response = self._place_live_order(plan, identifier)
@@ -442,6 +452,7 @@ class LiveOrderExecutionService:
         statement = select(func.coalesce(func.sum(OrderLog.amount_krw), 0)).where(
             OrderLog.user_id == user_id,
             OrderLog.trading_mode == "LIVE",
+            OrderLog.side == "BUY",
             OrderLog.status.in_(COUNTED_DAILY_LIVE_ORDER_STATUSES),
             OrderLog.amount_krw.is_not(None),
             OrderLog.created_at >= start_utc,
@@ -453,7 +464,9 @@ class LiveOrderExecutionService:
     def _get_plan_amount_for_daily_limit(
         plan: LiveOrderExecutionPlan,
     ) -> Decimal | None:
-        return Decimal(str(plan.amount_krw)) if plan.amount_krw is not None else None
+        if plan.action != "BUY" or plan.amount_krw is None:
+            return None
+        return Decimal(str(plan.amount_krw))
 
     @staticmethod
     def _get_today_range_in_utc() -> tuple[datetime, datetime]:
@@ -479,6 +492,10 @@ class LiveOrderExecutionService:
                 raise LiveOrderExecutionError(
                     f"Live sell account balance is invalid. market={plan.market}"
                 ) from error
+            if not available.is_finite() or available < 0:
+                raise LiveOrderExecutionError(
+                    f"Live sell account balance is invalid. market={plan.market}"
+                )
             if available < plan.quantity:
                 raise LiveOrderExecutionError(
                     "Insufficient available balance for live sell order. "
@@ -488,6 +505,40 @@ class LiveOrderExecutionService:
         raise LiveOrderExecutionError(
             f"Live sell account balance was not found. market={plan.market}"
         )
+
+    def _revalidate_sell_at_execution(
+        self, plan: LiveOrderExecutionPlan
+    ) -> LiveOrderExecutionPlan:
+        if plan.action != "SELL":
+            return plan
+        if plan.quantity is None:
+            raise LiveOrderExecutionError("SELL live order requires quantity")
+        tickers = self.upbit_client.get_tickers([plan.market])
+        if (
+            not isinstance(tickers, list)
+            or len(tickers) != 1
+            or tickers[0].get("market") != plan.market
+        ):
+            raise LiveOrderExecutionError(
+                f"Expected exactly one matching ticker. market={plan.market}"
+            )
+        try:
+            current_price = Decimal(str(tickers[0].get("trade_price")))
+        except (InvalidOperation, TypeError, ValueError) as error:
+            raise LiveOrderExecutionError(
+                f"Current ticker price is invalid. market={plan.market}"
+            ) from error
+        if not current_price.is_finite() or current_price <= 0:
+            raise LiveOrderExecutionError(
+                f"Current ticker price must be finite and positive. market={plan.market}"
+            )
+        current_amount = plan.quantity * current_price
+        if current_amount < MIN_UPBIT_ORDER_AMOUNT_KRW:
+            raise LiveOrderExecutionError(
+                "Current estimated SELL amount is below minimum Upbit order amount. "
+                f"amount_krw={current_amount}, minimum={MIN_UPBIT_ORDER_AMOUNT_KRW}"
+            )
+        return replace(plan, amount_krw=current_amount)
 
     @staticmethod
     def _get_currency_from_market(market: str) -> str:
@@ -542,8 +593,44 @@ class LiveOrderExecutionService:
         )
 
     @staticmethod
+    def _validate_recommendation_for_remote_lookup(
+        recommendation: TradeRecommendation,
+    ) -> None:
+        LiveOrderExecutionService._validate_recommendation_for_live_order(
+            recommendation, require_trade_ratio=False
+        )
+        settings = get_settings()
+        assert_live_order_safety_enabled(settings)
+        if recommendation.market not in settings.allowed_market_list:
+            raise LiveOrderSafetyError(
+                "Live order market is not allowed. "
+                f"market={recommendation.market}, "
+                f"allowed_markets={settings.allowed_market_list}"
+            )
+
+    @staticmethod
+    def _build_recovery_plan(
+        recommendation: TradeRecommendation,
+    ) -> LiveOrderExecutionPlan:
+        return LiveOrderExecutionPlan(
+            recommendation_id=recommendation.id,
+            exchange=recommendation.exchange,
+            market=recommendation.market,
+            action=recommendation.action.strip().upper(),
+            amount_krw=LiveOrderExecutionService._to_decimal_or_none(
+                recommendation.recommended_amount_krw
+            ),
+            quantity=LiveOrderExecutionService._to_decimal_or_none(
+                recommendation.recommended_quantity
+            ),
+            ready_to_execute=True,
+        )
+
+    @staticmethod
     def _validate_recommendation_for_live_order(
         recommendation: TradeRecommendation,
+        *,
+        require_trade_ratio: bool = True,
     ) -> None:
         if recommendation.exchange != "UPBIT":
             raise LiveOrderExecutionError(
@@ -557,6 +644,20 @@ class LiveOrderExecutionService:
         if recommendation.action not in {"BUY", "SELL"}:
             raise LiveOrderExecutionError(
                 f"Trade recommendation action must be BUY or SELL. action={recommendation.action}"
+            )
+        if not require_trade_ratio:
+            return
+        try:
+            ratio = Decimal(str(recommendation.trade_ratio))
+        except (InvalidOperation, TypeError, ValueError) as error:
+            raise LiveOrderExecutionError(
+                "BUY or SELL recommendation trade_ratio is invalid. "
+                f"trade_ratio={recommendation.trade_ratio}"
+            ) from error
+        if not ratio.is_finite() or ratio <= 0 or ratio > 1:
+            raise LiveOrderExecutionError(
+                "BUY or SELL recommendation requires a finite trade_ratio "
+                f"greater than 0 and at most 1. trade_ratio={recommendation.trade_ratio}"
             )
 
     @staticmethod

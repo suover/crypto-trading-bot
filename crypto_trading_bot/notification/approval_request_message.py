@@ -1,3 +1,4 @@
+from decimal import Decimal
 from typing import Any
 
 from crypto_trading_bot.db.models import TradeRecommendation
@@ -27,16 +28,20 @@ def build_approval_request_message(
         f"추천 ID: {recommendation.id}",
         f"마켓: {recommendation.market}",
         f"판단: {action}",
+        f"거래 비율: {_format_trade_ratio(recommendation.trade_ratio)}",
         f"신뢰도: {format_decimal(recommendation.confidence)}",
     ]
 
     if action == "BUY":
         message_lines.append(
-            f"추천금액: {format_krw(recommendation.recommended_amount_krw)}"
+            f"계산된 KRW 금액: {format_krw(recommendation.recommended_amount_krw)}"
         )
     else:
         message_lines.append(
-            f"추천수량: {format_decimal(recommendation.recommended_quantity, 10)}"
+            f"계산된 코인 수량: {format_decimal(recommendation.recommended_quantity, 10)}"
+        )
+        message_lines.append(
+            f"예상 KRW 매도가치: {format_krw(recommendation.recommended_amount_krw)}"
         )
 
     message_lines.extend(
@@ -46,11 +51,26 @@ def build_approval_request_message(
             "사유:",
             truncate_text(recommendation.reason),
             "",
+            "리스크 메모:",
+            truncate_text(_get_risk_notes(recommendation)),
+            "",
             "아래 버튼을 눌러 승인 또는 거절해 주세요.",
         ]
     )
 
     return "\n".join(message_lines)
+
+
+def _format_trade_ratio(value: object | None) -> str:
+    if value is None:
+        return "기록 없음"
+    return f"{Decimal(str(value)) * Decimal('100'):.2f}%"
+
+
+def _get_risk_notes(recommendation: TradeRecommendation) -> str:
+    ai_response = recommendation.ai_response or {}
+    safe_advice = ai_response.get("safe_advice") or {}
+    return str(safe_advice.get("risk_notes") or "기록 없음")
 
 
 def build_approval_request_reply_markup(

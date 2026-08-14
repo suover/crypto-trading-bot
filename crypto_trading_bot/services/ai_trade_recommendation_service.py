@@ -1,8 +1,9 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.ai.trade_advisor import AiTradeAdvice, OpenAITradeAdvisor
@@ -16,6 +17,7 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     ExchangeMarket,
     MarketCandle,
+    OrderLog,
     TradeRecommendation,
     User,
 )
@@ -29,6 +31,7 @@ from crypto_trading_bot.services.market_data_context_service import (
 
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
 MIN_CANDLES_FOR_ADVICE = 20
+KST = ZoneInfo("Asia/Seoul")
 
 
 def to_decimal(value: object | None) -> Decimal:
@@ -117,7 +120,8 @@ class AiTradeRecommendationService:
                     "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
                     "allowed_actions": ["BUY", "SELL", "HOLD"],
                     "spot_only": True,
-                    "conservative": True,
+                    "objective": "maximize_expected_long_term_net_account_value",
+                    "buy_limits_are_exposure_limits": True,
                 },
             }
 
@@ -133,6 +137,8 @@ class AiTradeRecommendationService:
             safe_advice = self._apply_safety_rules(
                 advice=advice,
                 candidates=candidates,
+                user_id=user.id,
+                execution_mode=settings.order_execution_mode,
             )
             safety_override = safe_advice.raw_response.get("system_override")
             recommendation = TradeRecommendation(
@@ -142,6 +148,7 @@ class AiTradeRecommendationService:
                 exchange=safe_advice.exchange,
                 market=safe_advice.market,
                 action=safe_advice.action,
+                trade_ratio=safe_advice.trade_ratio,
                 confidence=safe_advice.confidence,
                 reason=self._build_reason(safe_advice),
                 recommended_amount_krw=safe_advice.recommended_amount_krw,
@@ -188,6 +195,11 @@ class AiTradeRecommendationService:
             exchange=registry_market.exchange_code,
             currency=registry_market.base_asset,
         )
+        avg_buy_price = self._get_latest_avg_buy_price(
+            user_id=user_id,
+            exchange=registry_market.exchange_code,
+            currency=registry_market.base_asset,
+        )
         max_order_amount = self.registry_service.calculate_final_max_order_amount(
             registry_market
         )
@@ -208,6 +220,7 @@ class AiTradeRecommendationService:
             indicators=indicators,
             krw_balance=krw_balance,
             coin_balance=coin_balance,
+            avg_buy_price=avg_buy_price,
             max_order_amount=max_order_amount,
         )
 
@@ -219,10 +232,31 @@ class AiTradeRecommendationService:
         indicators: MarketIndicatorResult | None,
         krw_balance: Decimal,
         coin_balance: Decimal,
+        avg_buy_price: Decimal,
         max_order_amount: Decimal,
     ) -> dict[str, Any]:
         enough_candles = indicators is not None
         latest_price = to_decimal(candles[-1].trade_price) if candles else None
+        current_position_value = (
+            coin_balance * latest_price
+            if latest_price is not None
+            and latest_price.is_finite()
+            and latest_price > 0
+            else None
+        )
+        estimated_cost_basis = (
+            coin_balance * avg_buy_price if avg_buy_price > 0 else None
+        )
+        unrealized_pnl = (
+            current_position_value - estimated_cost_basis
+            if current_position_value is not None and estimated_cost_basis is not None
+            else None
+        )
+        unrealized_pnl_percentage = (
+            unrealized_pnl / estimated_cost_basis * Decimal("100")
+            if unrealized_pnl is not None and estimated_cost_basis
+            else None
+        )
         return {
             "exchange": registry_market.exchange_code,
             "market": registry_market.market,
@@ -260,6 +294,17 @@ class AiTradeRecommendationService:
             "trend_label": indicators.trend_label if indicators else "판단 보류",
             "quote_balance_krw": str(krw_balance),
             "coin_balance": str(coin_balance),
+            "avg_buy_price": decimal_to_string_or_none(
+                avg_buy_price if avg_buy_price > 0 else None
+            ),
+            "current_position_value_krw": decimal_to_string_or_none(
+                current_position_value
+            ),
+            "estimated_cost_basis_krw": decimal_to_string_or_none(estimated_cost_basis),
+            "unrealized_pnl_krw": decimal_to_string_or_none(unrealized_pnl),
+            "unrealized_pnl_percentage": decimal_to_string_or_none(
+                unrealized_pnl_percentage
+            ),
             "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
             "max_order_amount_krw": str(max_order_amount),
         }
@@ -308,6 +353,25 @@ class AiTradeRecommendationService:
         snapshot = self.session.scalar(statement)
         return Decimal("0") if snapshot is None else to_decimal(snapshot.balance)
 
+    def _get_latest_avg_buy_price(
+        self,
+        user_id: int,
+        exchange: str,
+        currency: str,
+    ) -> Decimal:
+        statement = (
+            select(AccountSnapshot)
+            .where(
+                AccountSnapshot.user_id == user_id,
+                AccountSnapshot.exchange == exchange,
+                AccountSnapshot.currency == currency,
+            )
+            .order_by(AccountSnapshot.created_at.desc())
+            .limit(1)
+        )
+        snapshot = self.session.scalar(statement)
+        return Decimal("0") if snapshot is None else to_decimal(snapshot.avg_buy_price)
+
     def _calculate_indicators(
         self,
         market: str,
@@ -325,6 +389,8 @@ class AiTradeRecommendationService:
         self,
         advice: AiTradeAdvice,
         candidates: list[dict[str, Any]],
+        user_id: int | None = None,
+        execution_mode: str | None = None,
     ) -> AiTradeAdvice:
         candidate_lookup = {
             (str(candidate["exchange"]), str(candidate["market"])): candidate
@@ -340,7 +406,18 @@ class AiTradeRecommendationService:
                 reason="AI가 활성 후보 목록에 없는 마켓을 선택하여 보류했습니다.",
             )
 
-        confidence = min(max(advice.confidence, Decimal("0")), Decimal("1"))
+        confidence = advice.confidence
+        if not isinstance(confidence, Decimal) or not confidence.is_finite():
+            confidence = Decimal("0")
+        confidence = min(max(confidence, Decimal("0")), Decimal("1"))
+        ratio = advice.trade_ratio
+        if ratio is None or not ratio.is_finite() or ratio < 0 or ratio > 1:
+            return self._override_to_hold(
+                advice,
+                exchange=advice.exchange,
+                market=advice.market,
+                reason="trade_ratio is missing, non-finite, or outside 0..1.",
+            )
         if advice.action not in {"BUY", "SELL", "HOLD"}:
             return self._override_to_hold(
                 advice,
@@ -359,6 +436,13 @@ class AiTradeRecommendationService:
             )
 
         if advice.action == "BUY":
+            if ratio == 0:
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="BUY requires trade_ratio greater than zero.",
+                )
             quote_balance = to_decimal(selected_candidate["quote_balance_krw"])
             maximum = to_decimal(selected_candidate["max_order_amount_krw"])
             minimum = to_decimal(selected_candidate["minimum_order_amount_krw"])
@@ -369,10 +453,19 @@ class AiTradeRecommendationService:
                     market=advice.market,
                     reason="KRW 잔고가 최소 주문 금액보다 적어 매수를 보류했습니다.",
                 )
-            amount = advice.recommended_amount_krw
-            if amount is None or amount <= 0:
-                amount = min(maximum, quote_balance)
-            amount = min(amount, maximum, quote_balance)
+            remaining_daily_capacity = Decimal("Infinity")
+            if user_id is not None and execution_mode is not None:
+                daily_limit = Decimal(str(get_settings().daily_max_order_amount_krw))
+                used_today = self._get_today_buy_amount_krw(
+                    user_id=user_id, execution_mode=execution_mode
+                )
+                remaining_daily_capacity = daily_limit - used_today
+            amount = min(
+                quote_balance * ratio,
+                maximum,
+                quote_balance,
+                remaining_daily_capacity,
+            )
             if amount < minimum:
                 return self._override_to_hold(
                     advice,
@@ -383,12 +476,20 @@ class AiTradeRecommendationService:
             return self._replace_advice(
                 advice,
                 action="BUY",
+                trade_ratio=ratio,
                 confidence=confidence,
                 recommended_amount_krw=amount,
                 recommended_quantity=None,
             )
 
         if advice.action == "SELL":
+            if ratio == 0:
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="SELL requires trade_ratio greater than zero.",
+                )
             coin_balance = to_decimal(selected_candidate["coin_balance"])
             if coin_balance <= 0:
                 return self._override_to_hold(
@@ -397,30 +498,86 @@ class AiTradeRecommendationService:
                     market=advice.market,
                     reason="선택한 자산의 보유 수량이 없어 매도를 보류했습니다.",
                 )
-            quantity = advice.recommended_quantity
-            if quantity is None or quantity <= 0:
-                quantity = coin_balance
+            try:
+                latest_price = to_decimal(selected_candidate.get("latest_price"))
+            except ArithmeticError, TypeError, ValueError:
+                latest_price = Decimal("NaN")
+            if not latest_price.is_finite() or latest_price <= 0:
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="Latest price is invalid, so SELL sizing cannot be validated.",
+                )
+            quantity = min(coin_balance * ratio, coin_balance)
+            estimated_amount = quantity * latest_price
+            minimum = to_decimal(selected_candidate["minimum_order_amount_krw"])
+            if estimated_amount < minimum:
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="Estimated SELL value is below the minimum order amount.",
+                )
             return self._replace_advice(
                 advice,
                 action="SELL",
+                trade_ratio=ratio,
                 confidence=confidence,
-                recommended_amount_krw=None,
-                recommended_quantity=min(quantity, coin_balance),
+                recommended_amount_krw=estimated_amount,
+                recommended_quantity=quantity,
             )
 
+        if ratio != 0:
+            return self._override_to_hold(
+                advice,
+                exchange=advice.exchange,
+                market=advice.market,
+                reason="HOLD requires trade_ratio equal to zero.",
+            )
         return self._replace_advice(
             advice,
             action="HOLD",
+            trade_ratio=Decimal("0"),
             confidence=confidence,
             recommended_amount_krw=None,
             recommended_quantity=None,
         )
+
+    def _get_today_buy_amount_krw(self, user_id: int, execution_mode: str) -> Decimal:
+        today_kst = datetime.now(KST).date()
+        start_kst = datetime.combine(today_kst, time.min, tzinfo=KST)
+        start_utc = start_kst.astimezone(UTC)
+        end_utc = (start_kst + timedelta(days=1)).astimezone(UTC)
+        mode = execution_mode.strip().upper()
+        statuses = (
+            ("MOCK_FILLED",)
+            if mode == "MOCK"
+            else (
+                "LIVE_PLACED",
+                "LIVE_WAIT",
+                "LIVE_DONE",
+                "LIVE_CANCELLED",
+                "LIVE_UNKNOWN",
+            )
+        )
+        statement = select(func.coalesce(func.sum(OrderLog.amount_krw), 0)).where(
+            OrderLog.user_id == user_id,
+            OrderLog.trading_mode == mode,
+            OrderLog.side == "BUY",
+            OrderLog.status.in_(statuses),
+            OrderLog.amount_krw.is_not(None),
+            OrderLog.created_at >= start_utc,
+            OrderLog.created_at < end_utc,
+        )
+        return Decimal(str(self.session.scalar(statement) or 0))
 
     def _replace_advice(
         self,
         advice: AiTradeAdvice,
         *,
         action: str,
+        trade_ratio: Decimal,
         confidence: Decimal,
         recommended_amount_krw: Decimal | None,
         recommended_quantity: Decimal | None,
@@ -429,6 +586,7 @@ class AiTradeRecommendationService:
             action=action,
             exchange=advice.exchange,
             market=advice.market,
+            trade_ratio=trade_ratio,
             confidence=confidence,
             recommended_amount_krw=recommended_amount_krw,
             recommended_quantity=recommended_quantity,
@@ -451,6 +609,7 @@ class AiTradeRecommendationService:
             action="HOLD",
             exchange=exchange,
             market=market,
+            trade_ratio=Decimal("0"),
             confidence=Decimal("0.8000"),
             recommended_amount_krw=None,
             recommended_quantity=None,
@@ -480,6 +639,7 @@ class AiTradeRecommendationService:
             action="HOLD",
             exchange=str(candidate["exchange"]),
             market=str(candidate["market"]),
+            trade_ratio=Decimal("0"),
             confidence=Decimal("0.8000"),
             recommended_amount_krw=None,
             recommended_quantity=None,
@@ -495,6 +655,7 @@ class AiTradeRecommendationService:
             "action": advice.action,
             "exchange": advice.exchange,
             "market": advice.market,
+            "trade_ratio": decimal_to_string_or_none(advice.trade_ratio),
             "confidence": str(advice.confidence),
             "recommended_amount_krw": decimal_to_string_or_none(
                 advice.recommended_amount_krw

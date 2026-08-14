@@ -54,6 +54,7 @@ def build_recommendation(
     status: str = "APPROVED",
     recommended_amount_krw: Decimal | None = Decimal("5000"),
     recommended_quantity: Decimal | None = None,
+    trade_ratio: object = Decimal("1"),
 ) -> TradeRecommendation:
     return TradeRecommendation(
         id=recommendation_id,
@@ -63,6 +64,7 @@ def build_recommendation(
         exchange=exchange,
         market=market,
         action=action,
+        trade_ratio=trade_ratio,
         confidence=Decimal("0.7500"),
         reason="test recommendation",
         recommended_amount_krw=recommended_amount_krw,
@@ -87,6 +89,7 @@ class FakeSession:
         self.committed = False
         self.flushed = False
         self.refreshed_objects: list[object] = []
+        self.daily_amount_statement: object | None = None
 
     def get(
         self,
@@ -105,6 +108,7 @@ class FakeSession:
         statement_text = str(statement)
 
         if "sum(order_logs.amount_krw)" in statement_text:
+            self.daily_amount_statement = statement
             return self.today_live_order_amount_krw
 
         if "order_logs" in statement_text:
@@ -139,14 +143,29 @@ class FakeUpbitClient:
     def __init__(
         self,
         accounts: list[dict[str, Any]] | None = None,
+        tickers: list[dict[str, Any]] | None = None,
+        remote_order: dict[str, Any] | None = None,
     ) -> None:
         self.buy_orders: list[dict[str, Any]] = []
         self.sell_orders: list[dict[str, Any]] = []
         self.accounts = accounts or []
+        self.remote_order = remote_order
+        self.account_calls = 0
+        self.tickers = (
+            tickers
+            if tickers is not None
+            else [{"market": "KRW-BTC", "trade_price": "100000000"}]
+        )
+        self.ticker_calls: list[list[str]] = []
         self.lookup_calls: list[dict[str, str | None]] = []
 
     def get_accounts(self) -> list[dict[str, Any]]:
+        self.account_calls += 1
         return self.accounts
+
+    def get_tickers(self, markets: list[str]) -> list[dict[str, Any]]:
+        self.ticker_calls.append(markets)
+        return self.tickers
 
     def get_order(
         self,
@@ -155,6 +174,8 @@ class FakeUpbitClient:
         identifier: str | None = None,
     ) -> dict[str, Any]:
         self.lookup_calls.append({"uuid": uuid, "identifier": identifier})
+        if identifier is not None and self.remote_order is not None:
+            return self.remote_order
         if identifier is not None and not self.buy_orders and not self.sell_orders:
             raise UpbitOrderNotFoundError(
                 UpbitSafeError(
@@ -410,7 +431,7 @@ def test_execute_places_live_sell_order_and_records_order_log(
     assert order_log.approval_request_id == 20
     assert order_log.side == "SELL"
     assert order_log.order_type == "MARKET"
-    assert order_log.amount_krw is None
+    assert order_log.amount_krw == Decimal("10000.0000")
     assert order_log.quantity == Decimal("0.0001")
     assert order_log.status == LIVE_ORDER_STATUS
     assert order_log.exchange_order_id == "live-sell-order-uuid"
@@ -576,9 +597,273 @@ def test_execute_blocks_when_daily_live_order_amount_limit_exceeded(
     assert fake_session.added_objects == []
     assert fake_session.committed is False
     assert fake_session.flushed is False
+    assert fake_session.daily_amount_statement is not None
+    compiled = fake_session.daily_amount_statement.compile()
+    assert "BUY" in compiled.params.values()
+
+
+def test_daily_live_order_total_query_includes_only_buy_logs() -> None:
+    fake_session = FakeSession(
+        build_recommendation(),
+        today_live_order_amount_krw=Decimal("5000"),
+    )
+    service = LiveOrderExecutionService(session=fake_session)  # type: ignore[arg-type]
+
+    total = service._get_today_live_order_amount_krw(user_id=1)
+
+    assert total == Decimal("5000")
+    assert fake_session.daily_amount_statement is not None
+    compiled = fake_session.daily_amount_statement.compile()
+    assert "order_logs.side" in str(compiled)
+    assert "BUY" in compiled.params.values()
+
+
+def test_buy_is_not_blocked_by_same_day_sell_amount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(recommended_amount_krw=Decimal("5000"))
+    fake_session = FakeSession(
+        recommendation,
+        today_live_order_amount_krw=Decimal("0"),
+    )
+    client = FakeUpbitClient()
+    service = LiveOrderExecutionService(
+        session=fake_session,  # type: ignore[arg-type]
+        upbit_client=client,  # type: ignore[arg-type]
+    )
+
+    result = service.execute(1, approval_request_id=20)
+
+    assert result.order_log.side == "BUY"
+    assert client.buy_orders[0]["amount_krw"] == Decimal("5000")
+    assert fake_session.daily_amount_statement is not None
+    compiled = fake_session.daily_amount_statement.compile()
+    assert "BUY" in compiled.params.values()
+
+
+@pytest.mark.parametrize(
+    "tickers",
+    [
+        [],
+        [{"market": "KRW-ETH", "trade_price": "100000000"}],
+        [
+            {"market": "KRW-BTC", "trade_price": "100000000"},
+            {"market": "KRW-BTC", "trade_price": "100000000"},
+        ],
+    ],
+)
+def test_execute_sell_requires_exactly_one_matching_ticker(
+    monkeypatch: pytest.MonkeyPatch,
+    tickers: list[dict[str, Any]],
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    client = FakeUpbitClient(
+        accounts=[{"currency": "BTC", "balance": "1"}], tickers=tickers
+    )
+    service = LiveOrderExecutionService(
+        session=FakeSession(recommendation),
+        upbit_client=client,  # type: ignore[arg-type]
+    )
+    with pytest.raises(LiveOrderExecutionError, match="exactly one matching ticker"):
+        service.execute(1, approval_request_id=20)
+    assert client.ticker_calls == [["KRW-BTC"]]
+    assert client.sell_orders == []
+
+
+@pytest.mark.parametrize("price", [None, "bad", "0", "-1", "NaN", "Infinity"])
+def test_execute_sell_rejects_invalid_current_price(
+    monkeypatch: pytest.MonkeyPatch, price: object
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    client = FakeUpbitClient(
+        accounts=[{"currency": "BTC", "balance": "1"}],
+        tickers=[{"market": "KRW-BTC", "trade_price": price}],
+    )
+    service = LiveOrderExecutionService(
+        session=FakeSession(recommendation),
+        upbit_client=client,  # type: ignore[arg-type]
+    )
+    with pytest.raises(LiveOrderExecutionError, match="ticker price"):
+        service.execute(1, approval_request_id=20)
+    assert client.sell_orders == []
+
+
+def test_sell_is_not_blocked_by_daily_buy_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    client = FakeUpbitClient(accounts=[{"currency": "BTC", "balance": "1"}])
+    service = LiveOrderExecutionService(
+        session=FakeSession(
+            recommendation, today_live_order_amount_krw=Decimal("30000")
+        ),
+        upbit_client=client,  # type: ignore[arg-type]
+    )
+    result = service.execute(1, approval_request_id=20)
+    assert result.order_log.amount_krw == Decimal("10000")
+    assert client.sell_orders[0]["quantity"] == Decimal("0.0001")
 
 
 @pytest.fixture(autouse=True)
 def clear_settings_cache_after_test() -> None:
     yield
     clear_settings_cache()
+
+
+@pytest.mark.parametrize("balance", ["NaN", "Infinity", "-Infinity", "-1"])
+def test_execute_blocks_live_sell_when_balance_is_non_finite_or_negative(
+    monkeypatch: pytest.MonkeyPatch, balance: str
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    client = FakeUpbitClient(accounts=[{"currency": "BTC", "balance": balance}])
+    service = LiveOrderExecutionService(
+        session=FakeSession(recommendation), upbit_client=client
+    )
+    with pytest.raises(LiveOrderExecutionError, match="balance is invalid"):
+        service.execute(1, approval_request_id=20)
+    assert client.sell_orders == []
+
+
+@pytest.mark.parametrize("action", ["BUY", "SELL"])
+def test_live_null_trade_ratio_is_rejected_without_order_or_external_call(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action=action,
+        recommended_amount_krw=Decimal("5000") if action == "BUY" else None,
+        recommended_quantity=Decimal("0.0001") if action == "SELL" else None,
+        trade_ratio=None,
+    )
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(accounts=[{"currency": "BTC", "balance": "1"}])
+    service = LiveOrderExecutionService(session=session, upbit_client=client)
+    with pytest.raises(LiveOrderExecutionError, match="trade_ratio"):
+        service.execute(1, approval_request_id=20)
+    assert session.added_objects == []
+    assert client.buy_orders == []
+    assert client.sell_orders == []
+    assert client.lookup_calls == [{"uuid": None, "identifier": "recommendation-1"}]
+    assert client.ticker_calls == []
+
+
+@pytest.mark.parametrize(
+    "ratio",
+    [
+        "bad",
+        Decimal("NaN"),
+        Decimal("Infinity"),
+        Decimal("-Infinity"),
+        Decimal("0"),
+        Decimal("-0.1"),
+        Decimal("1.1"),
+    ],
+)
+def test_live_invalid_trade_ratio_is_rejected_without_order_or_external_call(
+    monkeypatch: pytest.MonkeyPatch, ratio: object
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(trade_ratio=ratio)
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient()
+    service = LiveOrderExecutionService(session=session, upbit_client=client)
+    with pytest.raises(LiveOrderExecutionError, match="trade_ratio"):
+        service.execute(1, approval_request_id=20)
+    assert session.added_objects == []
+    assert client.buy_orders == []
+    assert client.sell_orders == []
+    assert client.lookup_calls == [{"uuid": None, "identifier": "recommendation-1"}]
+
+
+@pytest.mark.parametrize("ratio", [Decimal("0.1"), Decimal("1")])
+def test_live_valid_trade_ratio_preserves_execution_plan(
+    monkeypatch: pytest.MonkeyPatch, ratio: Decimal
+) -> None:
+    set_live_order_env(monkeypatch)
+    service = LiveOrderExecutionService(
+        session=FakeSession(build_recommendation(trade_ratio=ratio))
+    )
+    assert service.build_execution_plan(1).ready_to_execute is True
+
+
+@pytest.mark.parametrize("action", ["BUY", "SELL"])
+def test_remote_order_recovery_bypasses_new_order_ratio_and_market_state_checks(
+    monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(
+        action=action,
+        recommended_amount_krw=Decimal("5000") if action == "BUY" else Decimal("10000"),
+        recommended_quantity=Decimal("0.0001") if action == "SELL" else None,
+        trade_ratio=None,
+    )
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(
+        accounts=[{"currency": "BTC", "balance": "NaN"}],
+        tickers=[{"market": "KRW-BTC", "trade_price": "NaN"}],
+        remote_order={
+            "uuid": "existing-remote-order-uuid",
+            "identifier": "recommendation-1",
+            "state": "done",
+        },
+    )
+    service = LiveOrderExecutionService(session=session, upbit_client=client)
+
+    result = service.execute(1, approval_request_id=20)
+
+    assert result.recovered is True
+    assert result.already_executed is False
+    assert result.order_log.exchange_order_id == "existing-remote-order-uuid"
+    assert result.order_log.raw_response["recovered_by_identifier"] is True
+    assert result.order_log.amount_krw == recommendation.recommended_amount_krw
+    assert result.order_log.quantity == recommendation.recommended_quantity
+    assert client.buy_orders == []
+    assert client.sell_orders == []
+    assert client.ticker_calls == []
+    assert client.account_calls == 0
+    assert client.lookup_calls == [{"uuid": None, "identifier": "recommendation-1"}]
+
+
+def test_valid_ratio_remote_order_is_recovered_without_duplicate_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation(trade_ratio=Decimal("0.5"))
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(
+        remote_order={
+            "uuid": "existing-remote-order-uuid",
+            "identifier": "recommendation-1",
+            "state": "wait",
+        }
+    )
+    service = LiveOrderExecutionService(session=session, upbit_client=client)
+
+    result = service.execute(1, approval_request_id=20)
+
+    assert result.recovered is True
+    assert result.order_log.exchange_order_id == "existing-remote-order-uuid"
+    assert client.buy_orders == []
+    assert client.sell_orders == []
+    assert client.lookup_calls == [{"uuid": None, "identifier": "recommendation-1"}]

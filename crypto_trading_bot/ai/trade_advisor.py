@@ -1,6 +1,6 @@
 import json
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from openai import OpenAI
@@ -26,9 +26,8 @@ TRADE_ADVICE_SCHEMA: dict[str, Any] = {
         "action": {"type": "string", "enum": ["BUY", "SELL", "HOLD"]},
         "exchange": {"type": "string"},
         "market": {"type": "string"},
+        "trade_ratio": {"type": "number", "minimum": 0, "maximum": 1},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-        "recommended_amount_krw": {"type": ["number", "null"]},
-        "recommended_quantity": {"type": ["number", "null"]},
         "reason": {"type": "string"},
         "risk_notes": {"type": "string"},
         "primary_factors": {"type": "array", "items": {"type": "string"}},
@@ -41,9 +40,8 @@ TRADE_ADVICE_SCHEMA: dict[str, Any] = {
         "action",
         "exchange",
         "market",
+        "trade_ratio",
         "confidence",
-        "recommended_amount_krw",
-        "recommended_quantity",
         "reason",
         "risk_notes",
         "primary_factors",
@@ -58,6 +56,7 @@ class AiTradeAdvice:
     action: str
     exchange: str
     market: str
+    trade_ratio: Decimal | None
     confidence: Decimal
     recommended_amount_krw: Decimal | None
     recommended_quantity: Decimal | None
@@ -71,7 +70,11 @@ class AiTradeAdvice:
 def to_decimal_or_none(value: object | None) -> Decimal | None:
     if value is None:
         return None
-    return Decimal(str(value))
+    try:
+        value_decimal = Decimal(str(value))
+    except InvalidOperation, TypeError, ValueError:
+        return None
+    return value_decimal if value_decimal.is_finite() else None
 
 
 class OpenAITradeAdvisor:
@@ -94,16 +97,20 @@ class OpenAITradeAdvisor:
                 {
                     "role": "system",
                     "content": (
-                        "You are a conservative crypto trading assistant comparing "
-                        "multiple spot-market candidates. Choose exactly one final "
+                        "You are a cost-aware spot crypto trading assistant. Your primary "
+                        "objective is to maximize expected long-term net account value "
+                        "after trading fees, spread, slippage, and execution risk. Compare "
+                        "every supplied candidate and the current account and position state. "
+                        "Choose exactly one final "
                         "BUY, SELL, or HOLD action and one candidate exchange/market. "
-                        "BUY only with sufficient positive evidence and acceptable risk. "
-                        "SELL only when the selected base asset has a positive balance "
-                        "and selling is justified. HOLD when evidence is weak or mixed, "
-                        "data is insufficient, or risk is unclear. For HOLD, select the "
+                        "Do not trade merely to be active and do not HOLD merely to appear "
+                        "conservative. HOLD when expected advantage is insufficient after "
+                        "costs, uncertainty, and downside risk. Full BUY or full SELL is "
+                        "allowed when strongly justified. For HOLD, select the "
                         "most relevant candidate that is being held or the strongest "
                         "candidate that still does not justify a trade. Never recommend "
-                        "borrowing, leverage, futures, or aggressive trading. Write "
+                        "borrowing, leverage, futures, or markets outside the supplied list. "
+                        "Never claim or guarantee profitability. Write "
                         "reason, risk_notes, primary_factors, and alternative reasons "
                         "in Korean."
                     ),
@@ -119,17 +126,18 @@ class OpenAITradeAdvisor:
                             "rules": [
                                 "Choose only an exchange and market present in context.candidates.",
                                 "Do not BUY or SELL a candidate with enough_candles=false.",
-                                "Do not exceed the selected candidate max_order_amount_krw.",
+                                "Return trade_ratio only; never return an exact KRW amount or coin quantity.",
+                                "trade_ratio must be finite and between 0 and 1 inclusive.",
+                                "HOLD requires trade_ratio=0; BUY and SELL require trade_ratio>0.",
+                                "Confidence and trade_ratio are separate concepts; never derive one from the other.",
                                 "If quote_balance_krw is below minimum_order_amount_krw, do not BUY.",
                                 "Treat orderbook as a short-lived supporting signal, never a guaranteed direction.",
                                 "Compare global_market USD context with local UPBIT technical data.",
                                 "market_sentiment is broad, not coin-specific; never trade from Fear & Greed alone.",
                                 "Extreme fear can mean opportunity and elevated risk; greed can mean momentum and correction risk.",
                                 "Ignore UNAVAILABLE or DISABLED external sources and continue with candle and account data.",
-                                "Prefer HOLD when technical and external signals conflict.",
                                 "Never bypass candidate membership, candle, balance, minimum, or maximum order restrictions.",
-                                "For HOLD, recommended_amount_krw and recommended_quantity must be null.",
-                                "Be conservative.",
+                                "Remain spot-only. Never use leverage, borrowing, or futures.",
                             ],
                             "context": context,
                         },
@@ -152,13 +160,11 @@ class OpenAITradeAdvisor:
             action=str(parsed_response["action"]),
             exchange=str(parsed_response["exchange"]),
             market=str(parsed_response["market"]),
-            confidence=Decimal(str(parsed_response["confidence"])),
-            recommended_amount_krw=to_decimal_or_none(
-                parsed_response["recommended_amount_krw"]
-            ),
-            recommended_quantity=to_decimal_or_none(
-                parsed_response["recommended_quantity"]
-            ),
+            trade_ratio=to_decimal_or_none(parsed_response.get("trade_ratio")),
+            confidence=to_decimal_or_none(parsed_response.get("confidence"))
+            or Decimal("0"),
+            recommended_amount_krw=None,
+            recommended_quantity=None,
             reason=str(parsed_response["reason"]),
             risk_notes=str(parsed_response["risk_notes"]),
             primary_factors=[

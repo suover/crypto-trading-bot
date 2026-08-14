@@ -129,27 +129,25 @@ class MockOrderExecutionService:
                 current_price=current_price,
                 max_order_amount_krw=Decimal(settings.max_order_amount_krw),
             )
+            daily_order_amount = self._get_daily_mock_order_amount(
+                user_id=recommendation.user_id,
+            )
+            daily_max_order_amount = Decimal(settings.daily_max_order_amount_krw)
+
+            if daily_order_amount + amount_krw > daily_max_order_amount:
+                raise MockOrderExecutionError(
+                    "Daily order amount limit exceeded. "
+                    f"current_daily_amount={daily_order_amount}, "
+                    f"requested_amount={amount_krw}, "
+                    f"daily_limit={daily_max_order_amount}"
+                )
         else:
             amount_krw, quantity = self._prepare_sell_order(
                 recommendation=recommendation,
                 accounts=accounts,
                 current_price=current_price,
-                max_order_amount_krw=Decimal(settings.max_order_amount_krw),
             )
-
-        daily_order_amount = self._get_daily_mock_order_amount(
-            user_id=recommendation.user_id,
-        )
-
-        daily_max_order_amount = Decimal(settings.daily_max_order_amount_krw)
-
-        if daily_order_amount + amount_krw > daily_max_order_amount:
-            raise MockOrderExecutionError(
-                "Daily order amount limit exceeded. "
-                f"current_daily_amount={daily_order_amount}, "
-                f"requested_amount={amount_krw}, "
-                f"daily_limit={daily_max_order_amount}"
-            )
+            daily_order_amount = Decimal("0")
 
         order_log = OrderLog(
             recommendation_id=recommendation.id,
@@ -292,6 +290,13 @@ class MockOrderExecutionService:
                 f"action={recommendation.action}"
             )
 
+        ratio = MockOrderExecutionService._to_decimal(recommendation.trade_ratio)
+        if not ratio.is_finite() or ratio <= 0 or ratio > 1:
+            raise MockOrderExecutionError(
+                "BUY or SELL recommendation requires a finite trade_ratio "
+                f"greater than 0 and at most 1. trade_ratio={recommendation.trade_ratio}"
+            )
+
     def _get_current_price(
         self,
         market: str,
@@ -304,7 +309,7 @@ class MockOrderExecutionService:
 
             current_price = self._to_decimal(ticker.get("trade_price"))
 
-            if current_price <= 0:
+            if not current_price.is_finite() or current_price <= 0:
                 break
 
             return current_price.quantize(
@@ -369,7 +374,6 @@ class MockOrderExecutionService:
         recommendation: TradeRecommendation,
         accounts: list[dict[str, object]],
         current_price: Decimal,
-        max_order_amount_krw: Decimal,
     ) -> tuple[Decimal, Decimal]:
         quantity = self._to_decimal(recommendation.recommended_quantity).quantize(
             QUANTITY_QUANTUM,
@@ -406,13 +410,6 @@ class MockOrderExecutionService:
                 f"Sell amount is below minimum order amount. amount={amount_krw}"
             )
 
-        if amount_krw > max_order_amount_krw:
-            raise MockOrderExecutionError(
-                "Sell amount exceeds maximum order amount. "
-                f"amount={amount_krw}, "
-                f"maximum={max_order_amount_krw}"
-            )
-
         return amount_krw, quantity
 
     def _get_daily_mock_order_amount(
@@ -435,6 +432,8 @@ class MockOrderExecutionService:
             )
         ).where(
             OrderLog.user_id == user_id,
+            OrderLog.trading_mode == "MOCK",
+            OrderLog.side == "BUY",
             OrderLog.status == MOCK_ORDER_STATUS,
             OrderLog.created_at >= day_start,
             OrderLog.created_at < next_day_start,
@@ -455,7 +454,13 @@ class MockOrderExecutionService:
             if account_currency != normalized_currency:
                 continue
 
-            return MockOrderExecutionService._to_decimal(account.get("balance"))
+            balance = MockOrderExecutionService._to_decimal(account.get("balance"))
+            if not balance.is_finite() or balance < 0:
+                raise MockOrderExecutionError(
+                    "Account balance must be finite and non-negative. "
+                    f"currency={normalized_currency}, balance={account.get('balance')}"
+                )
+            return balance
 
         return Decimal("0")
 
