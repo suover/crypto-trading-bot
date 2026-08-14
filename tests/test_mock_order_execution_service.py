@@ -11,6 +11,7 @@ from crypto_trading_bot.db.models import (
     User,
 )
 from crypto_trading_bot.services.mock_order_execution_service import (
+    KST,
     MockOrderExecutionError,
     MockOrderExecutionService,
 )
@@ -254,16 +255,19 @@ def test_daily_mock_buy_total_executes_with_side_and_mode_isolation() -> None:
     from sqlalchemy.orm import Session
 
     engine = create_engine("sqlite://")
-    now = datetime.now(UTC)
+    day_start_kst = datetime.now(KST).replace(hour=0, minute=0, second=0, microsecond=0)
+    within_today_utc = (day_start_kst + timedelta(minutes=30)).astimezone(UTC)
+    before_today_utc = (day_start_kst - timedelta(minutes=30)).astimezone(UTC)
     with engine.begin() as connection:
         connection.exec_driver_sql(
             "CREATE TABLE order_logs (user_id INTEGER, trading_mode TEXT, side TEXT, "
             "status TEXT, amount_krw NUMERIC, created_at DATETIME)"
         )
         rows = [
-            (1, "MOCK", "SELL", "MOCK_FILLED", 1000000, now),
-            (1, "MOCK", "BUY", "MOCK_FILLED", 5000, now),
-            (1, "LIVE", "BUY", "MOCK_FILLED", 9000, now),
+            (1, "MOCK", "SELL", "MOCK_FILLED", 1000000, within_today_utc),
+            (1, "MOCK", "BUY", "MOCK_FILLED", 5000, within_today_utc),
+            (1, "LIVE", "BUY", "MOCK_FILLED", 9000, within_today_utc),
+            (1, "MOCK", "BUY", "MOCK_FILLED", 11000, before_today_utc),
         ]
         connection.exec_driver_sql(
             "INSERT INTO order_logs VALUES (?, ?, ?, ?, ?, ?)", rows

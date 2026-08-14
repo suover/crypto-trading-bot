@@ -236,6 +236,7 @@ def test_recommendation_daily_buy_query_isolates_side_and_execution_mode() -> No
             ],
         )
     with Session(engine) as session:
-        service = AiTradeRecommendationService(session=session)
+        service = object.__new__(AiTradeRecommendationService)
+        service.session = session
         assert service._get_today_buy_amount_krw(1, "MOCK") == Decimal("5000")
         assert service._get_today_buy_amount_krw(1, "LIVE") == Decimal("7000")

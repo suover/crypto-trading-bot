@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from zoneinfo import ZoneInfo
 
@@ -417,13 +417,15 @@ class MockOrderExecutionService:
         user_id: int,
     ) -> Decimal:
         now = datetime.now(KST)
-        day_start = now.replace(
+        day_start_kst = now.replace(
             hour=0,
             minute=0,
             second=0,
             microsecond=0,
         )
-        next_day_start = day_start + timedelta(days=1)
+        next_day_start_kst = day_start_kst + timedelta(days=1)
+        day_start_utc = day_start_kst.astimezone(UTC)
+        next_day_start_utc = next_day_start_kst.astimezone(UTC)
 
         statement = select(
             func.coalesce(
@@ -435,8 +437,8 @@ class MockOrderExecutionService:
             OrderLog.trading_mode == "MOCK",
             OrderLog.side == "BUY",
             OrderLog.status == MOCK_ORDER_STATUS,
-            OrderLog.created_at >= day_start,
-            OrderLog.created_at < next_day_start,
+            OrderLog.created_at >= day_start_utc,
+            OrderLog.created_at < next_day_start_utc,
         )
 
         return self._to_decimal(self.session.scalar(statement))
