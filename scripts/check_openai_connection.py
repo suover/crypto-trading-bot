@@ -10,9 +10,15 @@ def check_openai_connection() -> None:
         raise ValueError("OPENAI_API_KEY is not configured")
 
     client = OpenAI(api_key=settings.openai_api_key)
+    reasoning_options = (
+        {"reasoning": {"effort": settings.openai_reasoning_effort}}
+        if settings.openai_reasoning_effort
+        else {}
+    )
 
     response = client.responses.create(
-        model="gpt-5.5",
+        model=settings.openai_trade_model,
+        **reasoning_options,
         input="Reply with exactly this text: OPENAI_CONNECTION_OK",
     )
 

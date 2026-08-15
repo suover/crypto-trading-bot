@@ -77,6 +77,8 @@ DATABASE_USER=trading_user
 DATABASE_PASSWORD_FILE=.secrets/postgres_password
 
 OPENAI_API_KEY_FILE=.secrets/openai_api_key
+OPENAI_TRADE_MODEL=gpt-5.6-sol
+OPENAI_REASONING_EFFORT=medium
 
 TELEGRAM_BOT_TOKEN_FILE=.secrets/telegram_bot_token
 TELEGRAM_CHAT_ID=

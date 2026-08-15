@@ -80,19 +80,26 @@ def to_decimal_or_none(value: object | None) -> Decimal | None:
 class OpenAITradeAdvisor:
     def __init__(
         self,
-        model: str = "gpt-5.5",
+        model: str | None = None,
         client: OpenAI | None = None,
     ) -> None:
         settings = get_settings()
         if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY is not configured")
 
-        self.model = model
+        self.model = model if model is not None else settings.openai_trade_model
+        self.reasoning_effort = settings.openai_reasoning_effort
         self.client = client or OpenAI(api_key=settings.openai_api_key)
 
     def create_advice(self, context: dict[str, Any]) -> AiTradeAdvice:
+        reasoning_options = (
+            {"reasoning": {"effort": self.reasoning_effort}}
+            if self.reasoning_effort
+            else {}
+        )
         response = self.client.responses.create(
             model=self.model,
+            **reasoning_options,
             input=[
                 {
                     "role": "system",

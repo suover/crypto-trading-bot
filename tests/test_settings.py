@@ -16,6 +16,8 @@ SETTINGS_ENV_NAMES = (
     "DATABASE_PASSWORD_FILE",
     "OPENAI_API_KEY",
     "OPENAI_API_KEY_FILE",
+    "OPENAI_TRADE_MODEL",
+    "OPENAI_REASONING_EFFORT",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN_FILE",
     "UPBIT_ACCESS_KEY",
@@ -34,6 +36,44 @@ def clear_settings_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def write_secret(path: Path, value: str) -> Path:
     path.write_text(value, encoding="utf-8")
     return path
+
+
+def test_openai_trade_defaults() -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+    )
+
+    assert settings.openai_trade_model == "gpt-5.6-sol"
+    assert settings.openai_reasoning_effort == "medium"
+
+
+def test_openai_trade_settings_support_environment_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_TRADE_MODEL", "test-trade-model")
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "low")
+
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+    )
+
+    assert settings.openai_trade_model == "test-trade-model"
+    assert settings.openai_reasoning_effort == "low"
+
+
+def test_openai_reasoning_effort_can_be_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENAI_REASONING_EFFORT", "")
+
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost:5432/test",
+    )
+
+    assert settings.openai_reasoning_effort == ""
 
 
 def test_secret_file_content_is_loaded_and_trimmed(tmp_path: Path) -> None:

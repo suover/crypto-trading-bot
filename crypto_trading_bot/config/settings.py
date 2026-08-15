@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,10 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = Field(default="", repr=False)
     openai_api_key_file: str = ""
+    openai_trade_model: str = "gpt-5.6-sol"
+    openai_reasoning_effort: Literal["", "none", "low", "medium", "high", "xhigh"] = (
+        "medium"
+    )
 
     # Telegram
     telegram_bot_token: str = Field(default="", repr=False)
