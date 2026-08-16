@@ -13,6 +13,7 @@ def check_market_universe() -> None:
         print(f"blocklist_excluded_count={result.blocklist_excluded_count}")
         print(f"liquidity_excluded_count={result.liquidity_excluded_count}")
         print(f"liquidity_prefilter_count={result.prefilter_count}")
+        print(f"data_collection_candidate_count={result.data_collection_count}")
         print(f"final_ranked_count={result.ranked_count}")
         print(f"holdings_added_count={result.holdings_added_count}")
         print("final_candidates:")

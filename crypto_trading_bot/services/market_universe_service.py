@@ -54,6 +54,7 @@ class MarketUniverseBuildResult:
     blocklist_excluded_count: int
     liquidity_excluded_count: int
     prefilter_count: int
+    data_collection_count: int
     ranked_count: int
     holdings_added_count: int
 
@@ -214,33 +215,34 @@ class MarketUniverseService:
                     }
                 )
         if self.settings.market_universe_mode == "STATIC":
-            heavy = eligible
+            liquidity_prefilter = eligible
+            data_collection_candidates = eligible
         else:
-            ranked_liquid = sorted(
+            liquidity_prefilter = sorted(
                 (candidate for candidate in eligible if candidate["buy_eligible"]),
                 key=lambda value: Decimal(value["quote_trade_value_24h"] or "0"),
                 reverse=True,
             )[: self.settings.market_universe_prefilter_n]
-            heavy_by_market = {
-                candidate["market"]: candidate for candidate in ranked_liquid
+            data_collection_by_market = {
+                candidate["market"]: candidate for candidate in liquidity_prefilter
             }
             for candidate in eligible:
                 if candidate["held"]:
-                    heavy_by_market.setdefault(candidate["market"], candidate)
-            heavy = list(heavy_by_market.values())
-        heavy_markets = [
+                    data_collection_by_market.setdefault(candidate["market"], candidate)
+            data_collection_candidates = list(data_collection_by_market.values())
+        data_collection_markets = [
             candidate["market"]
-            for candidate in heavy
+            for candidate in data_collection_candidates
             if candidate.get("trading_supported", True)
         ]
         collection_results = self.candle_service.collect_timeframes_for_markets(
-            heavy_markets,
+            data_collection_markets,
             self.settings.analysis_timeframe_list,
             self.settings.analysis_candle_count,
             commit=False,
         )
-        orderbooks = self._load_orderbooks(heavy_markets)
-        for candidate in heavy:
+        orderbooks = self._load_orderbooks(data_collection_markets)
+        for candidate in data_collection_candidates:
             candidate["timeframes"] = (
                 self._timeframe_features(
                     candidate["market"], collection_results.get(candidate["market"], {})
@@ -267,7 +269,7 @@ class MarketUniverseService:
             )
         if self.settings.market_universe_mode == "STATIC":
             final = []
-            for rank, candidate in enumerate(heavy, start=1):
+            for rank, candidate in enumerate(data_collection_candidates, start=1):
                 final.append(
                     {
                         **candidate,
@@ -279,7 +281,11 @@ class MarketUniverseService:
             ranked_count = len(final)
             holdings_added_count = 0
         else:
-            rankable = [candidate for candidate in heavy if candidate["buy_eligible"]]
+            rankable = [
+                candidate
+                for candidate in liquidity_prefilter
+                if candidate["buy_eligible"] and candidate["enough_candles"]
+            ]
             ranked = self.ranking_policy.rank(rankable)
             top_ranked = ranked[: self.settings.market_universe_top_n]
             final_by_market: dict[str, dict[str, Any]] = {}
@@ -290,7 +296,7 @@ class MarketUniverseService:
                     "selection_source": "RANKED",
                 }
             holdings_added_count = 0
-            for candidate in heavy:
+            for candidate in data_collection_candidates:
                 if not candidate["held"] or candidate["market"] in final_by_market:
                     continue
                 holdings_added_count += 1
@@ -380,7 +386,8 @@ class MarketUniverseService:
             caution_excluded_count=caution_excluded,
             blocklist_excluded_count=blocklist_excluded,
             liquidity_excluded_count=liquidity_excluded,
-            prefilter_count=len(heavy),
+            prefilter_count=len(liquidity_prefilter),
+            data_collection_count=len(data_collection_candidates),
             ranked_count=ranked_count,
             holdings_added_count=holdings_added_count,
         )
@@ -586,13 +593,22 @@ class MarketUniverseService:
     ) -> dict[str, Any]:
         price = Decimal(candidate["latest_price"] or "0")
         current_value = balance["total"] * price if price > 0 else None
-        cost_basis = balance["total"] * balance["avg"] if balance["avg"] > 0 else None
+        estimated_cost_basis = (
+            balance["total"] * balance["avg"] if balance["avg"] > 0 else None
+        )
         unrealized = (
-            current_value - cost_basis
-            if current_value is not None and cost_basis is not None
+            current_value - estimated_cost_basis
+            if current_value is not None and estimated_cost_basis is not None
+            else None
+        )
+        unrealized_percentage = (
+            unrealized / estimated_cost_basis * Decimal("100")
+            if unrealized is not None and estimated_cost_basis > 0
             else None
         )
         return {
+            "market": candidate["market"],
+            "base_asset": candidate["base_asset"],
             "available_balance": str(balance["balance"]),
             "locked_balance": str(balance["locked"]),
             "total_balance": str(balance["total"]),
@@ -600,7 +616,15 @@ class MarketUniverseService:
             "current_value_krw": (
                 str(current_value) if current_value is not None else None
             ),
+            "estimated_cost_basis_krw": (
+                str(estimated_cost_basis) if estimated_cost_basis is not None else None
+            ),
             "unrealized_pnl_krw": str(unrealized) if unrealized is not None else None,
+            "unrealized_pnl_percentage": (
+                str(unrealized_percentage)
+                if unrealized_percentage is not None
+                else None
+            ),
         }
 
     @staticmethod

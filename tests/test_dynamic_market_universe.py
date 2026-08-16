@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
+from crypto_trading_bot.analysis.market_ranking import MarketRankingPolicy
 from crypto_trading_bot.exchange.market_data import ExchangeMarketInfo, ExchangeTicker
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
 
@@ -50,8 +51,26 @@ class RankingByLiquidity:
         ]
 
 
+class RecordingRanking:
+    def __init__(self, scores: dict[str, Decimal]) -> None:
+        self.scores = scores
+        self.seen_markets: list[str] = []
+
+    def rank(self, candidates: list[dict[str, object]]) -> list[dict[str, object]]:
+        self.seen_markets = [str(candidate["market"]) for candidate in candidates]
+        return sorted(
+            (
+                {**candidate, "score": self.scores[str(candidate["market"])]}
+                for candidate in candidates
+            ),
+            key=lambda candidate: Decimal(candidate["score"]),
+            reverse=True,
+        )
+
+
 class StubUniverseService(MarketUniverseService):
     balances: dict[str, dict[str, Decimal]]
+    timeframe_features_by_market: dict[str, dict[str, dict[str, object]]] | None
 
     def _load_balances(self, *args: object) -> dict[str, dict[str, Decimal]]:
         return self.balances
@@ -64,6 +83,8 @@ class StubUniverseService(MarketUniverseService):
     def _timeframe_features(
         self, market: str, collection_status: dict[str, dict[str, object]]
     ) -> dict[str, dict[str, object]]:
+        if getattr(self, "timeframe_features_by_market", None) is not None:
+            return self.timeframe_features_by_market[market]
         return {
             "15m": {
                 "data_quality": "SUFFICIENT",
@@ -82,16 +103,23 @@ def build_service(
     markets: list[ExchangeMarketInfo],
     tickers: list[ExchangeTicker],
     balances: dict[str, dict[str, Decimal]],
+    ranking_policy: MarketRankingPolicy | None = None,
+    timeframe_features_by_market: (
+        dict[str, dict[str, dict[str, object]]] | None
+    ) = None,
     **setting_overrides: object,
 ) -> StubUniverseService:
+    setting_values: dict[str, object] = {
+        "database_url": "postgresql://test:test@localhost/test",
+        "market_universe_mode": "DYNAMIC",
+        "market_universe_top_n": 1,
+        "market_universe_prefilter_n": 2,
+        "market_universe_min_24h_trade_value_krw": Decimal("100"),
+        "analysis_timeframes": "15m",
+    }
+    setting_values.update(setting_overrides)
     settings = Settings(
-        database_url="postgresql://test:test@localhost/test",
-        market_universe_mode="DYNAMIC",
-        market_universe_top_n=1,
-        market_universe_prefilter_n=2,
-        market_universe_min_24h_trade_value_krw=Decimal("100"),
-        analysis_timeframes="15m",
-        **setting_overrides,
+        **setting_values,
     )
     session = MagicMock()
     session.scalar.return_value = SimpleNamespace(id=1)
@@ -114,9 +142,10 @@ def build_service(
         market_data_provider=provider,
         registry_service=registry,
         candle_service=candle_service,
-        ranking_policy=RankingByLiquidity(),
+        ranking_policy=ranking_policy or RankingByLiquidity(),
     )
     service.balances = balances
+    service.timeframe_features_by_market = timeframe_features_by_market
     return service
 
 
@@ -161,6 +190,92 @@ def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding(
     assert rows["KRW-ETH"].selection_source == "HELD"
     assert rows["KRW-ETH"].buy_eligible is False
     assert rows["KRW-ETH"].sell_eligible is True
+    position = rows["KRW-ETH"].feature_data["position"]
+    assert position["market"] == "KRW-ETH"
+    assert position["base_asset"] == "ETH"
+    assert position["estimated_cost_basis_krw"] == "160"
+    assert position["unrealized_pnl_krw"] == "40"
+    assert position["unrealized_pnl_percentage"] == "25.00"
+
+
+def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
+    ranking = RecordingRanking(
+        {
+            "KRW-BTC": Decimal("1"),
+            "KRW-XRP": Decimal("2"),
+            "KRW-ETH": Decimal("999"),
+        }
+    )
+    service = build_service(
+        markets=[
+            descriptor("KRW-BTC"),
+            descriptor("KRW-XRP"),
+            descriptor("KRW-ETH"),
+        ],
+        tickers=[
+            ticker("KRW-BTC", "1000"),
+            ticker("KRW-XRP", "900"),
+            ticker("KRW-ETH", "100"),
+        ],
+        balances={"KRW": balance("10000"), "ETH": balance("2")},
+        ranking_policy=ranking,
+    )
+
+    result = service.build_and_persist()
+
+    rows = {row.market: row for row in result.candidates}
+    assert ranking.seen_markets == ["KRW-BTC", "KRW-XRP"]
+    assert rows["KRW-XRP"].selection_source == "RANKED"
+    assert rows["KRW-ETH"].selection_source == "HELD"
+    assert rows["KRW-ETH"].buy_eligible is True
+    assert result.prefilter_count == 2
+    assert result.data_collection_count == 3
+    collected_markets = (
+        service.candle_service.collect_timeframes_for_markets.call_args.args[0]
+    )
+    assert set(collected_markets) == {"KRW-BTC", "KRW-XRP", "KRW-ETH"}
+
+
+def test_ranking_requires_any_sufficient_timeframe_but_keeps_holding() -> None:
+    insufficient = {
+        "15m": {"data_quality": "INSUFFICIENT", "candle_count": 10},
+        "1d": {"data_quality": "INSUFFICIENT", "candle_count": 10},
+    }
+    partial = {
+        "15m": {"data_quality": "SUFFICIENT", "candle_count": 50},
+        "1d": {"data_quality": "INSUFFICIENT", "candle_count": 10},
+    }
+    ranking = RecordingRanking({"KRW-XRP": Decimal("1")})
+    service = build_service(
+        markets=[
+            descriptor("KRW-BTC"),
+            descriptor("KRW-XRP"),
+            descriptor("KRW-ETH"),
+        ],
+        tickers=[
+            ticker("KRW-BTC", "1000"),
+            ticker("KRW-XRP", "900"),
+            ticker("KRW-ETH", "100"),
+        ],
+        balances={"KRW": balance("10000"), "ETH": balance("2")},
+        ranking_policy=ranking,
+        timeframe_features_by_market={
+            "KRW-BTC": insufficient,
+            "KRW-XRP": partial,
+            "KRW-ETH": insufficient,
+        },
+        analysis_timeframes="15m,1d",
+    )
+
+    result = service.build_and_persist()
+
+    rows = {row.market: row for row in result.candidates}
+    assert ranking.seen_markets == ["KRW-XRP"]
+    assert set(rows) == {"KRW-XRP", "KRW-ETH"}
+    assert rows["KRW-XRP"].selection_source == "RANKED"
+    assert rows["KRW-XRP"].feature_data["data_quality"] == "PARTIAL"
+    assert rows["KRW-ETH"].selection_source == "HELD"
+    assert rows["KRW-ETH"].feature_data["enough_candles"] is False
 
 
 def test_dynamic_filters_caution_blocklist_and_minimum_quote_trade_value() -> None:
