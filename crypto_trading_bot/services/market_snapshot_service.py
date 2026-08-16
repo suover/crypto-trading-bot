@@ -10,6 +10,7 @@ from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.services.exchange_market_registry_service import (
     ExchangeMarketRegistryService,
 )
+from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
 def to_decimal(value: Any) -> Decimal | None:
@@ -35,6 +36,7 @@ class MarketSnapshotService:
     def collect_market_snapshots(
         self,
         user_name: str = "Minsu",
+        pipeline_run_id: str | None = None,
     ) -> tuple[AnalysisRun, list[MarketSnapshot]]:
         settings = get_settings()
 
@@ -45,6 +47,7 @@ class MarketSnapshotService:
 
         analysis_run = AnalysisRun(
             user_id=user.id,
+            pipeline_run_id=get_pipeline_run_id(pipeline_run_id),
             run_type="MANUAL",
             trading_mode=settings.trading_mode,
             status="STARTED",
@@ -69,7 +72,7 @@ class MarketSnapshotService:
                     market=ticker["market"],
                     current_price=to_decimal(ticker.get("trade_price")),
                     change_rate=to_decimal(ticker.get("signed_change_rate")),
-                    volume_24h=to_decimal(ticker.get("acc_trade_volume_24h")),
+                    volume_24h=to_decimal(ticker.get("acc_trade_price_24h")),
                     raw_data=ticker,
                 )
                 for ticker in tickers

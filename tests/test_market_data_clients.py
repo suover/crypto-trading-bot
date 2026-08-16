@@ -19,6 +19,60 @@ class Response:
         return self.data
 
 
+def test_upbit_dynamic_public_endpoints(monkeypatch: pytest.MonkeyPatch) -> None:
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    def get(url: str, **kwargs: Any) -> Response:
+        requests.append((url, kwargs))
+        return Response([])
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", get)
+    client = UpbitClient(candle_request_interval_seconds=0)
+    client.get_markets()
+    client.get_all_tickers("KRW")
+    client.get_minute_candles("KRW-BTC", 240, 50)
+    client.get_day_candles("KRW-BTC", 50)
+
+    assert requests == [
+        (
+            "https://api.upbit.com/v1/market/all",
+            {"params": {"is_details": "true"}, "timeout": 5.0},
+        ),
+        (
+            "https://api.upbit.com/v1/ticker/all",
+            {"params": {"quote_currencies": "KRW"}, "timeout": 5.0},
+        ),
+        (
+            "https://api.upbit.com/v1/candles/minutes/240",
+            {"params": {"market": "KRW-BTC", "count": 50}, "timeout": 5.0},
+        ),
+        (
+            "https://api.upbit.com/v1/candles/days",
+            {"params": {"market": "KRW-BTC", "count": 50}, "timeout": 5.0},
+        ),
+    ]
+
+
+def test_upbit_public_429_is_paced_and_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rate_limited = Response([])
+    rate_limited.status_code = 429
+    rate_limited.headers = {"Retry-After": "0.25"}
+    success = Response([{"market": "KRW-BTC"}])
+    responses = iter([rate_limited, success])
+    sleeps: list[float] = []
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.get",
+        lambda *args, **kwargs: next(responses),
+    )
+
+    result = UpbitClient(sleep_fn=sleeps.append).get_all_tickers("KRW")
+
+    assert result == [{"market": "KRW-BTC"}]
+    assert sleeps == [0.25]
+
+
 def settings(**overrides: object) -> Settings:
     return Settings(database_url="postgresql://test:test@localhost/test", **overrides)
 

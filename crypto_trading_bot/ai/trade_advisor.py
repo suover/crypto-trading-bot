@@ -132,6 +132,8 @@ class OpenAITradeAdvisor:
                             ),
                             "rules": [
                                 "Choose only an exchange and market present in context.candidates.",
+                                "BUY is allowed only when candidate.buy_eligible=true.",
+                                "SELL is allowed only for an actually held candidate with candidate.sell_eligible=true.",
                                 "Do not BUY or SELL a candidate with enough_candles=false.",
                                 "Return trade_ratio only; never return an exact KRW amount or coin quantity.",
                                 "trade_ratio must be finite and between 0 and 1 inclusive.",
@@ -139,6 +141,8 @@ class OpenAITradeAdvisor:
                                 "Confidence and trade_ratio are separate concepts; never derive one from the other.",
                                 "If quote_balance_krw is below minimum_order_amount_krw, do not BUY.",
                                 "Treat orderbook as a short-lived supporting signal, never a guaranteed direction.",
+                                "Use multi-timeframe summaries and ranking only as evidence; ranking is not a profit guarantee or the final decision.",
+                                "Consider fees, spread, slippage, volatility, drawdown, and data_quality.",
                                 "Compare global_market USD context with local UPBIT technical data.",
                                 "market_sentiment is broad, not coin-specific; never trade from Fear & Greed alone.",
                                 "Extreme fear can mean opportunity and elevated risk; greed can mean momentum and correction risk.",

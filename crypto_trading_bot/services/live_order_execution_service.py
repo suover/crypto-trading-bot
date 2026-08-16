@@ -10,13 +10,21 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
+from crypto_trading_bot.db.models import (
+    AnalysisRun,
+    MarketUniverseCandidate,
+    OrderLog,
+    TradeRecommendation,
+)
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
     UpbitOrderNotFoundError,
     UpbitOrderOperationError,
     UpbitOrderRejectedError,
+)
+from crypto_trading_bot.exchange.upbit_market_data_provider import (
+    UpbitMarketDataProvider,
 )
 from crypto_trading_bot.services.live_order_safety import (
     MIN_UPBIT_ORDER_AMOUNT_KRW,
@@ -126,6 +134,7 @@ class LiveOrderExecutionService:
     def build_execution_plan(self, recommendation_id: int) -> LiveOrderExecutionPlan:
         recommendation = self._get_recommendation(recommendation_id)
         self._validate_recommendation_for_live_order(recommendation)
+        self._validate_persisted_dynamic_candidate(recommendation)
         action = recommendation.action.strip().upper()
         amount_krw = self._to_decimal_or_none(recommendation.recommended_amount_krw)
         quantity = self._to_decimal_or_none(recommendation.recommended_quantity)
@@ -162,6 +171,7 @@ class LiveOrderExecutionService:
             return self._existing_result(existing, recommendation)
 
         self._validate_recommendation_for_remote_lookup(recommendation)
+        self._validate_persisted_dynamic_candidate(recommendation)
         identifier = f"recommendation-{recommendation.id}"
 
         try:
@@ -199,6 +209,7 @@ class LiveOrderExecutionService:
             )
 
         plan = self.build_execution_plan(recommendation.id)
+        self._revalidate_dynamic_market_at_execution(plan)
         plan = self._revalidate_sell_at_execution(plan)
         self._validate_daily_live_order_limit(recommendation.user_id, plan)
         self._validate_sell_balance(plan)
@@ -601,7 +612,10 @@ class LiveOrderExecutionService:
         )
         settings = get_settings()
         assert_live_order_safety_enabled(settings)
-        if recommendation.market not in settings.allowed_market_list:
+        if (
+            settings.market_universe_mode == "STATIC"
+            and recommendation.market not in settings.allowed_market_list
+        ):
             raise LiveOrderSafetyError(
                 "Live order market is not allowed. "
                 f"market={recommendation.market}, "
@@ -645,6 +659,7 @@ class LiveOrderExecutionService:
             raise LiveOrderExecutionError(
                 f"Trade recommendation action must be BUY or SELL. action={recommendation.action}"
             )
+        LiveOrderExecutionService._validate_universe_candidate(recommendation)
         if not require_trade_ratio:
             return
         try:
@@ -658,6 +673,144 @@ class LiveOrderExecutionService:
             raise LiveOrderExecutionError(
                 "BUY or SELL recommendation requires a finite trade_ratio "
                 f"greater than 0 and at most 1. trade_ratio={recommendation.trade_ratio}"
+            )
+
+    @staticmethod
+    def _validate_universe_candidate(
+        recommendation: TradeRecommendation,
+    ) -> None:
+        settings = get_settings()
+        if settings.market_universe_mode == "STATIC":
+            return
+        if not settings.live_dynamic_market_enabled:
+            raise LiveOrderSafetyError("Dynamic live market execution is disabled")
+        if recommendation.universe_candidate_id is None:
+            raise LiveOrderSafetyError(
+                "Dynamic live recommendation has no persisted universe candidate"
+            )
+
+    def _revalidate_dynamic_market_at_execution(
+        self, plan: LiveOrderExecutionPlan
+    ) -> None:
+        settings = get_settings()
+        if settings.market_universe_mode != "DYNAMIC":
+            return
+        recommendation = self._get_recommendation(plan.recommendation_id)
+        self._validate_persisted_dynamic_candidate(recommendation)
+        provider = UpbitMarketDataProvider(self.upbit_client)
+        descriptor = next(
+            (
+                market
+                for market in provider.list_markets(quote_asset="KRW")
+                if market.market == plan.market
+            ),
+            None,
+        )
+        if descriptor is None:
+            raise LiveOrderSafetyError(
+                f"Market is no longer trading on Upbit. market={plan.market}"
+            )
+        if plan.action == "BUY" and (descriptor.is_warning or descriptor.is_caution):
+            raise LiveOrderSafetyError(
+                f"Dynamic BUY market has a current warning or caution. market={plan.market}"
+            )
+        if plan.action == "BUY":
+            tickers = provider.get_tickers(markets=[plan.market])
+            if (
+                len(tickers) != 1
+                or tickers[0].market != plan.market
+                or tickers[0].trade_price is None
+                or tickers[0].trade_price <= 0
+            ):
+                raise LiveOrderSafetyError(
+                    f"Dynamic BUY ticker is invalid. market={plan.market}"
+                )
+            if plan.amount_krw is None:
+                raise LiveOrderSafetyError("Dynamic BUY amount is missing")
+            krw_account = next(
+                (
+                    account
+                    for account in self.upbit_client.get_accounts()
+                    if account.get("currency") == "KRW"
+                ),
+                None,
+            )
+            try:
+                available_krw = Decimal(str(krw_account["balance"]))
+            except InvalidOperation, KeyError, TypeError, ValueError:
+                raise LiveOrderSafetyError(
+                    "Dynamic BUY current KRW balance is invalid"
+                ) from None
+            if not available_krw.is_finite() or available_krw < plan.amount_krw:
+                raise LiveOrderSafetyError(
+                    "Dynamic BUY current KRW balance is insufficient"
+                )
+
+    def _validate_persisted_dynamic_candidate(
+        self, recommendation: TradeRecommendation
+    ) -> None:
+        settings = get_settings()
+        if recommendation.universe_candidate_id is None:
+            if settings.market_universe_mode == "STATIC":
+                return
+            raise LiveOrderSafetyError(
+                "Dynamic live recommendation has no persisted universe candidate"
+            )
+        candidate = self.session.get(
+            MarketUniverseCandidate, recommendation.universe_candidate_id
+        )
+        if candidate is None:
+            raise LiveOrderSafetyError("Persisted universe candidate was not found")
+        candidate_mode = (
+            "STATIC" if candidate.selection_source == "STATIC" else "DYNAMIC"
+        )
+        if candidate_mode != settings.market_universe_mode:
+            raise LiveOrderSafetyError(
+                "Recommendation universe mode does not match current runtime mode"
+            )
+        if settings.market_universe_mode == "STATIC":
+            return
+        recommendation_run = self.session.get(
+            AnalysisRun, recommendation.analysis_run_id
+        )
+        candidate_run = self.session.get(AnalysisRun, candidate.analysis_run_id)
+        if (
+            recommendation_run is None
+            or candidate_run is None
+            or recommendation_run.pipeline_run_id is None
+            or recommendation_run.pipeline_run_id != candidate_run.pipeline_run_id
+        ):
+            raise LiveOrderSafetyError(
+                "Recommendation and universe candidate pipeline identity do not match"
+            )
+        if (
+            recommendation_run.user_id != recommendation.user_id
+            or recommendation_run.run_type != "AI_RECOMMENDATION"
+            or recommendation_run.status != "SUCCESS"
+            or candidate_run.user_id != recommendation.user_id
+            or candidate_run.run_type != "MARKET_UNIVERSE"
+            or candidate_run.status != "SUCCESS"
+        ):
+            raise LiveOrderSafetyError(
+                "Recommendation or universe candidate analysis run is not a valid "
+                "successful pipeline stage"
+            )
+        if (
+            candidate.user_id != recommendation.user_id
+            or candidate.exchange != recommendation.exchange
+            or candidate.market != recommendation.market
+            or candidate.quote_asset != "KRW"
+        ):
+            raise LiveOrderSafetyError(
+                "Recommendation does not match its persisted universe candidate"
+            )
+        if recommendation.action == "BUY" and not candidate.buy_eligible:
+            raise LiveOrderSafetyError(
+                "Persisted universe candidate is not BUY eligible"
+            )
+        if recommendation.action == "SELL" and not candidate.sell_eligible:
+            raise LiveOrderSafetyError(
+                "Persisted universe candidate is not SELL eligible"
             )
 
     @staticmethod

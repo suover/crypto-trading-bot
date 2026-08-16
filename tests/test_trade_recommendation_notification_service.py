@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
 
@@ -241,6 +243,25 @@ def test_send_latest_ai_recommendation_supersedes_old_pending_and_does_not_send_
 
     # 요약 메시지만 전송된다.
     assert len(telegram_client.sent_messages) == 1
+
+
+def test_latest_ai_run_is_scoped_to_current_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipeline_run_id = str(uuid4())
+    monkeypatch.setenv("CRYPTO_TRADING_PIPELINE_RUN_ID", pipeline_run_id)
+    session = MagicMock()
+    expected = build_analysis_run()
+    session.scalar.return_value = expected
+    service = TradeRecommendationNotificationService(
+        session=session,
+        telegram_client=FakeTelegramClient(),  # type: ignore[arg-type]
+    )
+
+    assert service._get_latest_ai_analysis_run() is expected
+
+    statement = session.scalar.call_args.args[0]
+    assert pipeline_run_id in statement.compile().params.values()
 
 
 @pytest.fixture(autouse=True)

@@ -1,10 +1,13 @@
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
+from uuid import uuid4
 
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.notification.telegram_client import TelegramClient
+from crypto_trading_bot.services.pipeline_identity import PIPELINE_RUN_ID_ENV
 
 
 @dataclass(frozen=True)
@@ -32,16 +35,12 @@ class PipelineStepError(RuntimeError):
 
 PIPELINE_STEPS = [
     PipelineStep(
-        name="시장 현재가 스냅샷 수집",
-        module="scripts.collect_market_snapshots",
-    ),
-    PipelineStep(
         name="계좌 잔고 스냅샷 수집",
         module="scripts.collect_account_snapshots",
     ),
     PipelineStep(
-        name="시장 캔들 수집",
-        module="scripts.collect_market_candles",
+        name="시장 Universe 및 Multi-Timeframe 데이터 구축",
+        module="scripts.build_market_universe",
     ),
     PipelineStep(
         name="AI 매매 추천 생성",
@@ -54,15 +53,19 @@ PIPELINE_STEPS = [
 ]
 
 
-def run_step(step: PipelineStep) -> None:
+def run_step(step: PipelineStep, pipeline_run_id: str | None = None) -> None:
     print("=" * 80, flush=True)
     print(f"START: {step.name}", flush=True)
     print(f"MODULE: {step.module}", flush=True)
     print("=" * 80, flush=True)
 
+    environment = os.environ.copy()
+    if pipeline_run_id is not None:
+        environment[PIPELINE_RUN_ID_ENV] = pipeline_run_id
     result = subprocess.run(
         [sys.executable, "-m", step.module],
         check=False,
+        env=environment,
     )
 
     if result.returncode != 0:
@@ -128,9 +131,11 @@ def send_failure_notification(error: PipelineStepError) -> None:
 
 
 def run_ai_trade_analysis() -> None:
+    pipeline_run_id = str(uuid4())
+    print(f"PIPELINE_RUN_ID: {pipeline_run_id}", flush=True)
     try:
         for step in PIPELINE_STEPS:
-            run_step(step)
+            run_step(step, pipeline_run_id)
 
     except PipelineStepError as error:
         print(

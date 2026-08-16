@@ -127,6 +127,9 @@ class AnalysisRun(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), nullable=False, index=True
     )
+    pipeline_run_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
     run_type: Mapped[str] = mapped_column(String(30), nullable=False)
     trading_mode: Mapped[str] = mapped_column(String(30), nullable=False)
     status: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -196,6 +199,45 @@ class AccountSnapshot(Base):
     )
 
 
+class MarketUniverseCandidate(Base):
+    __tablename__ = "market_universe_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_run_id",
+            "exchange",
+            "market",
+            name="uq_universe_candidates_run_exchange_market",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    base_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score: Mapped[float | None] = mapped_column(Numeric(18, 9), nullable=True)
+    selection_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    buy_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sell_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    quote_trade_value_24h: Mapped[float | None] = mapped_column(
+        Numeric(30, 2), nullable=True
+    )
+    market_event_data: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    feature_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class TradeRecommendation(Base):
     __tablename__ = "trade_recommendations"
 
@@ -209,6 +251,9 @@ class TradeRecommendation(Base):
         ForeignKey("market_snapshots.id"),
         nullable=True,
         index=True,
+    )
+    universe_candidate_id: Mapped[int | None] = mapped_column(
+        ForeignKey("market_universe_candidates.id"), nullable=True, index=True
     )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id"), nullable=False, index=True

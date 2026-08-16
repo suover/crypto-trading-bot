@@ -155,6 +155,26 @@ docker compose --profile manual run --rm ai-trade-analysis
 
 이 명령은 시장/계좌/캔들 데이터를 수집하고 AI 추천을 생성한 뒤 Telegram 알림 또는 승인 요청을 보냅니다.
 
+## STATIC/DYNAMIC rollout
+
+배포 직후에는 반드시 기본 `MARKET_UNIVERSE_MODE=STATIC`과
+`LIVE_DYNAMIC_MARKET_ENABLED=false`를 유지합니다. 이 상태에서는 기존
+`ALLOWED_MARKETS`가 분석 목록과 LIVE 주문 allowlist 역할을 계속합니다.
+
+DYNAMIC 분석을 검증할 때는 먼저 주문 모드를 MOCK으로 유지하고
+`MARKET_UNIVERSE_MODE=DYNAMIC`만 켠 뒤 다음 진단을 실행합니다.
+
+```bash
+docker compose --profile manual run --rm ai-trade-analysis \
+  python -m scripts.check_market_universe
+```
+
+진단은 OpenAI나 주문 API를 호출하지 않습니다. 전체/제외/prefilter/Top N/holdings 추가
+수와 timeframe별 data quality를 확인합니다. DYNAMIC LIVE는 기존
+`LIVE_ORDER_ENABLED`, confirmation, Telegram 승인에 더해
+`LIVE_DYNAMIC_MARKET_ENABLED=true`가 있어야 하며, 운영 검토 없이 이 값을 켜지
+않습니다.
+
 ## PostgreSQL 공개 포트 확인
 
 서버 런타임에서는 PostgreSQL이 외부에 공개되면 안 됩니다.

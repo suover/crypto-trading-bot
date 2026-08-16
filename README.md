@@ -183,6 +183,44 @@ BUY에만 적용됩니다. SELL 청산은 BUY 최대/일일 한도로 차단하�
 실행 직전 정확한 마켓 ticker, Upbit 최소 주문 금액, 현재 가용 수량을
 다시 검증합니다. 모든 BUY/SELL은 Telegram 승인을 계속 필요로 합니다.
 
+## Market Universe와 Multi-Timeframe 분석
+
+기본값인 `MARKET_UNIVERSE_MODE=STATIC`에서는 기존 `ALLOWED_MARKETS`와 DB의
+활성 registry 항목을 그대로 분석 및 LIVE 안전 allowlist로 사용합니다. 따라서 코드를
+배포하는 것만으로 현재 운영 universe가 바뀌지 않습니다.
+
+`MARKET_UNIVERSE_MODE=DYNAMIC`에서는 Upbit의 현재 KRW 전체 마켓과 ticker를
+조회하고, warning/caution, blocklist, 24시간 KRW 거래대금
+(`acc_trade_price_24h`)을 적용한 뒤 유동성 prefilter와 교체 가능한 heuristic ranking으로
+Top N을 선정합니다. 보유 종목은 Top N 밖이거나 경보 상태여도 SELL 판단을 위해
+후보에 남지만 신규 BUY는 차단됩니다. 각 분석은 하나의 `pipeline_run_id`와 persisted
+universe candidate를 사용하며 15분, 60분, 240분, 일봉의 compact feature만 GPT에
+전달합니다.
+
+```env
+MARKET_UNIVERSE_MODE=DYNAMIC
+MARKET_UNIVERSE_TOP_N=7
+MARKET_UNIVERSE_PREFILTER_N=20
+MARKET_UNIVERSE_MIN_24H_TRADE_VALUE_KRW=0
+MARKET_BLOCKLIST=
+ANALYSIS_TIMEFRAMES=15m,60m,240m,1d
+ANALYSIS_CANDLE_COUNT=50
+```
+
+주문과 OpenAI 호출 없이 universe/feature 결과만 확인하려면 다음 진단 명령을
+사용합니다. 이 명령은 market/candle 데이터와 추적용 universe row를 DB에 저장하지만
+추천이나 주문을 만들지 않습니다.
+
+```powershell
+uv run python -m scripts.check_market_universe
+```
+
+DYNAMIC 추천을 실제 주문으로 실행하려면 기존 LIVE 플래그와 Telegram 승인 외에도
+`LIVE_DYNAMIC_MARKET_ENABLED=true`를 별도로 설정해야 합니다. 실행 직전 persisted
+candidate와 pipeline identity, BUY/SELL eligibility, KRW quote, 현재 상장 상태,
+BUY warning/caution, ticker를 다시 검증합니다. STATIC 모드에서는 이 플래그가 사용되지
+않고 기존 `ALLOWED_MARKETS` 제한이 유지됩니다.
+
 ## Docker Compose 전체 런타임 실행
 
 서버/프로덕션 유사 런타임을 Docker Compose로 실행합니다. 이 런타임은 PostgreSQL을 공개 포트로 노출하지 않습니다.
@@ -241,11 +279,10 @@ AI_ANALYSIS_SCHEDULE_TIMES=09:00,15:00,21:00
 
 스케줄러는 다음 파이프라인을 실행합니다.
 
-1. 시장 현재가 스냅샷 수집
-2. 계좌 잔고 스냅샷 수집
-3. 시장 캔들 수집
-4. AI 매매 추천 생성
-5. AI 추천 결과 Telegram 알림 및 승인 요청 발송
+1. 계좌 잔고 스냅샷 수집
+2. 동일 pipeline ID로 market universe 및 multi-timeframe 데이터 구축
+3. persisted universe로 AI 매매 추천 생성
+4. AI 추천 결과 Telegram 알림 및 승인 요청 발송
 
 `BUY` 또는 `SELL` 추천은 Telegram 승인 요청으로 이어지고, 사용자가 승인해야 주문 흐름이 진행됩니다.
 
@@ -273,11 +310,10 @@ docker compose --profile manual run --rm ai-trade-analysis
 
 이 명령은 다음 단계를 순서대로 실행합니다.
 
-1. 시장 현재가 스냅샷 수집
-2. 계좌 잔고 스냅샷 수집
-3. 시장 캔들 수집
-4. AI 매매 추천 생성
-5. AI 추천 결과 Telegram 알림 및 승인 요청 발송
+1. 계좌 잔고 스냅샷 수집
+2. 동일 pipeline ID로 market universe 및 multi-timeframe 데이터 구축
+3. persisted universe로 AI 매매 추천 생성
+4. AI 추천 결과 Telegram 알림 및 승인 요청 발송
 
 `BUY` 또는 `SELL` 추천이 생성되면 Telegram 승인 요청이 발송됩니다. 사용자가 승인해야 후속 주문 흐름으로 넘어갑니다.
 

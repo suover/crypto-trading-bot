@@ -103,6 +103,13 @@ class ExchangeMarketRegistryService:
         )
         return min(amount, ceiling)
 
+    def calculate_default_max_order_amount(self, exchange_code: str) -> Decimal:
+        exchange = self._load_exchange(exchange_code)
+        ceiling = Decimal(str(self.settings.max_order_amount_krw))
+        if exchange.default_max_order_amount is None:
+            return ceiling
+        return min(Decimal(str(exchange.default_max_order_amount)), ceiling)
+
     def calculate_final_daily_max_order_amount(
         self,
         exchange_market: ExchangeMarket,

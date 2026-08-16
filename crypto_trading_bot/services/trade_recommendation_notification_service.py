@@ -21,6 +21,7 @@ from crypto_trading_bot.notification.trade_recommendation_message import (
 from crypto_trading_bot.services.approval_request_service import (
     ApprovalRequestService,
 )
+from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
 SUPPORTED_APPROVAL_ACTIONS = {"BUY", "SELL"}
@@ -153,6 +154,7 @@ class TradeRecommendationNotificationService:
         return analysis_run, len(recommendations)
 
     def _get_latest_ai_analysis_run(self) -> AnalysisRun:
+        pipeline_run_id = get_pipeline_run_id()
         statement = (
             select(AnalysisRun)
             .where(
@@ -162,11 +164,20 @@ class TradeRecommendationNotificationService:
             .order_by(AnalysisRun.id.desc())
             .limit(1)
         )
+        if pipeline_run_id is not None:
+            statement = statement.where(AnalysisRun.pipeline_run_id == pipeline_run_id)
 
         analysis_run = self.session.scalar(statement)
 
         if analysis_run is None:
-            raise ValueError("No successful AI_RECOMMENDATION analysis run found")
+            suffix = (
+                f" for pipeline_run_id={pipeline_run_id}"
+                if pipeline_run_id is not None
+                else ""
+            )
+            raise ValueError(
+                f"No successful AI_RECOMMENDATION analysis run found{suffix}"
+            )
 
         return analysis_run
 

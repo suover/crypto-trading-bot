@@ -34,12 +34,20 @@ class LiveTradingReadinessService:
 
     def check(self) -> LiveTradingReadinessReport:
         settings = get_settings()
+        ticker_markets = (
+            settings.allowed_market_list
+            if settings.market_universe_mode == "STATIC"
+            else None
+        )
         items = (
             self._check_order_execution_mode(settings=settings),
             self._check_live_order_safety(settings=settings),
             self._check_database_connection(),
             self._check_upbit_accounts(),
-            self._check_upbit_tickers(markets=settings.allowed_market_list),
+            self._check_upbit_tickers(
+                markets=ticker_markets,
+                quote_asset=settings.market_universe_quote_asset,
+            ),
         )
 
         return LiveTradingReadinessReport(
@@ -137,8 +145,10 @@ class LiveTradingReadinessService:
             message=f"connected, account_count={len(accounts)}",
         )
 
-    def _check_upbit_tickers(self, markets: list[str]) -> ReadinessCheckItem:
-        if not markets:
+    def _check_upbit_tickers(
+        self, markets: list[str] | None, quote_asset: str = "KRW"
+    ) -> ReadinessCheckItem:
+        if markets is not None and not markets:
             return ReadinessCheckItem(
                 name="upbit_tickers",
                 ready=False,
@@ -146,7 +156,11 @@ class LiveTradingReadinessService:
             )
 
         try:
-            tickers = self.upbit_client.get_tickers(markets)
+            tickers = (
+                self.upbit_client.get_tickers(markets)
+                if markets is not None
+                else self.upbit_client.get_all_tickers(quote_asset)
+            )
         except Exception as error:
             return ReadinessCheckItem(
                 name="upbit_tickers",
@@ -164,5 +178,5 @@ class LiveTradingReadinessService:
         return ReadinessCheckItem(
             name="upbit_tickers",
             ready=True,
-            message=f"connected, market_count={len(markets)}",
+            message=f"connected, market_count={len(tickers)}",
         )

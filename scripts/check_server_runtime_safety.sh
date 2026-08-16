@@ -174,6 +174,8 @@ LIVE_ORDER_ENABLED="$(get_env_value LIVE_ORDER_ENABLED)"
 MAX_ORDER_AMOUNT_KRW="$(get_env_value MAX_ORDER_AMOUNT_KRW)"
 DAILY_MAX_ORDER_AMOUNT_KRW="$(get_env_value DAILY_MAX_ORDER_AMOUNT_KRW)"
 ALLOWED_MARKETS="$(get_env_value ALLOWED_MARKETS)"
+MARKET_UNIVERSE_MODE="$(get_env_value MARKET_UNIVERSE_MODE)"
+LIVE_DYNAMIC_MARKET_ENABLED="$(get_env_value LIVE_DYNAMIC_MARKET_ENABLED)"
 AI_ANALYSIS_SCHEDULER_ENABLED="$(get_env_value AI_ANALYSIS_SCHEDULER_ENABLED)"
 
 echo ""
@@ -183,6 +185,8 @@ echo "- LIVE_ORDER_ENABLED=${LIVE_ORDER_ENABLED:-<unset>}"
 echo "- MAX_ORDER_AMOUNT_KRW=${MAX_ORDER_AMOUNT_KRW:-<unset>}"
 echo "- DAILY_MAX_ORDER_AMOUNT_KRW=${DAILY_MAX_ORDER_AMOUNT_KRW:-<unset>}"
 echo "- ALLOWED_MARKETS=${ALLOWED_MARKETS:-<unset>}"
+echo "- MARKET_UNIVERSE_MODE=${MARKET_UNIVERSE_MODE:-STATIC}"
+echo "- LIVE_DYNAMIC_MARKET_ENABLED=${LIVE_DYNAMIC_MARKET_ENABLED:-false}"
 echo "- AI_ANALYSIS_SCHEDULER_ENABLED=${AI_ANALYSIS_SCHEDULER_ENABLED:-<unset>}"
 echo ""
 
@@ -193,7 +197,7 @@ if [[ "$AI_ANALYSIS_SCHEDULER_ENABLED" == "true" ]]; then
   LIVE_WARNING_COUNT=$((LIVE_WARNING_COUNT + 1))
 fi
 
-if [[ "$ALLOWED_MARKETS" == *,* ]]; then
+if [[ "${MARKET_UNIVERSE_MODE:-STATIC}" == "STATIC" && "$ALLOWED_MARKETS" == *,* ]]; then
   warn "ALLOWED_MARKETS에 여러 마켓이 있습니다: ${ALLOWED_MARKETS}. 제한적 라이브 테스트에서는 KRW-BTC 단일 마켓이 권장됩니다."
   LIVE_WARNING_COUNT=$((LIVE_WARNING_COUNT + 1))
 fi
@@ -221,7 +225,11 @@ if [[ "$STRICT_LIVE" == "true" ]]; then
   else
     fail_check "strict-live: DAILY_MAX_ORDER_AMOUNT_KRW가 비어 있거나 5000보다 큽니다."
   fi
-  [[ "$ALLOWED_MARKETS" == "KRW-BTC" ]] && pass_check "strict-live: ALLOWED_MARKETS=KRW-BTC입니다." || fail_check "strict-live: ALLOWED_MARKETS가 정확히 KRW-BTC가 아닙니다."
+  if [[ "${MARKET_UNIVERSE_MODE:-STATIC}" == "DYNAMIC" ]]; then
+    [[ "$LIVE_DYNAMIC_MARKET_ENABLED" == "true" ]] && pass_check "strict-live: DYNAMIC LIVE 명시 플래그가 켜져 있습니다." || fail_check "strict-live: LIVE_DYNAMIC_MARKET_ENABLED=true가 아닙니다."
+  else
+    [[ "$ALLOWED_MARKETS" == "KRW-BTC" ]] && pass_check "strict-live: STATIC ALLOWED_MARKETS=KRW-BTC입니다." || fail_check "strict-live: STATIC ALLOWED_MARKETS가 정확히 KRW-BTC가 아닙니다."
+  fi
   [[ "$AI_ANALYSIS_SCHEDULER_ENABLED" == "false" ]] && pass_check "strict-live: AI_ANALYSIS_SCHEDULER_ENABLED=false입니다." || fail_check "strict-live: AI_ANALYSIS_SCHEDULER_ENABLED가 false가 아닙니다."
 else
   if (( LIVE_WARNING_COUNT > 0 )); then

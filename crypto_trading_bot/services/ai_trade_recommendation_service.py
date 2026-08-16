@@ -17,6 +17,7 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     ExchangeMarket,
     MarketCandle,
+    MarketUniverseCandidate,
     OrderLog,
     TradeRecommendation,
     User,
@@ -27,6 +28,7 @@ from crypto_trading_bot.services.exchange_market_registry_service import (
 from crypto_trading_bot.services.market_data_context_service import (
     MarketDataContextService,
 )
+from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
@@ -68,11 +70,14 @@ class AiTradeRecommendationService:
         user_name: str = "Minsu",
         candle_unit: int = 15,
         candle_count: int = 50,
+        pipeline_run_id: str | None = None,
     ) -> tuple[AnalysisRun, list[TradeRecommendation]]:
         settings = get_settings()
+        pipeline_id = get_pipeline_run_id(pipeline_run_id)
         user = self._get_user(user_name)
         analysis_run = AnalysisRun(
             user_id=user.id,
+            pipeline_run_id=pipeline_id,
             run_type="AI_RECOMMENDATION",
             trading_mode=settings.trading_mode,
             status="STARTED",
@@ -81,27 +86,40 @@ class AiTradeRecommendationService:
         self.session.flush()
 
         try:
-            krw_balance = self._get_latest_balance(
-                user_id=user.id,
-                exchange="UPBIT",
-                currency="KRW",
-            )
-            registry_markets = (
-                self.registry_service.load_allowed_active_markets_for_exchange("UPBIT")
-            )
-            if not registry_markets:
-                raise ValueError("No active UPBIT markets found in registry")
-
-            base_candidates = [
-                self._build_candidate(
+            persisted_candidates = self._get_persisted_candidates(user.id, pipeline_id)
+            if pipeline_id is not None:
+                if not persisted_candidates:
+                    raise ValueError(
+                        "No persisted universe candidates found for pipeline. "
+                        f"pipeline_run_id={pipeline_id}"
+                    )
+                base_candidates = [
+                    dict(row.feature_data) for row in persisted_candidates
+                ]
+                krw_balance = to_decimal(base_candidates[0].get("quote_balance_krw"))
+            else:
+                krw_balance = self._get_latest_balance(
                     user_id=user.id,
-                    registry_market=registry_market,
-                    candle_unit=candle_unit,
-                    candle_count=candle_count,
-                    krw_balance=krw_balance,
+                    exchange="UPBIT",
+                    currency="KRW",
                 )
-                for registry_market in registry_markets
-            ]
+                registry_markets = (
+                    self.registry_service.load_allowed_active_markets_for_exchange(
+                        "UPBIT"
+                    )
+                )
+                if not registry_markets:
+                    raise ValueError("No active UPBIT markets found in registry")
+                base_candidates = [
+                    self._build_candidate(
+                        user_id=user.id,
+                        registry_market=registry_market,
+                        candle_unit=candle_unit,
+                        candle_count=candle_count,
+                        krw_balance=krw_balance,
+                    )
+                    for registry_market in registry_markets
+                ]
             market_data_result = self.market_data_context_service.enrich_candidates(
                 base_candidates
             )
@@ -111,7 +129,14 @@ class AiTradeRecommendationService:
                     "exchange": "UPBIT",
                     "quote_asset": "KRW",
                     "quote_balance_krw": str(krw_balance),
+                    "holdings": [
+                        candidate.get("position")
+                        for candidate in candidates
+                        if candidate.get("held")
+                    ],
                 },
+                "pipeline_run_id": pipeline_id,
+                "market_universe_mode": settings.market_universe_mode,
                 "trading_mode": settings.trading_mode,
                 "external_data_status": market_data_result.external_data_status,
                 "market_sentiment": market_data_result.market_sentiment,
@@ -141,9 +166,20 @@ class AiTradeRecommendationService:
                 execution_mode=settings.order_execution_mode,
             )
             safety_override = safe_advice.raw_response.get("system_override")
+            candidate_row_by_market = {
+                (row.exchange, row.market): row for row in persisted_candidates
+            }
+            selected_universe_candidate = candidate_row_by_market.get(
+                (safe_advice.exchange, safe_advice.market)
+            )
             recommendation = TradeRecommendation(
                 analysis_run_id=analysis_run.id,
                 market_snapshot_id=None,
+                universe_candidate_id=(
+                    selected_universe_candidate.id
+                    if selected_universe_candidate is not None
+                    else None
+                ),
                 user_id=user.id,
                 exchange=safe_advice.exchange,
                 market=safe_advice.market,
@@ -263,6 +299,10 @@ class AiTradeRecommendationService:
             "base_asset": registry_market.base_asset,
             "quote_asset": registry_market.quote_asset,
             "coingecko_id": registry_market.coingecko_id,
+            "buy_eligible": True,
+            "sell_eligible": coin_balance > 0,
+            "selection_source": "STATIC",
+            "held": coin_balance > 0,
             "candle_unit": candle_unit,
             "candle_count": len(candles),
             "data_quality": "SUFFICIENT" if enough_candles else "INSUFFICIENT",
@@ -292,6 +332,15 @@ class AiTradeRecommendationService:
                 indicators.volume_ratio_5_to_20 if indicators else None
             ),
             "trend_label": indicators.trend_label if indicators else "판단 보류",
+            "timeframes": {
+                f"{candle_unit}m": {
+                    "data_quality": "SUFFICIENT" if enough_candles else "INSUFFICIENT",
+                    "candle_count": len(candles),
+                    "trend_label": (
+                        indicators.trend_label if indicators else "판단 보류"
+                    ),
+                }
+            },
             "quote_balance_krw": str(krw_balance),
             "coin_balance": str(coin_balance),
             "avg_buy_price": decimal_to_string_or_none(
@@ -314,6 +363,39 @@ class AiTradeRecommendationService:
         if user is None:
             raise ValueError(f"User not found. name={user_name}")
         return user
+
+    def _get_persisted_candidates(
+        self, user_id: int, pipeline_run_id: str | None
+    ) -> list[MarketUniverseCandidate]:
+        if pipeline_run_id is None:
+            return []
+        universe_run_id = self.session.scalar(
+            select(AnalysisRun.id)
+            .where(
+                AnalysisRun.user_id == user_id,
+                AnalysisRun.pipeline_run_id == pipeline_run_id,
+                AnalysisRun.run_type == "MARKET_UNIVERSE",
+                AnalysisRun.status == "SUCCESS",
+            )
+            .order_by(AnalysisRun.created_at.desc())
+            .limit(1)
+        )
+        if universe_run_id is None:
+            return []
+        return list(
+            self.session.scalars(
+                select(MarketUniverseCandidate)
+                .where(
+                    MarketUniverseCandidate.analysis_run_id == universe_run_id,
+                    MarketUniverseCandidate.user_id == user_id,
+                    MarketUniverseCandidate.exchange == "UPBIT",
+                )
+                .order_by(
+                    MarketUniverseCandidate.rank.asc().nulls_last(),
+                    MarketUniverseCandidate.id,
+                )
+            )
+        )
 
     def _get_recent_candles(
         self,
@@ -383,6 +465,8 @@ class AiTradeRecommendationService:
             candle_unit=candle_unit,
             close_prices=[to_decimal(candle.trade_price) for candle in candles],
             volumes=[to_decimal(candle.candle_acc_trade_volume) for candle in candles],
+            high_prices=[to_decimal(candle.high_price) for candle in candles],
+            low_prices=[to_decimal(candle.low_price) for candle in candles],
         )
 
     def _apply_safety_rules(
@@ -436,6 +520,13 @@ class AiTradeRecommendationService:
             )
 
         if advice.action == "BUY":
+            if not bool(selected_candidate.get("buy_eligible", True)):
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="선택한 후보는 현재 신규 BUY 대상이 아닙니다.",
+                )
             if ratio == 0:
                 return self._override_to_hold(
                     advice,
@@ -483,6 +574,13 @@ class AiTradeRecommendationService:
             )
 
         if advice.action == "SELL":
+            if not bool(selected_candidate.get("sell_eligible", True)):
+                return self._override_to_hold(
+                    advice,
+                    exchange=advice.exchange,
+                    market=advice.market,
+                    reason="선택한 후보는 현재 SELL 검토 대상이 아닙니다.",
+                )
             if ratio == 0:
                 return self._override_to_hold(
                     advice,

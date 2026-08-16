@@ -1,6 +1,7 @@
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from hashlib import sha512
+from time import monotonic, sleep
 from typing import Any
 from urllib.parse import urlencode, unquote
 from uuid import uuid4
@@ -21,6 +22,64 @@ from crypto_trading_bot.exchange.upbit_order_exceptions import (
 class UpbitClient:
     BASE_URL = "https://api.upbit.com"
 
+    def __init__(
+        self,
+        *,
+        sleep_fn: Callable[[float], None] = sleep,
+        monotonic_fn: Callable[[], float] = monotonic,
+        candle_request_interval_seconds: float = 0.12,
+        public_429_retries: int = 2,
+    ) -> None:
+        self.sleep_fn = sleep_fn
+        self.monotonic_fn = monotonic_fn
+        self.candle_request_interval_seconds = max(0.0, candle_request_interval_seconds)
+        self.public_429_retries = max(0, public_429_retries)
+        self._last_candle_request_at: float | None = None
+
+    def _request_public_list(
+        self,
+        path: str,
+        *,
+        params: dict[str, object],
+        response_name: str,
+        candle_group: bool = False,
+    ) -> list[dict[str, Any]]:
+        for attempt in range(self.public_429_retries + 1):
+            if candle_group:
+                self._pace_candle_request()
+            response = httpx.get(
+                f"{self.BASE_URL}{path}",
+                params=params,
+                timeout=5.0,
+            )
+            if getattr(response, "status_code", None) == 429:
+                if attempt >= self.public_429_retries:
+                    response.raise_for_status()
+                headers = getattr(response, "headers", {})
+                raw_retry_after = headers.get("Retry-After", "1")
+                try:
+                    retry_after = max(float(raw_retry_after), 0.1)
+                except TypeError, ValueError:
+                    retry_after = 1.0
+                self.sleep_fn(retry_after)
+                continue
+            response.raise_for_status()
+            data = response.json()
+            if not isinstance(data, list):
+                raise ValueError(f"Unexpected Upbit {response_name} response format")
+            return [row for row in data if isinstance(row, dict)]
+        raise RuntimeError("Unreachable Upbit public request retry state")
+
+    def _pace_candle_request(self) -> None:
+        now = self.monotonic_fn()
+        if self._last_candle_request_at is not None:
+            elapsed = now - self._last_candle_request_at
+            remaining = self.candle_request_interval_seconds - elapsed
+            if remaining > 0:
+                self.sleep_fn(remaining)
+                now = self.monotonic_fn()
+        self._last_candle_request_at = now
+
     def get_orderbooks(
         self,
         markets: list[str],
@@ -31,34 +90,38 @@ class UpbitClient:
         if count < 1 or count > 30:
             raise ValueError("count must be between 1 and 30")
 
-        response = httpx.get(
-            f"{self.BASE_URL}/v1/orderbook",
+        return self._request_public_list(
+            "/v1/orderbook",
             params={"markets": ",".join(markets), "count": count},
-            timeout=5.0,
+            response_name="orderbook",
         )
-        response.raise_for_status()
-        data = response.json()
-        if not isinstance(data, list):
-            raise ValueError("Unexpected Upbit orderbook response format")
-        return data
 
     def get_tickers(self, markets: list[str]) -> list[dict[str, Any]]:
         if not markets:
             raise ValueError("markets must not be empty")
 
-        response = httpx.get(
-            f"{self.BASE_URL}/v1/ticker",
+        return self._request_public_list(
+            "/v1/ticker",
             params={"markets": ",".join(markets)},
-            timeout=5.0,
+            response_name="ticker",
         )
-        response.raise_for_status()
 
-        data = response.json()
+    def get_markets(self, is_details: bool = True) -> list[dict[str, Any]]:
+        return self._request_public_list(
+            "/v1/market/all",
+            params={"is_details": str(is_details).lower()},
+            response_name="market list",
+        )
 
-        if not isinstance(data, list):
-            raise ValueError("Unexpected Upbit ticker response format")
-
-        return data
+    def get_all_tickers(self, quote_currency: str = "KRW") -> list[dict[str, Any]]:
+        normalized_quote = quote_currency.strip().upper()
+        if not normalized_quote:
+            raise ValueError("quote_currency must not be empty")
+        return self._request_public_list(
+            "/v1/ticker/all",
+            params={"quote_currencies": normalized_quote},
+            response_name="all ticker",
+        )
 
     def get_accounts(self) -> list[dict[str, Any]]:
         response = httpx.get(
@@ -378,22 +441,31 @@ class UpbitClient:
         if count < 1 or count > 200:
             raise ValueError("count must be between 1 and 200")
 
-        response = httpx.get(
-            f"{self.BASE_URL}/v1/candles/minutes/{unit}",
+        return self._request_public_list(
+            f"/v1/candles/minutes/{unit}",
             params={
                 "market": market,
                 "count": count,
             },
-            timeout=5.0,
+            response_name="candle",
+            candle_group=True,
         )
-        response.raise_for_status()
 
-        data = response.json()
-
-        if not isinstance(data, list):
-            raise ValueError("Unexpected Upbit candle response format")
-
-        return data
+    def get_day_candles(
+        self,
+        market: str,
+        count: int = 50,
+    ) -> list[dict[str, Any]]:
+        if not market.strip():
+            raise ValueError("market must not be empty")
+        if count < 1 or count > 200:
+            raise ValueError("count must be between 1 and 200")
+        return self._request_public_list(
+            "/v1/candles/days",
+            params={"market": market, "count": count},
+            response_name="day candle",
+            candle_group=True,
+        )
 
     @staticmethod
     def _format_decimal(value: Decimal) -> str:

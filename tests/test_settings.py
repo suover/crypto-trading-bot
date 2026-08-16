@@ -46,6 +46,9 @@ def test_openai_trade_defaults() -> None:
 
     assert settings.openai_trade_model == "gpt-5.6-sol"
     assert settings.openai_reasoning_effort == "medium"
+    assert settings.market_universe_mode == "STATIC"
+    assert settings.live_dynamic_market_enabled is False
+    assert settings.analysis_timeframe_list == ["15m", "60m", "240m", "1d"]
 
 
 def test_openai_trade_settings_support_environment_overrides(

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import AccountSnapshot, AnalysisRun, User
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
+from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
 def to_decimal(value: Any) -> Decimal | None:
@@ -28,6 +29,7 @@ class AccountSnapshotService:
     def collect_account_snapshots(
         self,
         user_name: str = "Minsu",
+        pipeline_run_id: str | None = None,
     ) -> tuple[AnalysisRun, list[AccountSnapshot]]:
         settings = get_settings()
 
@@ -38,6 +40,7 @@ class AccountSnapshotService:
 
         analysis_run = AnalysisRun(
             user_id=user.id,
+            pipeline_run_id=get_pipeline_run_id(pipeline_run_id),
             run_type="MANUAL",
             trading_mode=settings.trading_mode,
             status="STARTED",

@@ -50,20 +50,33 @@ class MarketDataContextService:
     def _add_orderbooks(
         self, candidates: list[dict[str, Any]], statuses: dict[str, str]
     ) -> None:
+        targets = [
+            candidate for candidate in candidates if "orderbook" not in candidate
+        ]
+        if not targets:
+            statuses["upbit_orderbook"] = (
+                "AVAILABLE"
+                if any(
+                    candidate.get("orderbook", {}).get("available")
+                    for candidate in candidates
+                )
+                else "UNAVAILABLE"
+            )
+            return
         if not self.settings.upbit_orderbook_enabled:
-            self._set_all(candidates, "orderbook", self._disabled())
+            self._set_all(targets, "orderbook", self._disabled())
             return
         markets = list(
             dict.fromkeys(
                 value
-                for candidate in candidates
+                for candidate in targets
                 if isinstance((value := candidate.get("market")), str) and value
             )
         )
         if not markets:
             statuses["upbit_orderbook"] = "UNAVAILABLE"
             self._set_all(
-                candidates,
+                targets,
                 "orderbook",
                 {"available": False, "reason": "market_not_returned"},
             )
@@ -78,7 +91,7 @@ class MarketDataContextService:
                 if isinstance(row, dict) and isinstance(row.get("market"), str)
             }
             statuses["upbit_orderbook"] = "AVAILABLE"
-            for candidate in candidates:
+            for candidate in targets:
                 row = mapped.get(candidate.get("market"))
                 candidate["orderbook"] = (
                     self._normalize_orderbook(row)
@@ -87,7 +100,7 @@ class MarketDataContextService:
                 )
         except Exception as error:
             statuses["upbit_orderbook"] = "UNAVAILABLE"
-            self._set_all(candidates, "orderbook", self._failure(error))
+            self._set_all(targets, "orderbook", self._failure(error))
 
     def _add_global_markets(
         self, candidates: list[dict[str, Any]], statuses: dict[str, str]

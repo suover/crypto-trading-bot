@@ -33,8 +33,14 @@ def check_live_order_safety(settings: Settings) -> LiveOrderSafetyCheck:
     if not settings.upbit_secret_key:
         reasons.append("upbit_secret_key is not configured")
 
-    if not settings.allowed_market_list:
+    if settings.market_universe_mode == "STATIC" and not settings.allowed_market_list:
         reasons.append("allowed_markets is empty")
+
+    if (
+        settings.market_universe_mode == "DYNAMIC"
+        and not settings.live_dynamic_market_enabled
+    ):
+        reasons.append("live_dynamic_market_enabled is false")
 
     max_order_amount_krw = Decimal(str(settings.max_order_amount_krw))
     daily_max_order_amount_krw = Decimal(str(settings.daily_max_order_amount_krw))
@@ -86,12 +92,21 @@ def validate_live_order_request(
             f"Live order action must be BUY or SELL. action={action}"
         )
 
-    if market not in settings.allowed_market_list:
+    if (
+        settings.market_universe_mode == "STATIC"
+        and market not in settings.allowed_market_list
+    ):
         raise LiveOrderSafetyError(
             "Live order market is not allowed. "
             f"market={market}, "
             f"allowed_markets={settings.allowed_market_list}"
         )
+
+    if (
+        settings.market_universe_mode == "DYNAMIC"
+        and not settings.live_dynamic_market_enabled
+    ):
+        raise LiveOrderSafetyError("Dynamic live market execution is disabled")
 
     max_order_amount_krw = Decimal(str(settings.max_order_amount_krw))
 

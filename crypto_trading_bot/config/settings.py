@@ -1,8 +1,9 @@
 from functools import lru_cache
 from pathlib import Path
+from decimal import Decimal
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -62,6 +63,20 @@ class Settings(BaseSettings):
     daily_max_order_amount_krw: int = 30000
     allowed_markets: str = "KRW-BTC,KRW-ETH"
 
+    # Market universe. STATIC intentionally remains the rollout-safe default.
+    market_universe_mode: Literal["STATIC", "DYNAMIC"] = "STATIC"
+    market_universe_exchange: str = "UPBIT"
+    market_universe_quote_asset: str = "KRW"
+    market_universe_top_n: int = 7
+    market_universe_prefilter_n: int = 20
+    market_universe_min_24h_trade_value_krw: Decimal = Decimal("0")
+    market_universe_exclude_warnings: bool = True
+    market_universe_exclude_cautions: bool = True
+    market_blocklist: str = ""
+    analysis_timeframes: str = "15m,60m,240m,1d"
+    analysis_candle_count: int = 50
+    live_dynamic_market_enabled: bool = False
+
     live_order_enabled: bool = False
     live_order_confirmation: str = Field(default="", repr=False)
 
@@ -73,6 +88,11 @@ class Settings(BaseSettings):
     ai_analysis_scheduler_enabled: bool = True
     ai_analysis_schedule_times: str = "09:00"
     ai_analysis_run_on_startup: bool = False
+
+    @field_validator("market_universe_mode", mode="before")
+    @classmethod
+    def normalize_market_universe_mode(cls, value: object) -> object:
+        return value.strip().upper() if isinstance(value, str) else value
 
     @staticmethod
     def _read_secret_file(
@@ -168,6 +188,22 @@ class Settings(BaseSettings):
                 "Database configuration requires DATABASE_PASSWORD_FILE or DATABASE_URL"
             )
 
+        if self.market_universe_top_n <= 0:
+            raise ValueError("MARKET_UNIVERSE_TOP_N must be greater than 0")
+        if self.market_universe_prefilter_n < self.market_universe_top_n:
+            raise ValueError(
+                "MARKET_UNIVERSE_PREFILTER_N must be at least MARKET_UNIVERSE_TOP_N"
+            )
+        if not 1 <= self.analysis_candle_count <= 200:
+            raise ValueError("ANALYSIS_CANDLE_COUNT must be between 1 and 200")
+        if (
+            not self.market_universe_min_24h_trade_value_krw.is_finite()
+            or self.market_universe_min_24h_trade_value_krw < 0
+        ):
+            raise ValueError(
+                "MARKET_UNIVERSE_MIN_24H_TRADE_VALUE_KRW must be finite and non-negative"
+            )
+
         return self
 
     @property
@@ -177,6 +213,42 @@ class Settings(BaseSettings):
             for market in self.allowed_markets.split(",")
             if market.strip()
         ]
+
+    @property
+    def market_block_list(self) -> list[str]:
+        return [
+            market.strip().upper()
+            for market in self.market_blocklist.split(",")
+            if market.strip()
+        ]
+
+    @property
+    def analysis_timeframe_list(self) -> list[str]:
+        aliases = {
+            "15m": "15m",
+            "60m": "60m",
+            "1h": "60m",
+            "240m": "240m",
+            "4h": "240m",
+            "1d": "1d",
+            "day": "1d",
+        }
+        values: list[str] = []
+        for raw_value in self.analysis_timeframes.split(","):
+            value = raw_value.strip().lower()
+            if not value:
+                continue
+            try:
+                normalized = aliases[value]
+            except KeyError:
+                raise ValueError(
+                    f"Unsupported analysis timeframe: {raw_value}"
+                ) from None
+            if normalized not in values:
+                values.append(normalized)
+        if not values:
+            raise ValueError("analysis_timeframes must not be empty")
+        return values
 
     @property
     def mock_order_retry_delay_list(self) -> list[int]:

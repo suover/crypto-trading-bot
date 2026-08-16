@@ -283,6 +283,7 @@ def test_market_snapshot_service_uses_registry_markets() -> None:
             "market": "KRW-BTC",
             "trade_price": 1000,
             "signed_change_rate": 0.1,
+            "acc_trade_price_24h": 1000000,
             "acc_trade_volume_24h": 100,
         }
     ]
@@ -301,3 +302,4 @@ def test_market_snapshot_service_uses_registry_markets() -> None:
     upbit_client.get_tickers.assert_called_once_with(["KRW-BTC"])
     assert [snapshot.market for snapshot in snapshots] == ["KRW-BTC"]
     assert snapshots[0].exchange == "UPBIT"
+    assert snapshots[0].volume_24h == Decimal("1000000")

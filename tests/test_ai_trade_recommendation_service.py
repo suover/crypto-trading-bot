@@ -292,6 +292,31 @@ def test_market_not_in_candidates_is_overridden_to_hold() -> None:
     assert recommendation.ai_response["safety_override"] is not None
 
 
+def test_buy_ineligible_candidate_is_overridden_to_hold() -> None:
+    market = build_market("KRW-BTC", "BTC", 1)
+    service, _, _, _ = build_service(
+        markets=[market],
+        candles_by_market={"KRW-BTC": build_candles(20)},
+        balances_by_currency={"KRW": Decimal("10000"), "BTC": Decimal("0")},
+        advice=build_advice(action="BUY", market="KRW-BTC", ratio=Decimal("0.5")),
+    )
+    original_enrich = service.market_data_context_service.enrich_candidates.side_effect
+
+    def mark_ineligible(
+        candidates: list[dict[str, object]],
+    ) -> MarketDataContextResult:
+        result = original_enrich(candidates)
+        result.candidates[0]["buy_eligible"] = False
+        return result
+
+    service.market_data_context_service.enrich_candidates.side_effect = mark_ineligible
+
+    _, recommendations = service.create_ai_recommendations()
+
+    assert recommendations[0].action == "HOLD"
+    assert "신규 BUY" in recommendations[0].reason
+
+
 def test_sell_with_zero_selected_coin_balance_is_overridden_to_hold() -> None:
     market = build_market("KRW-XRP", "XRP", 1)
     service, _, _, _ = build_service(
