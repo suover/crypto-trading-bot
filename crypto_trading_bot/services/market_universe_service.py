@@ -305,6 +305,7 @@ class MarketUniverseService:
                     "rank": None,
                     "score": None,
                     "selection_source": "HELD",
+                    "buy_eligible": False,
                 }
             final = list(final_by_market.values())
             ranked_count = len(top_ranked)

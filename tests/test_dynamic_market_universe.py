@@ -217,7 +217,11 @@ def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
             ticker("KRW-XRP", "900"),
             ticker("KRW-ETH", "100"),
         ],
-        balances={"KRW": balance("10000"), "ETH": balance("2")},
+        balances={
+            "KRW": balance("10000"),
+            "XRP": balance("2"),
+            "ETH": balance("2"),
+        },
         ranking_policy=ranking,
     )
 
@@ -226,8 +230,14 @@ def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
     rows = {row.market: row for row in result.candidates}
     assert ranking.seen_markets == ["KRW-BTC", "KRW-XRP"]
     assert rows["KRW-XRP"].selection_source == "RANKED"
+    assert rows["KRW-XRP"].buy_eligible is True
+    assert rows["KRW-XRP"].sell_eligible is True
     assert rows["KRW-ETH"].selection_source == "HELD"
-    assert rows["KRW-ETH"].buy_eligible is True
+    assert rows["KRW-ETH"].rank is None
+    assert rows["KRW-ETH"].score is None
+    assert rows["KRW-ETH"].buy_eligible is False
+    assert rows["KRW-ETH"].sell_eligible is True
+    assert rows["KRW-ETH"].feature_data["buy_eligible"] is False
     assert result.prefilter_count == 2
     assert result.data_collection_count == 3
     collected_markets = (
@@ -275,7 +285,27 @@ def test_ranking_requires_any_sufficient_timeframe_but_keeps_holding() -> None:
     assert rows["KRW-XRP"].selection_source == "RANKED"
     assert rows["KRW-XRP"].feature_data["data_quality"] == "PARTIAL"
     assert rows["KRW-ETH"].selection_source == "HELD"
+    assert rows["KRW-ETH"].buy_eligible is False
+    assert rows["KRW-ETH"].sell_eligible is True
     assert rows["KRW-ETH"].feature_data["enough_candles"] is False
+
+
+def test_trading_unsupported_holding_stays_held_and_ineligible() -> None:
+    service = build_service(
+        markets=[descriptor("KRW-BTC")],
+        tickers=[ticker("KRW-BTC", "1000")],
+        balances={"KRW": balance("10000"), "DELISTED": balance("2")},
+    )
+
+    result = service.build_and_persist()
+
+    rows = {row.market: row for row in result.candidates}
+    unsupported = rows["KRW-DELISTED"]
+    assert unsupported.selection_source == "HELD"
+    assert unsupported.buy_eligible is False
+    assert unsupported.sell_eligible is False
+    assert unsupported.feature_data["buy_eligible"] is False
+    assert unsupported.feature_data["sell_eligible"] is False
 
 
 def test_dynamic_filters_caution_blocklist_and_minimum_quote_trade_value() -> None:
