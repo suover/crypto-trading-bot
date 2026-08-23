@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "feature/**"
+      - "fix/**"
+      - "refactor/**"
       - "chore/**"
       - "docs/**"
       - "ci/**"
@@ -70,6 +72,11 @@ jobs:
       - name: Run tests
         run: uv run pytest -q
 
+      - name: Validate shell syntax
+        run: |
+          bash -n scripts/check_server_runtime_safety.sh
+          bash -n scripts/deploy_production.sh
+
       - name: Prepare Docker Compose config files
         run: |
           cp .env.example .env
@@ -81,7 +88,7 @@ jobs:
           printf '%s' 'ci-placeholder' > .secrets/upbit_secret_key
 
       - name: Validate Docker Compose config
-        run: docker compose --profile manual config --quiet
+        run: docker compose --profile manual --profile scheduler config --quiet
 
       - name: Build Docker runtime images
-        run: docker compose --profile manual build
+        run: docker compose --profile manual --profile scheduler build

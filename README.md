@@ -2,7 +2,7 @@
 
 시장 데이터, 계좌 상태, 설정값을 바탕으로 AI 매매 후보를 만들고, 사용자가 Telegram에서 승인한 경우에만 주문 흐름을 진행하는 승인형 코인 트레이딩 봇 프로젝트입니다.
 
-현재는 실전 자동매매보다 **데이터 수집 → AI 추천 생성 → Telegram 승인 요청 → 모의 주문 처리** 흐름을 안정적으로 구성하는 데 초점을 둡니다.
+Production은 **예약 AI 분석 → BUY/SELL/HOLD 결정 → BUY/SELL Telegram 승인 요청 → 사용자 승인 → Upbit LIVE 주문** 흐름으로 운영됩니다. AI 분석이 예약 실행되더라도 실제 BUY/SELL 주문은 사용자의 Telegram 승인 없이는 실행되지 않습니다.
 
 ## 주요 구성
 
@@ -22,6 +22,7 @@
 
 * [서버 운영 가이드](docs/OPERATIONS.md)
 * [제한적 라이브 테스트 런북](docs/LIVE_RUNBOOK.md)
+* [Production scheduled LIVE 운영 및 배포](docs/PRODUCTION_LIVE.md)
 * [PostgreSQL 백업 스크립트](scripts/backup_db.sh)
 * [서버 런타임 안전 점검 스크립트](scripts/check_server_runtime_safety.sh)
 
@@ -41,6 +42,8 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`만 실행합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
 
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
+
+Production scheduled LIVE에서는 기본 런타임에 더해 `scheduler` profile의 `ai-trade-scheduler`를 명시적으로 실행합니다. 배포와 운영 점검 절차는 [Production LIVE 운영 문서](docs/PRODUCTION_LIVE.md)를 따릅니다.
 
 ## 사전 준비
 
@@ -300,6 +303,22 @@ docker compose --profile scheduler up -d --build ai-trade-scheduler
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 ```
 
+## Production 배포
+
+운영 서버의 clean한 `main`에서 다음 스크립트로 반복 가능한 fail-closed 배포를 수행합니다.
+
+```bash
+bash scripts/deploy_production.sh
+```
+
+GitHub Actions의 `Deploy Production` workflow는 `workflow_dispatch`로만 실행되며 `DEPLOY` 확인 문자열과 workflow가 검증한 exact main SHA를 요구합니다. 서버 배포 스크립트는 Compose/PostgreSQL/Git 사전검증과 DB/`.env` 백업을 운영 서비스 중지 전에 완료한 뒤 scheduler 중지, fast-forward Git 업데이트, 전체 이미지 build, 짧은 listener/worker 중지, migration, 서비스 재생성, Production safety check 순으로 실행합니다. 자동 Git/DB rollback은 수행하지 않습니다.
+
+Production 상태 점검:
+
+```bash
+bash scripts/check_server_runtime_safety.sh --production-live
+```
+
 ## AI 분석 파이프라인 수동 실행
 
 Docker Compose 런타임이 준비된 상태에서 AI 분석 파이프라인을 1회 실행할 수 있습니다.
@@ -357,7 +376,7 @@ docker compose down -v
 
 `mock-order-retry-worker`는 실패한 모의 주문 처리와 Telegram 알림 재시도 흐름을 담당합니다.
 
-현재 단계에서는 실제 거래소 주문 실행보다 승인/재시도/알림 흐름 검증에 초점을 둡니다.
+LIVE 주문 자체는 자동 재시도하지 않으며, 이 worker는 모의 주문과 관련 알림 재시도만 담당합니다.
 
 ## 자주 쓰는 명령어
 
@@ -402,12 +421,13 @@ docker compose ps -a
 ```powershell
 bash scripts/check_server_runtime_safety.sh
 bash scripts/check_server_runtime_safety.sh --strict-live
+bash scripts/check_server_runtime_safety.sh --production-live
 ```
 
 ### Docker Compose 설정 확인
 
 ```powershell
-docker compose --profile manual config > $null
+docker compose --profile manual --profile scheduler config --quiet
 ```
 
 ### 전체 종료
