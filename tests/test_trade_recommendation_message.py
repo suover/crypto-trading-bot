@@ -7,6 +7,11 @@ from crypto_trading_bot.notification.trade_recommendation_message import (
 )
 
 
+COMMON_ORDER_NOTICE = (
+    "※ BUY/SELL은 별도 승인 요청 대상이며, HOLD는 주문을 실행하지 않습니다."
+)
+
+
 def build_analysis_run() -> AnalysisRun:
     return AnalysisRun(
         id=1,
@@ -55,6 +60,18 @@ def test_trade_recommendation_summary_message_shows_buy_approval_notice() -> Non
 
     assert "판단: BUY" in message
     assert "승인요청 상태: 별도 승인 요청 메시지 발송 대상" in message
+    assert COMMON_ORDER_NOTICE in message
+
+
+def test_trade_recommendation_summary_message_shows_sell_approval_notice() -> None:
+    message = build_trade_recommendation_summary_message(
+        analysis_run=build_analysis_run(),
+        recommendations=[build_recommendation(recommendation_id=1, action="SELL")],
+    )
+
+    assert "판단: SELL" in message
+    assert "승인요청 상태: 별도 승인 요청 메시지 발송 대상" in message
+    assert COMMON_ORDER_NOTICE in message
 
 
 def test_trade_recommendation_summary_message_shows_hold_notice() -> None:
@@ -70,6 +87,7 @@ def test_trade_recommendation_summary_message_shows_hold_notice() -> None:
 
     assert "판단: HOLD" in message
     assert "승인요청 상태: HOLD는 승인 요청 없음" in message
+    assert COMMON_ORDER_NOTICE in message
 
 
 def test_trade_recommendation_summary_message_shows_superseded_notice() -> None:

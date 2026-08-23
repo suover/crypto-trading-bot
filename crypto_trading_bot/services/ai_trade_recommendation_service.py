@@ -656,6 +656,7 @@ class AiTradeRecommendationService:
                 "LIVE_WAIT",
                 "LIVE_DONE",
                 "LIVE_CANCELLED",
+                "LIVE_EXECUTED_CANCELLED",
                 "LIVE_UNKNOWN",
             )
         )

@@ -6,9 +6,18 @@ import pytest
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
+    COUNTED_DAILY_LIVE_ORDER_STATUSES,
+    LIVE_ORDER_CANCELLED_STATUS,
+    LIVE_ORDER_DONE_STATUS,
+    LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
+    LIVE_ORDER_PLACED_STATUS,
     LIVE_ORDER_STATUS,
+    LIVE_ORDER_WAIT_STATUS,
     LiveOrderExecutionError,
     LiveOrderExecutionService,
+    map_upbit_order_state,
+    outcome_for_live_order_status,
+    recommendation_status_for_live_order,
 )
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderNotFoundError,
@@ -145,11 +154,13 @@ class FakeUpbitClient:
         accounts: list[dict[str, Any]] | None = None,
         tickers: list[dict[str, Any]] | None = None,
         remote_order: dict[str, Any] | None = None,
+        created_order_response: dict[str, Any] | None = None,
     ) -> None:
         self.buy_orders: list[dict[str, Any]] = []
         self.sell_orders: list[dict[str, Any]] = []
         self.accounts = accounts or []
         self.remote_order = remote_order
+        self.created_order_response = created_order_response
         self.account_calls = 0
         self.tickers = (
             tickers
@@ -185,6 +196,8 @@ class FakeUpbitClient:
                     message="Order not found",
                 )
             )
+        if uuid is not None and self.created_order_response is not None:
+            return self.created_order_response
         return {
             "uuid": uuid or "recovered-order-uuid",
             "identifier": identifier,
@@ -233,6 +246,41 @@ class FakeUpbitClient:
             "volume": str(quantity),
             "identifier": identifier,
         }
+
+
+@pytest.mark.parametrize(
+    ("state", "executed_volume", "expected"),
+    [
+        ("done", None, LIVE_ORDER_DONE_STATUS),
+        ("wait", None, LIVE_ORDER_WAIT_STATUS),
+        ("watch", None, LIVE_ORDER_WAIT_STATUS),
+        ("cancel", 0, LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "0", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", None, LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "invalid", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "NaN", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "Infinity", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "-Infinity", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "-1", LIVE_ORDER_CANCELLED_STATUS),
+        ("cancel", "0.00371471", LIVE_ORDER_EXECUTED_CANCELLED_STATUS),
+        ("unexpected", "1", LIVE_ORDER_PLACED_STATUS),
+    ],
+)
+def test_map_upbit_order_state_uses_confirmed_execution_volume(
+    state: object, executed_volume: object, expected: str
+) -> None:
+    assert map_upbit_order_state(state, executed_volume) == expected
+
+
+def test_executed_cancelled_is_confirmed_and_recommendation_is_executed() -> None:
+    assert (
+        recommendation_status_for_live_order(LIVE_ORDER_EXECUTED_CANCELLED_STATUS)
+        == "LIVE_EXECUTED"
+    )
+    assert outcome_for_live_order_status(LIVE_ORDER_EXECUTED_CANCELLED_STATUS) == (
+        "CONFIRMED"
+    )
 
 
 def test_build_execution_plan_allows_valid_live_buy(
@@ -383,6 +431,41 @@ def test_execute_places_live_buy_order_and_records_order_log(
     assert order_log.status == LIVE_ORDER_STATUS
     assert order_log.exchange_order_id == "live-buy-order-uuid"
     assert order_log.raw_response["actual_order_executed"] is True
+
+
+def test_execute_records_executed_cancel_without_duplicate_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch)
+    recommendation = build_recommendation()
+    session = FakeSession(recommendation)
+    order_response = {
+        "uuid": "partially-filled-order-uuid",
+        "state": "cancel",
+        "executed_volume": "0.00371471",
+        "paid_fee": "4.99999966",
+    }
+    client = FakeUpbitClient(created_order_response=order_response)
+    service = LiveOrderExecutionService(
+        session=session,  # type: ignore[arg-type]
+        upbit_client=client,  # type: ignore[arg-type]
+    )
+
+    result = service.execute(1, approval_request_id=20)
+    repeated = service.execute(1, approval_request_id=20)
+
+    assert result.order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS
+    assert result.recommendation.status == "LIVE_EXECUTED"
+    assert result.confirmed is True
+    assert result.failed is False
+    assert result.unknown is False
+    assert result.pending is False
+    assert result.order_log.raw_response["order_status_response"] == order_response
+    assert repeated.already_executed is True
+    assert repeated.order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS
+    assert repeated.confirmed is True
+    assert repeated.pending is False
+    assert len(client.buy_orders) == 1
 
 
 def test_execute_places_live_sell_order_and_records_order_log(
@@ -616,6 +699,7 @@ def test_daily_live_order_total_query_includes_only_buy_logs() -> None:
     compiled = fake_session.daily_amount_statement.compile()
     assert "order_logs.side" in str(compiled)
     assert "BUY" in compiled.params.values()
+    assert LIVE_ORDER_EXECUTED_CANCELLED_STATUS in COUNTED_DAILY_LIVE_ORDER_STATUSES
 
 
 def test_buy_is_not_blocked_by_same_day_sell_amount(

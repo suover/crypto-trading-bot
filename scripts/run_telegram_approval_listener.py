@@ -20,6 +20,9 @@ from crypto_trading_bot.services.approved_order_execution_service import (
     ApprovedOrderExecutionResult,
     ApprovedOrderExecutionService,
 )
+from crypto_trading_bot.services.live_order_execution_service import (
+    LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
+)
 
 
 CALLBACK_DECISIONS = {
@@ -311,11 +314,12 @@ def append_live_order_result_message(
                 ]
             )
         else:
-            status_text = (
-                "실거래 주문 확인"
-                if not live_order_execution_result.pending
-                else "실거래 주문 접수(완료 확인 대기)"
-            )
+            if live_order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS:
+                status_text = "실거래 체결 확인 (미체결 잔량 취소)"
+            elif live_order_execution_result.pending:
+                status_text = "실거래 주문 접수(완료 확인 대기)"
+            else:
+                status_text = "실거래 주문 확인"
             message_lines.extend(
                 [
                     "처리 결과: 승인 완료",
