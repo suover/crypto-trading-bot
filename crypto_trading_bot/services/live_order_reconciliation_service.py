@@ -69,7 +69,9 @@ class LiveOrderReconciliationService:
         except UpbitOrderOperationError as error:
             raise LiveOrderReconciliationError(str(error)) from None
 
-        order_log.status = map_upbit_order_state(response.get("state"))
+        order_log.status = map_upbit_order_state(
+            response.get("state"), response.get("executed_volume")
+        )
         uuid_value = response.get("uuid")
         if uuid_value is not None:
             order_log.exchange_order_id = str(uuid_value)

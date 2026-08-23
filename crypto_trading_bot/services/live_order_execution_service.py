@@ -38,6 +38,7 @@ LIVE_ORDER_PLACED_STATUS = "LIVE_PLACED"
 LIVE_ORDER_WAIT_STATUS = "LIVE_WAIT"
 LIVE_ORDER_DONE_STATUS = "LIVE_DONE"
 LIVE_ORDER_CANCELLED_STATUS = "LIVE_CANCELLED"
+LIVE_ORDER_EXECUTED_CANCELLED_STATUS = "LIVE_EXECUTED_CANCELLED"
 LIVE_ORDER_FAILED_STATUS = "LIVE_FAILED"
 LIVE_ORDER_UNKNOWN_STATUS = "LIVE_UNKNOWN"
 LIVE_ORDER_STATUS = LIVE_ORDER_PLACED_STATUS
@@ -46,6 +47,7 @@ COUNTED_DAILY_LIVE_ORDER_STATUSES = (
     LIVE_ORDER_WAIT_STATUS,
     LIVE_ORDER_DONE_STATUS,
     LIVE_ORDER_CANCELLED_STATUS,
+    LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
     LIVE_ORDER_UNKNOWN_STATUS,
 )
 KST = ZoneInfo("Asia/Seoul")
@@ -88,15 +90,25 @@ class LiveOrderExecutionResult:
         return self.outcome == "UNKNOWN"
 
 
-def map_upbit_order_state(state: object) -> str:
+def map_upbit_order_state(state: object, executed_volume: object = None) -> str:
     normalized = str(state or "").strip().lower()
     if normalized == "done":
         return LIVE_ORDER_DONE_STATUS
     if normalized in {"wait", "watch"}:
         return LIVE_ORDER_WAIT_STATUS
     if normalized == "cancel":
+        if _has_positive_executed_volume(executed_volume):
+            return LIVE_ORDER_EXECUTED_CANCELLED_STATUS
         return LIVE_ORDER_CANCELLED_STATUS
     return LIVE_ORDER_PLACED_STATUS
+
+
+def _has_positive_executed_volume(value: object) -> bool:
+    try:
+        executed_volume = Decimal(str(value).strip())
+    except InvalidOperation, TypeError, ValueError:
+        return False
+    return executed_volume.is_finite() and executed_volume > 0
 
 
 def recommendation_status_for_live_order(local_status: str) -> str:
@@ -335,7 +347,9 @@ class LiveOrderExecutionService:
             recommendation=recommendation,
             plan=plan,
             approval_request_id=approval_request_id,
-            status=map_upbit_order_state(order_response.get("state")),
+            status=map_upbit_order_state(
+                order_response.get("state"), order_response.get("executed_volume")
+            ),
             exchange_order_id=self._extract_exchange_order_id(order_response),
             audit=self._audit(
                 executed=True,

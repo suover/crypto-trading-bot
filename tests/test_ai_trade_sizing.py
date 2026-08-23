@@ -232,6 +232,7 @@ def test_recommendation_daily_buy_query_isolates_side_and_execution_mode() -> No
                 (1, "MOCK", "BUY", "MOCK_FILLED", 5000, now),
                 (1, "MOCK", "SELL", "MOCK_FILLED", 20000, now),
                 (1, "LIVE", "BUY", "LIVE_DONE", 7000, now),
+                (1, "LIVE", "BUY", "LIVE_EXECUTED_CANCELLED", 3000, now),
                 (1, "LIVE", "SELL", "LIVE_DONE", 30000, now),
             ],
         )
@@ -239,4 +240,4 @@ def test_recommendation_daily_buy_query_isolates_side_and_execution_mode() -> No
         service = object.__new__(AiTradeRecommendationService)
         service.session = session
         assert service._get_today_buy_amount_krw(1, "MOCK") == Decimal("5000")
-        assert service._get_today_buy_amount_krw(1, "LIVE") == Decimal("7000")
+        assert service._get_today_buy_amount_krw(1, "LIVE") == Decimal("10000")

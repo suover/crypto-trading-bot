@@ -7,6 +7,7 @@ from crypto_trading_bot.services.approved_order_execution_service import (
     ApprovedOrderExecutionResult,
 )
 from crypto_trading_bot.services.live_order_execution_service import (
+    LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
     LIVE_ORDER_FAILED_STATUS,
     LIVE_ORDER_STATUS,
     LIVE_ORDER_UNKNOWN_STATUS,
@@ -150,6 +151,35 @@ def test_build_decision_result_message_for_live_execution() -> None:
     assert "주문 상태: 실거래 주문 확인" in message
     assert "로컬 상태: LIVE_PLACED" in message
     assert "거래소 주문 ID: live-order-id" in message
+
+
+def test_build_decision_result_message_for_executed_cancelled_order() -> None:
+    result = build_approval_decision_result()
+    order_log = build_order_log(
+        trading_mode="LIVE",
+        status=LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
+        exchange_order_id="partially-filled-order-id",
+    )
+    live_result = LiveOrderExecutionResult(
+        order_log=order_log,
+        recommendation=result.recommendation,
+        already_executed=False,
+        outcome="CONFIRMED",
+        pending=False,
+    )
+
+    message = build_decision_result_message(
+        original_text="승인 요청",
+        result=result,
+        order_execution_result=ApprovedOrderExecutionResult(
+            execution_mode="LIVE",
+            order_log=order_log,
+            live_order_execution_result=live_result,
+        ),
+    )
+
+    assert "주문 상태: 실거래 체결 확인 (미체결 잔량 취소)" in message
+    assert "로컬 상태: LIVE_EXECUTED_CANCELLED" in message
 
 
 def test_build_decision_result_message_for_live_unknown() -> None:

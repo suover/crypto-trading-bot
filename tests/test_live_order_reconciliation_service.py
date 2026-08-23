@@ -5,6 +5,7 @@ import pytest
 from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
     LIVE_ORDER_DONE_STATUS,
+    LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
     LIVE_ORDER_WAIT_STATUS,
 )
 from crypto_trading_bot.services.live_order_reconciliation_service import (
@@ -108,3 +109,21 @@ def test_reconcile_uses_identifier_without_saved_uuid() -> None:
     ).reconcile(1)
     assert client.lookups == [{"identifier": "recommendation-1"}]
     assert result.order_log.exchange_order_id == "found-uuid"
+
+
+def test_reconcile_marks_cancel_with_execution_as_confirmed_execution() -> None:
+    recommendation, order_log = build_models()
+    response = {
+        "uuid": "uuid-1",
+        "state": "cancel",
+        "executed_volume": "0.00371471",
+        "paid_fee": "4.99999966",
+    }
+    result = LiveOrderReconciliationService(
+        session=FakeSession(recommendation, order_log),  # type: ignore[arg-type]
+        upbit_client=FakeClient(response),  # type: ignore[arg-type]
+    ).reconcile(1)
+
+    assert result.order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS
+    assert result.recommendation.status == "LIVE_EXECUTED"
+    assert result.order_log.raw_response["order_status_response"] == response

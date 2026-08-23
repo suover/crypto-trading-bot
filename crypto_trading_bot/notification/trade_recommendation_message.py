@@ -95,6 +95,8 @@ def build_trade_recommendation_summary_message(
             ]
         )
 
-    message_lines.append("※ HOLD는 주문 요청이 아니라 분석 결과 알림입니다.")
+    message_lines.append(
+        "※ BUY/SELL은 별도 승인 요청 대상이며, HOLD는 주문을 실행하지 않습니다."
+    )
 
     return "\n".join(message_lines)
