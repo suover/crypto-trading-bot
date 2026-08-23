@@ -6,6 +6,8 @@
 /home/ubuntu/apps/crypto-trading-bot
 ```
 
+현재 scheduled approval-based Production LIVE 운영과 GitHub Actions CD 절차는 [Production LIVE 운영 문서](PRODUCTION_LIVE.md)를 우선 참고합니다. [제한적 LIVE 런북](LIVE_RUNBOOK.md)은 첫 5,000 KRW 검증 절차로 계속 보존됩니다.
+
 ## 서버 프로젝트 경로로 이동
 
 ```bash
@@ -28,7 +30,8 @@ git status --short
 
 ```bash
 git branch --show-current
-git pull origin main
+git fetch origin main
+git merge --ff-only origin/main
 ```
 
 운영 서버에서 직접 수정한 파일이 있다면 `git pull` 전에 반드시 내용을 확인합니다. 특히 `.env`는 Git에 포함하지 않습니다.
@@ -143,6 +146,12 @@ bash scripts/check_server_runtime_safety.sh
 bash scripts/check_server_runtime_safety.sh --strict-live
 ```
 
+현재 scheduled Production LIVE 점검:
+
+```bash
+bash scripts/check_server_runtime_safety.sh --production-live
+```
+
 이 스크립트는 읽기 전용 점검만 수행합니다. 컨테이너를 시작, 중지, 재생성, 삭제하지 않으며 주문도 실행하지 않습니다.
 
 ## 수동 AI 분석 실행
@@ -197,9 +206,15 @@ docker compose ps postgres
 
 위와 같은 외부 포트 매핑이 보이면 즉시 Compose 파일 조합을 확인합니다. 서버에서는 `docker-compose.local.yml`을 함께 사용하지 않습니다.
 
-## 스케줄러가 실수로 시작된 경우 중지
+## Production scheduler 관리
 
-스케줄러는 기본 운영 정책에서 꺼져 있어야 합니다. 실수로 시작했다면 중지합니다.
+Production scheduled LIVE에서는 scheduler profile을 명시해 실행합니다.
+
+```bash
+docker compose --profile scheduler up -d ai-trade-scheduler
+```
+
+배포 또는 장애 조사 중 분석 실행을 막아야 할 때만 중지합니다.
 
 ```bash
 docker compose --profile scheduler stop ai-trade-scheduler

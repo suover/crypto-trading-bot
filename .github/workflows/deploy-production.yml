@@ -1,0 +1,99 @@
+name: Deploy Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY to confirm the exact main commit deployment"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: crypto-trading-bot-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy exact main SHA
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      EXPECTED_SHA: ${{ github.sha }}
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+      PROD_SSH_PORT: ${{ secrets.PROD_SSH_PORT }}
+
+    steps:
+      - name: Require explicit confirmation
+        env:
+          DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Production deployment only allows the main branch." >&2
+            exit 1
+          fi
+          if [[ "$DEPLOY_CONFIRMATION" != "DEPLOY" ]]; then
+            echo "Production deployment requires confirmation=DEPLOY." >&2
+            exit 1
+          fi
+
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Configure verified SSH
+        env:
+          PROD_SSH_PRIVATE_KEY: ${{ secrets.PROD_SSH_PRIVATE_KEY }}
+          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$PROD_SSH_PRIVATE_KEY" > "$HOME/.ssh/production_deploy_key"
+          chmod 600 "$HOME/.ssh/production_deploy_key"
+          printf '%s\n' "$PROD_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy exact commit over SSH
+        run: |
+          ssh_port="${PROD_SSH_PORT:-22}"
+          ssh \
+            -i "$HOME/.ssh/production_deploy_key" \
+            -p "$ssh_port" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$PROD_USER@$PROD_HOST" \
+            "bash -s -- '$EXPECTED_SHA'" <<'REMOTE_SCRIPT'
+          set -euo pipefail
+          EXPECTED_SHA="$1"
+          REPO_ROOT="/home/ubuntu/apps/crypto-trading-bot"
+          cd "$REPO_ROOT"
+
+          [[ "$(git branch --show-current)" == "main" ]] || {
+            echo "Production repository is not on main." >&2
+            exit 1
+          }
+          [[ -z "$(git status --porcelain)" ]] || {
+            echo "Production repository working tree is not clean." >&2
+            exit 1
+          }
+
+          export GIT_TERMINAL_PROMPT=0
+          git fetch origin main
+          origin_main_sha="$(git rev-parse refs/remotes/origin/main)"
+          [[ "$origin_main_sha" == "$EXPECTED_SHA" ]] || {
+            echo "origin/main no longer matches the workflow SHA." >&2
+            exit 1
+          }
+
+          temporary_script="$(mktemp)"
+          trap 'rm -f "$temporary_script"' EXIT
+          git show "${EXPECTED_SHA}:scripts/deploy_production.sh" > "$temporary_script"
+          chmod 700 "$temporary_script"
+          bash "$temporary_script" --expected-sha "$EXPECTED_SHA"
+          REMOTE_SCRIPT
