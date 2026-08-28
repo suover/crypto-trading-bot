@@ -180,12 +180,13 @@ docker compose --profile manual --profile scheduler build \
   migrate \
   telegram-listener \
   mock-order-retry-worker \
+  live-order-reconciliation-worker \
   ai-trade-analysis \
   ai-trade-scheduler
 
 CURRENT_STAGE="application runtime stop"
-docker compose stop telegram-listener mock-order-retry-worker
-echo "telegram-listener와 mock-order-retry-worker를 migration 직전에 중지했습니다."
+docker compose stop telegram-listener mock-order-retry-worker live-order-reconciliation-worker
+echo "telegram-listener와 retry/reconciliation worker를 migration 직전에 중지했습니다."
 
 CURRENT_STAGE="database migration"
 docker compose up \
@@ -198,7 +199,8 @@ docker compose up \
 CURRENT_STAGE="default runtime recreate"
 docker compose up -d --no-deps --force-recreate \
   telegram-listener \
-  mock-order-retry-worker
+  mock-order-retry-worker \
+  live-order-reconciliation-worker
 
 CURRENT_STAGE="scheduler recreate"
 docker compose --profile scheduler up -d --no-deps --force-recreate ai-trade-scheduler
@@ -210,6 +212,7 @@ container_healthy "crypto-trading-postgres" || fail "PostgreSQL이 healthy가 �
 [[ "$(docker inspect -f '{{.State.ExitCode}}' crypto-trading-migrate 2>/dev/null || echo missing)" == "0" ]] || fail "migrate 컨테이너가 정상 종료되지 않았습니다."
 container_running "crypto-trading-telegram-listener" || fail "telegram-listener가 실행 중이 아닙니다."
 container_running "crypto-trading-mock-order-retry-worker" || fail "mock-order-retry-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-live-order-reconciliation-worker" || fail "live-order-reconciliation-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-ai-trade-scheduler" || fail "ai-trade-scheduler가 실행 중이 아닙니다."
 
 CURRENT_STAGE="production LIVE safety validation"
@@ -225,5 +228,6 @@ echo "- postgres=healthy"
 echo "- migrate=completed"
 echo "- telegram-listener=running"
 echo "- mock-order-retry-worker=running"
+echo "- live-order-reconciliation-worker=running"
 echo "- ai-trade-scheduler=running"
 echo "deployment_success=true"

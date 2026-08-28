@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     live_order_enabled: bool = False
     live_order_confirmation: str = Field(default="", repr=False)
 
+    # Read-only status polling; the worker stays idle in non-LIVE mode.
+    live_order_reconciliation_enabled: bool = True
+    live_order_reconciliation_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    live_order_reconciliation_batch_size: int = Field(default=20, ge=1, le=100)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

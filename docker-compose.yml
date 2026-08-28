@@ -142,6 +142,24 @@ services:
         "60",
       ]
 
+  live-order-reconciliation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-live-order-reconciliation-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *app-environment
+    secrets: *app-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "scripts.run_live_order_reconciliation_worker"]
+
 secrets:
   postgres_password:
     file: ${SECRET_DIR:-.secrets}/postgres_password

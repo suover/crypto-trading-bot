@@ -410,7 +410,7 @@ def test_execute_places_live_buy_order_and_records_order_log(
     )
 
     assert result.already_executed is False
-    assert recommendation.status == "LIVE_EXECUTED"
+    assert recommendation.status == "LIVE_EXECUTION_PENDING"
     assert fake_session.flushed is True
     assert fake_session.committed is True
     assert len(fake_upbit_client.buy_orders) == 1
@@ -500,7 +500,7 @@ def test_execute_places_live_sell_order_and_records_order_log(
     )
 
     assert result.already_executed is False
-    assert recommendation.status == "LIVE_EXECUTED"
+    assert recommendation.status == "LIVE_EXECUTION_PENDING"
     assert len(fake_upbit_client.sell_orders) == 1
     assert fake_upbit_client.sell_orders[0] == {
         "market": "KRW-BTC",

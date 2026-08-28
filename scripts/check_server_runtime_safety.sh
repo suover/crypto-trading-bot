@@ -134,6 +134,9 @@ container_running "crypto-trading-mock-order-retry-worker" && pass_check "mock-o
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
+  container_running "crypto-trading-live-order-reconciliation-worker" && pass_check "live-order-reconciliation-worker가 실행 중입니다." || fail_check "Production LIVE에서는 live-order-reconciliation-worker가 실행 중이어야 합니다."
+  LIVE_ORDER_RECONCILIATION_ENABLED="$(get_env_value LIVE_ORDER_RECONCILIATION_ENABLED)"
+  [[ "${LIVE_ORDER_RECONCILIATION_ENABLED:-true}" == "true" ]] && pass_check "production-live: reconciliation 설정이 활성화되어 있습니다." || fail_check "production-live: LIVE_ORDER_RECONCILIATION_ENABLED가 true가 아닙니다."
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."
 else

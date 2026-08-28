@@ -93,6 +93,7 @@ docker compose up -d --build
 - `migrate`
 - `telegram-listener`
 - `mock-order-retry-worker`
+- `live-order-reconciliation-worker`
 
 `ai-trade-scheduler`는 기본 런타임에서 시작되지 않습니다.
 
@@ -102,7 +103,7 @@ docker compose up -d --build
 docker compose ps -a
 ```
 
-`postgres`, `telegram-listener`, `mock-order-retry-worker`가 실행 중인지 확인합니다. `migrate`는 정상적으로 완료된 뒤 종료될 수 있습니다.
+`postgres`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`가 실행 중인지 확인합니다. `migrate`는 정상적으로 완료된 뒤 종료될 수 있습니다.
 
 ## 로그 확인
 
@@ -123,6 +124,16 @@ docker compose logs --tail=100 telegram-listener
 ```bash
 docker compose logs --tail=100 mock-order-retry-worker
 ```
+
+기존 LIVE 주문 상태 추적 로그:
+
+```bash
+docker compose logs --tail=100 live-order-reconciliation-worker
+```
+
+이 worker는 LIVE·UPBIT 주문의 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN` 상태만 Upbit GET으로 조회하고 DB를 동기화합니다. 새 주문 생성, 자동 재주문, 자동 취소, Telegram 승인 생성, AI 호출은 하지 않습니다. API 오류 시 미확정 상태를 유지하고 다음 cycle에서 다시 조회합니다. terminal 주문과 MOCK 주문은 polling하지 않습니다.
+
+`LIVE_ORDER_RECONCILIATION_ENABLED=false` 또는 non-LIVE 모드에서는 조회 없이 대기합니다. Production LIVE 점검은 worker 실행과 활성화를 요구합니다. `--once`는 한 batch만 처리하고 종료하며, 실제 LIVE 환경에서는 기존 주문의 private GET이 발생합니다.
 
 전체 로그를 따라가야 할 때:
 

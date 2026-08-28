@@ -37,9 +37,10 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | `ai-trade-scheduler`      | `scheduler` profile | 설정된 시각에 AI 분석 파이프라인 실행                |
 | `telegram-listener`       | 상시 실행      | Telegram 승인/거절 버튼 콜백 수신               |
 | `mock-order-retry-worker` | 상시 실행      | 실패한 모의 주문 및 알림 재시도 처리                 |
+| `live-order-reconciliation-worker` | 상시 실행 | 기존 LIVE 주문 상태 GET 및 DB 동기화 (MOCK에서는 대기) |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
-기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`만 실행합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
+기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`를 실행합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
 
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
@@ -239,6 +240,7 @@ docker compose up -d --build
 3. `migrate` 컨테이너에서 Alembic 마이그레이션 실행
 4. 마이그레이션 성공 후 `telegram-listener` 실행
 5. 마이그레이션 성공 후 `mock-order-retry-worker` 실행
+6. 마이그레이션 성공 후 `live-order-reconciliation-worker` 실행 (MOCK에서는 조회 없이 대기)
 
 `ai-trade-scheduler`는 기본 런타임에서 시작되지 않습니다. 예약 분석을 켜야 할 때만 `scheduler` profile로 명시적으로 실행합니다.
 
@@ -254,6 +256,7 @@ docker compose ps -a
 docker compose logs --tail=100 migrate
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
+docker compose logs --tail=100 live-order-reconciliation-worker
 ```
 
 전체 로그를 따라가려면 다음 명령을 사용합니다.
@@ -338,7 +341,7 @@ docker compose --profile manual run --rm ai-trade-analysis
 
 ## 중복 실행 방지
 
-`ai-trade-scheduler`, `telegram-listener`, `mock-order-retry-worker`는 PostgreSQL advisory lock을 사용해 중복 실행을 방지합니다.
+`ai-trade-scheduler`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`는 PostgreSQL advisory lock을 사용해 중복 실행을 방지합니다.
 
 이미 같은 프로세스가 실행 중이면 추가 실행된 프로세스는 바로 종료됩니다.
 
@@ -377,6 +380,19 @@ docker compose down -v
 `mock-order-retry-worker`는 실패한 모의 주문 처리와 Telegram 알림 재시도 흐름을 담당합니다.
 
 LIVE 주문 자체는 자동 재시도하지 않으며, 이 worker는 모의 주문과 관련 알림 재시도만 담당합니다.
+
+### 기존 LIVE 주문 자동 상태 추적
+
+`live-order-reconciliation-worker`는 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN`인 기존 LIVE·UPBIT 주문만 조회합니다. 저장된 UUID 또는 `recommendation-{id}`로 Upbit GET을 수행하고 OrderLog와 추천 상태를 동기화합니다. 새 주문, 재주문, 주문 취소, AI 호출, Telegram 승인 생성은 하지 않습니다.
+
+기본 설정은 `LIVE_ORDER_RECONCILIATION_ENABLED=true`, interval 60초, batch 20개입니다. `ORDER_EXECUTION_MODE`가 LIVE가 아니거나 enabled=false이면 조회 없이 대기합니다. 신규 주문용 LIVE 활성화 플래그를 끄더라도 모드가 LIVE인 동안 기존 주문의 상태 추적은 계속 가능합니다.
+
+```bash
+python -m scripts.run_live_order_reconciliation_worker --once
+docker compose logs --tail=100 live-order-reconciliation-worker
+```
+
+`--once`도 LIVE 환경에서는 실제 private GET을 수행하므로 테스트에서는 fake client를 사용합니다. 수동 `python -m scripts.check_live_order_status --recommendation-id <id>`도 그대로 지원합니다. 상세 상태 매핑과 운영 한계는 [Production LIVE 문서](docs/PRODUCTION_LIVE.md)를 참고하세요.
 
 ## 자주 쓰는 명령어
 

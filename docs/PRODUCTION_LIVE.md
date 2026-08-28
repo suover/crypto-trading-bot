@@ -16,7 +16,7 @@ Production 흐름은 다음과 같습니다.
 
 ## Production Compose 구조
 
-- 기본 runtime: `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`
+- 기본 runtime: `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`
 - `scheduler` profile: `ai-trade-scheduler`
 - `manual` profile: 일회성 `ai-trade-analysis`
 
@@ -34,7 +34,8 @@ bash scripts/check_server_runtime_safety.sh --production-live
 - 저장소 루트, `.env`, Compose 구성
 - `.env` 권한 600
 - PostgreSQL running/healthy 및 호스트 포트 미노출
-- Telegram listener, mock retry worker, scheduler 실행 상태
+- Telegram listener, mock retry worker, LIVE reconciliation worker, scheduler 실행 상태
+- `LIVE_ORDER_RECONCILIATION_ENABLED=true` (미설정 시 기본 true)
 - DB 백업 존재 여부와 파일 권한 600
 - `SECRET_DIR` 존재 및 권한 700
 - 필수 secret 파일 존재·비어 있지 않음·권한 600
@@ -74,10 +75,10 @@ bash scripts/deploy_production.sh --expected-sha <40-character-main-SHA>
 7. `${HOME}/backups`에 `.env`를 권한 600으로 백업
 8. scheduler 중지로 Production cutover 시작
 9. `git merge --ff-only origin/main` 및 최종 HEAD expected SHA 재검증
-10. migrate, listener, retry worker, manual analysis, scheduler 이미지 전체 build
-11. listener와 retry worker 중지
+10. migrate, listener, retry/reconciliation worker, manual analysis, scheduler 이미지 전체 build
+11. listener와 retry/reconciliation worker 중지
 12. Alembic migration 컨테이너 실행
-13. listener와 retry worker 재생성
+13. listener와 retry/reconciliation worker 재생성
 14. scheduler 재생성
 15. container health 확인
 16. `--production-live` 최종 점검
@@ -132,9 +133,47 @@ docker compose --profile manual --profile scheduler ps -a
 docker compose logs --tail=100 migrate
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
+docker compose logs --tail=100 live-order-reconciliation-worker
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
+
+## 기존 LIVE 주문 자동 reconciliation
+
+`live-order-reconciliation-worker`는 이미 존재하는 LIVE·UPBIT 주문 중 `LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`만 조회합니다. UUID가 없으면 `recommendation-{recommendation_id}`로 기존 주문을 GET합니다. **새 BUY/SELL 생성, 자동 재주문, 자동 주문 취소, 추천/Telegram 승인 생성, AI 호출은 하지 않습니다.** MOCK retry worker와 역할이 분리되어 있습니다.
+
+| Upbit 상태 | OrderLog | TradeRecommendation |
+| --- | --- | --- |
+| 접수 후 미확정 | LIVE_PLACED | LIVE_EXECUTION_PENDING |
+| wait / watch | LIVE_WAIT | LIVE_EXECUTION_PENDING |
+| done | LIVE_DONE | LIVE_EXECUTED |
+| cancel, executed_volume > 0 | LIVE_EXECUTED_CANCELLED | LIVE_EXECUTED |
+| cancel, 체결 없음 | LIVE_CANCELLED | LIVE_EXECUTION_CANCELLED |
+| 생성 실패 | LIVE_FAILED | LIVE_EXECUTION_FAILED |
+| 생성 결과 불명 | LIVE_UNKNOWN | LIVE_EXECUTION_UNKNOWN |
+
+체결 없는 취소는 실행 완료로 표시하지 않습니다. 기존 상태 매핑의 유한 양수 executed_volume 판정을 유지합니다. Worker는 terminal 상태를 polling하지 않으며, 일시적 조회 오류나 order-not-found는 기존 상태를 바꾸지 않고 다음 cycle에 다시 확인합니다. DB 등 치명적 오류는 non-zero 종료하고 컨테이너 재시작 정책에 맡깁니다. 로그에는 주문/추천 ID, 결과, 상태, 오류 종류/HTTP 상태만 출력합니다.
+
+설정 기본값:
+
+```env
+LIVE_ORDER_RECONCILIATION_ENABLED=true
+LIVE_ORDER_RECONCILIATION_INTERVAL_SECONDS=60
+LIVE_ORDER_RECONCILIATION_BATCH_SIZE=20
+```
+
+interval 범위는 10–3600초, batch 범위는 1–100입니다. 순차 GET 사이에는 0.2초 간격을 둡니다. advisory lock key `2026082801`로 단일 worker를 보장하며, 각 주문은 실행 서비스와 같은 추천→주문 row-lock 순서로 재확인합니다. 잠긴 주문은 다음 순환으로 미룹니다. 프로세스 내 순환 cursor로 오래된 UNKNOWN이 뒤의 주문을 계속 가리지 않게 합니다.
+
+MOCK/disabled 환경에서는 DB polling과 Upbit GET 없이 대기합니다. 기존 주문 추적은 신규 주문용 `LIVE_ORDER_ENABLED`/confirmation에 의존하지 않지만 `ORDER_EXECUTION_MODE=LIVE`여야 합니다. 점검 중에도 실제 private GET을 원치 않으면 worker를 비활성화하세요.
+
+```bash
+python -m scripts.run_live_order_reconciliation_worker --once
+python -m scripts.check_live_order_status --recommendation-id <id>
+```
+
+수동 조회는 기존대로 지원하며 audit의 `reconciliation_source`는 `MANUAL` 또는 `WORKER`입니다. 성공적인 재조회 시 기존 `manual_reconciliation` boolean을 이 source와 `reconciled_at`으로 대체합니다. 상태 컬럼은 String, audit는 기존 JSONB이므로 migration은 없습니다. 과거 terminal 주문의 잘못된 추천 상태를 일괄 변경하지는 않으며 필요 시 수동 조회로 정정합니다.
+
+UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고 미확정으로 남습니다. 반복 오류 로그는 운영자가 조사해야 합니다. cursor는 재시작하면 초기화되며, 여러 사용자별 Upbit 계정을 라우팅하는 worker가 아니라 현재 배포에 설정된 단일 Upbit 계정용입니다.
 
 ## 실패 시 수동 대응
 

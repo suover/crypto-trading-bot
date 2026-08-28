@@ -75,10 +75,15 @@ def build_models(exchange_order_id: str | None = "uuid-1"):
 
 
 @pytest.mark.parametrize(
-    ("state", "expected"),
-    [("done", LIVE_ORDER_DONE_STATUS), ("wait", LIVE_ORDER_WAIT_STATUS)],
+    ("state", "expected", "recommendation_status"),
+    [
+        ("done", LIVE_ORDER_DONE_STATUS, "LIVE_EXECUTED"),
+        ("wait", LIVE_ORDER_WAIT_STATUS, "LIVE_EXECUTION_PENDING"),
+    ],
 )
-def test_reconcile_maps_state_and_updates_audit(state: str, expected: str) -> None:
+def test_reconcile_maps_state_and_updates_audit(
+    state: str, expected: str, recommendation_status: str
+) -> None:
     recommendation, order_log = build_models()
     session = FakeSession(recommendation, order_log)
     client = FakeClient(
@@ -95,8 +100,9 @@ def test_reconcile_maps_state_and_updates_audit(state: str, expected: str) -> No
     ).reconcile(1)
     assert client.lookups == [{"uuid": "uuid-1"}]
     assert result.order_log.status == expected
-    assert result.recommendation.status == "LIVE_EXECUTED"
-    assert result.order_log.raw_response["manual_reconciliation"] is True
+    assert result.recommendation.status == recommendation_status
+    assert result.order_log.raw_response["reconciliation_source"] == "MANUAL"
+    assert "manual_reconciliation" not in result.order_log.raw_response
     assert session.committed is True
 
 

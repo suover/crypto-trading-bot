@@ -60,6 +60,7 @@ def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
         "migrate",
         "telegram-listener",
         "mock-order-retry-worker",
+        "live-order-reconciliation-worker",
         "ai-trade-analysis",
         "ai-trade-scheduler",
     ):
@@ -102,3 +103,34 @@ def test_production_workflow_is_manual_exact_sha_and_verified_ssh_only() -> None
     assert "StrictHostKeyChecking=yes" in workflow
     assert "StrictHostKeyChecking=no" not in workflow
     assert 'git show "${EXPECTED_SHA}:scripts/deploy_production.sh"' in workflow
+
+
+def test_reconciliation_worker_is_in_default_runtime_and_all_deploy_stages() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  live-order-reconciliation-worker:", 1)[1].split(
+        "\nsecrets:", 1
+    )[0]
+    assert "profiles:" not in service
+    assert "restart: unless-stopped" in service
+    assert "condition: service_healthy" in service
+    assert "condition: service_completed_successfully" in service
+    assert "scripts.run_live_order_reconciliation_worker" in service
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    stages = [
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ]
+    for stage in stages:
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "live-order-reconciliation-worker" in block
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    production_block = safety.split(
+        'if [[ "$MODE" == "production-live" ]]; then\n  container_running "crypto-trading-ai-trade-scheduler"',
+        1,
+    )[1].split("elif container_running", 1)[0]
+    assert "crypto-trading-live-order-reconciliation-worker" in production_block
+    assert "LIVE_ORDER_RECONCILIATION_ENABLED" in production_block

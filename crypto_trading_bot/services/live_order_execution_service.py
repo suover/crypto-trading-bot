@@ -112,11 +112,17 @@ def _has_positive_executed_volume(value: object) -> bool:
 
 
 def recommendation_status_for_live_order(local_status: str) -> str:
+    if local_status in {LIVE_ORDER_PLACED_STATUS, LIVE_ORDER_WAIT_STATUS}:
+        return "LIVE_EXECUTION_PENDING"
+    if local_status == LIVE_ORDER_CANCELLED_STATUS:
+        return "LIVE_EXECUTION_CANCELLED"
     if local_status == LIVE_ORDER_FAILED_STATUS:
         return "LIVE_EXECUTION_FAILED"
     if local_status == LIVE_ORDER_UNKNOWN_STATUS:
         return "LIVE_EXECUTION_UNKNOWN"
-    return "LIVE_EXECUTED"
+    if local_status in {LIVE_ORDER_DONE_STATUS, LIVE_ORDER_EXECUTED_CANCELLED_STATUS}:
+        return "LIVE_EXECUTED"
+    return "LIVE_EXECUTION_UNKNOWN"
 
 
 def outcome_for_live_order_status(local_status: str) -> str:
