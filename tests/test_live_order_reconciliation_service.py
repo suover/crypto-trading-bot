@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
+from crypto_trading_bot.db.models import OrderFill, OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
     LIVE_ORDER_DONE_STATUS,
     LIVE_ORDER_EXECUTED_CANCELLED_STATUS,
@@ -16,6 +16,7 @@ from crypto_trading_bot.services.live_order_reconciliation_service import (
 class FakeSession:
     def __init__(self, recommendation, order_log) -> None:
         self.values = [recommendation, order_log]
+        self.added_objects = []
         self.committed = False
 
     def scalar(self, statement):
@@ -23,6 +24,17 @@ class FakeSession:
 
     def flush(self) -> None:
         pass
+
+    def add_all(self, instances) -> None:
+        self.added_objects.extend(instances)
+
+    def scalars(self, statement):
+        class EmptyScalarResult:
+            @staticmethod
+            def all():
+                return []
+
+        return EmptyScalarResult()
 
     def commit(self) -> None:
         self.committed = True
@@ -133,3 +145,69 @@ def test_reconcile_marks_cancel_with_execution_as_confirmed_execution() -> None:
     assert result.order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS
     assert result.recommendation.status == "LIVE_EXECUTED"
     assert result.order_log.raw_response["order_status_response"] == response
+
+
+def test_reconcile_wait_then_done_updates_execution_summary_and_fills() -> None:
+    recommendation, order_log = build_models()
+    partial_response = {
+        "uuid": "uuid-1",
+        "state": "wait",
+        "executed_volume": "1",
+        "executed_funds": "100",
+        "trades_count": 1,
+        "trades": [
+            {
+                "uuid": "trade-a",
+                "price": "100",
+                "volume": "1",
+                "funds": "100",
+            }
+        ],
+    }
+    partial_session = FakeSession(recommendation, order_log)
+    LiveOrderReconciliationService(
+        session=partial_session,  # type: ignore[arg-type]
+        upbit_client=FakeClient(partial_response),  # type: ignore[arg-type]
+    ).reconcile(1)
+
+    assert order_log.status == LIVE_ORDER_WAIT_STATUS
+    assert order_log.executed_quantity == Decimal("1")
+    assert order_log.executed_funds_krw == Decimal("100")
+    assert order_log.average_execution_price == Decimal("100")
+    assert [
+        item.exchange_trade_id
+        for item in partial_session.added_objects
+        if isinstance(item, OrderFill)
+    ] == ["trade-a"]
+
+    done_response = {
+        "uuid": "uuid-1",
+        "state": "done",
+        "executed_volume": "2",
+        "executed_funds": "300",
+        "paid_fee": "0.15",
+        "remaining_volume": "0",
+        "trades_count": 2,
+        "trades": [
+            {
+                "uuid": "trade-b",
+                "price": "200",
+                "volume": "1",
+                "funds": "200",
+            }
+        ],
+    }
+    done_session = FakeSession(recommendation, order_log)
+    LiveOrderReconciliationService(
+        session=done_session,  # type: ignore[arg-type]
+        upbit_client=FakeClient(done_response),  # type: ignore[arg-type]
+    ).reconcile(1)
+
+    assert order_log.status == LIVE_ORDER_DONE_STATUS
+    assert recommendation.status == "LIVE_EXECUTED"
+    assert order_log.executed_quantity == Decimal("2")
+    assert order_log.executed_funds_krw == Decimal("300")
+    assert order_log.average_execution_price == Decimal("150")
+    assert order_log.paid_fee == Decimal("0.15")
+    assert order_log.remaining_quantity == Decimal("0")
+    assert order_log.trades_count == 2

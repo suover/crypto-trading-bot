@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
@@ -525,6 +526,23 @@ class OrderLog(Base):
     )
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_response: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    executed_quantity: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    executed_funds_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    average_execution_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    paid_fee: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    remaining_quantity: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    trades_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    execution_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -535,6 +553,31 @@ class OrderLog(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+
+class OrderFill(Base):
+    __tablename__ = "order_fills"
+    __table_args__ = (
+        UniqueConstraint(
+            "order_log_id",
+            "exchange_trade_id",
+            name="uq_order_fills_order_log_exchange_trade",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    order_log_id: Mapped[int] = mapped_column(
+        ForeignKey("order_logs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    exchange_trade_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    volume: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    funds_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    side: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
 

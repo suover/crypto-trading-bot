@@ -131,6 +131,15 @@ docker compose logs --tail=100 mock-order-retry-worker
 docker compose logs --tail=100 live-order-reconciliation-worker
 ```
 
+LIVE execution ledger에서 `amount_krw`/`quantity`/`price`는 주문 요청값이고, `executed_quantity`/`executed_funds_krw`/`average_execution_price`/`paid_fee`는 Upbit 응답에서 정규화한 실제 체결값입니다. 개별 `trades[]`는 `order_fills`에 저장되고 원본 `raw_response`는 유지됩니다. `execution_synced_at`은 거래소 체결시각이 아니라 마지막 DB 동기화 시각입니다.
+
+과거 저장 JSON을 점검할 때는 먼저 dry-run만 실행합니다. 이 명령은 네트워크를 사용하지 않고 `LIVE`·`UPBIT`의 `raw_response.order_status_response`만 읽습니다. `--apply`는 대상 DB를 재확인한 뒤 별도 승인된 작업에서만 사용합니다.
+
+```bash
+python -m scripts.backfill_live_execution_ledger
+python -m scripts.backfill_live_execution_ledger --apply
+```
+
 이 worker는 LIVE·UPBIT 주문의 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN` 상태만 Upbit GET으로 조회하고 DB를 동기화합니다. 새 주문 생성, 자동 재주문, 자동 취소, Telegram 승인 생성, AI 호출은 하지 않습니다. API 오류 시 미확정 상태를 유지하고 다음 cycle에서 다시 조회합니다. terminal 주문과 MOCK 주문은 polling하지 않습니다.
 
 `LIVE_ORDER_RECONCILIATION_ENABLED=false` 또는 non-LIVE 모드에서는 조회 없이 대기합니다. Production LIVE 점검은 worker 실행과 활성화를 요구합니다. `--once`는 한 batch만 처리하고 종료하며, 실제 LIVE 환경에서는 기존 주문의 private GET이 발생합니다.

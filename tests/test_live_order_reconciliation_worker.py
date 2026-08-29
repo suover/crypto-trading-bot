@@ -2,12 +2,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import Column, JSON, MetaData, Table, create_engine
+from sqlalchemy import BigInteger, Column, Integer, JSON, MetaData, Table, create_engine
 from sqlalchemy.dialects.postgresql import JSONB, dialect
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
-from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
+from crypto_trading_bot.db.models import OrderFill, OrderLog, TradeRecommendation
 from crypto_trading_bot.db import postgres_advisory_lock as lock_module
 from crypto_trading_bot.db.postgres_advisory_lock import PostgresAdvisoryLock
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
@@ -33,14 +33,20 @@ def session_factory():
     metadata = MetaData()
     # Isolated SQL query/transaction tests; parent FKs are not needed here.
     # PostgreSQL advisory locking is tested separately against the test DB.
-    for model in (TradeRecommendation, OrderLog):
+    for model in (TradeRecommendation, OrderLog, OrderFill):
         Table(
             model.__tablename__,
             metadata,
             *(
                 Column(
                     column.name,
-                    JSON() if isinstance(column.type, JSONB) else column.type,
+                    (
+                        JSON()
+                        if isinstance(column.type, JSONB)
+                        else Integer()
+                        if isinstance(column.type, BigInteger)
+                        else column.type
+                    ),
                     primary_key=column.primary_key,
                     nullable=column.nullable,
                     server_default=column.server_default,
@@ -198,12 +204,32 @@ def test_worker_selection_excludes_terminal_mock_and_other_exchange(
 
 def test_unknown_recovers_by_identifier_without_submission(session_factory, client):
     seed(session_factory, status="LIVE_UNKNOWN", uuid=None)
-    client.get_order.return_value = {"uuid": "found", "state": "done"}
+    client.get_order.return_value = {
+        "uuid": "found",
+        "state": "done",
+        "executed_volume": "2",
+        "executed_funds": "300",
+        "paid_fee": "0.15",
+        "trades_count": 1,
+        "trades": [
+            {
+                "uuid": "recovered-trade",
+                "price": "150",
+                "volume": "2",
+                "funds": "300",
+            }
+        ],
+    }
     worker = make_worker(session_factory, client)
     assert worker.reconcile_pending()[0].status == "LIVE_DONE"
     client.get_order.assert_called_once_with(identifier="recommendation-1")
     with session_factory() as session:
-        assert session.get(OrderLog, 1).exchange_order_id == "found"
+        order_log = session.get(OrderLog, 1)
+        assert order_log.exchange_order_id == "found"
+        assert order_log.executed_quantity == 2
+        assert order_log.executed_funds_krw == 300
+        assert order_log.average_execution_price == 150
+        assert session.query(OrderFill).count() == 1
 
 
 @pytest.mark.parametrize(

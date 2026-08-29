@@ -32,6 +32,9 @@ from crypto_trading_bot.services.live_order_safety import (
     assert_live_order_safety_enabled,
     validate_live_order_request,
 )
+from crypto_trading_bot.services.live_execution_ledger_service import (
+    LiveExecutionLedgerService,
+)
 
 
 LIVE_ORDER_PLACED_STATUS = "LIVE_PLACED"
@@ -412,6 +415,12 @@ class LiveOrderExecutionService:
         recommendation.status = recommendation_status_for_live_order(status)
         self.session.add(order_log)
         self.session.flush()
+        order_status_response = audit.get("order_status_response")
+        if isinstance(order_status_response, dict):
+            LiveExecutionLedgerService(self.session).sync(
+                order_log, order_status_response
+            )
+            self.session.flush()
         if commit:
             self.session.commit()
             self.session.refresh(order_log)

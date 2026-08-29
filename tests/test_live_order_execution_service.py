@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import OrderLog, TradeRecommendation
+from crypto_trading_bot.db.models import OrderFill, OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
     COUNTED_DAILY_LIVE_ORDER_STATUSES,
     LIVE_ORDER_CANCELLED_STATUS,
@@ -134,6 +134,17 @@ class FakeSession:
         if isinstance(instance, OrderLog):
             instance.id = 10
             self.order_log = instance
+
+    def add_all(self, instances: list[object]) -> None:
+        self.added_objects.extend(instances)
+
+    def scalars(self, statement: object) -> object:
+        class EmptyScalarResult:
+            @staticmethod
+            def all() -> list[str]:
+                return []
+
+        return EmptyScalarResult()
 
     def flush(self) -> None:
         self.flushed = True
@@ -443,7 +454,19 @@ def test_execute_records_executed_cancel_without_duplicate_submission(
         "uuid": "partially-filled-order-uuid",
         "state": "cancel",
         "executed_volume": "0.00371471",
+        "executed_funds": "9999.99932",
         "paid_fee": "4.99999966",
+        "remaining_volume": "0.001",
+        "trades_count": 1,
+        "trades": [
+            {
+                "uuid": "trade-1",
+                "price": "2691980",
+                "volume": "0.00371471",
+                "funds": "9999.99932",
+                "side": "bid",
+            }
+        ],
     }
     client = FakeUpbitClient(created_order_response=order_response)
     service = LiveOrderExecutionService(
@@ -461,6 +484,19 @@ def test_execute_records_executed_cancel_without_duplicate_submission(
     assert result.unknown is False
     assert result.pending is False
     assert result.order_log.raw_response["order_status_response"] == order_response
+    assert result.order_log.amount_krw == Decimal("5000")
+    assert result.order_log.executed_quantity == Decimal("0.00371471")
+    assert result.order_log.executed_funds_krw == Decimal("9999.99932")
+    assert result.order_log.average_execution_price == (
+        Decimal("9999.99932") / Decimal("0.00371471")
+    )
+    assert result.order_log.paid_fee == Decimal("4.99999966")
+    assert result.order_log.remaining_quantity == Decimal("0.001")
+    assert result.order_log.trades_count == 1
+    assert result.order_log.execution_synced_at is not None
+    (fill,) = [item for item in session.added_objects if isinstance(item, OrderFill)]
+    assert fill.exchange_trade_id == "trade-1"
+    assert fill.raw_data == order_response["trades"][0]
     assert repeated.already_executed is True
     assert repeated.order_log.status == LIVE_ORDER_EXECUTED_CANCELLED_STATUS
     assert repeated.confirmed is True

@@ -385,6 +385,15 @@ LIVE 주문 자체는 자동 재시도하지 않으며, 이 worker는 모의 주
 
 `live-order-reconciliation-worker`는 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN`인 기존 LIVE·UPBIT 주문만 조회합니다. 저장된 UUID 또는 `recommendation-{id}`로 Upbit GET을 수행하고 OrderLog와 추천 상태를 동기화합니다. 새 주문, 재주문, 주문 취소, AI 호출, Telegram 승인 생성은 하지 않습니다.
 
+LIVE 주문의 `OrderLog.amount_krw`, `quantity`, `price`는 주문 요청/승인 값이며 실제 체결값으로 덮어쓰지 않습니다. 실제 Upbit 체결 결과는 `executed_quantity`, `executed_funds_krw`, `average_execution_price`, `paid_fee`, `remaining_quantity`, `trades_count`, `execution_synced_at`에 별도로 저장됩니다. `execution_synced_at`은 거래소 체결시각이 아니라 DB 동기화 시각입니다. `trades[]`는 `OrderFill`로 정규화하며 `(order_log_id, exchange_trade_id)`로 중복을 방지하고, 원본 `raw_response`는 audit 용도로 그대로 보존합니다.
+
+저장된 과거 `raw_response.order_status_response`만 사용하는 network-free backfill은 기본 dry-run입니다. 실제 반영은 명시적인 `--apply`가 필요하며 Production 적용은 별도 운영 승인 후 수행합니다.
+
+```bash
+python -m scripts.backfill_live_execution_ledger
+python -m scripts.backfill_live_execution_ledger --apply
+```
+
 기본 설정은 `LIVE_ORDER_RECONCILIATION_ENABLED=true`, interval 60초, batch 20개입니다. `ORDER_EXECUTION_MODE`가 LIVE가 아니거나 enabled=false이면 조회 없이 대기합니다. 신규 주문용 LIVE 활성화 플래그를 끄더라도 모드가 LIVE인 동안 기존 주문의 상태 추적은 계속 가능합니다.
 
 ```bash

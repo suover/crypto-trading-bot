@@ -15,6 +15,9 @@ from crypto_trading_bot.services.live_order_execution_service import (
     map_upbit_order_state,
     recommendation_status_for_live_order,
 )
+from crypto_trading_bot.services.live_execution_ledger_service import (
+    LiveExecutionLedgerService,
+)
 
 
 PENDING_LIVE_ORDER_STATUSES = ("LIVE_PLACED", "LIVE_WAIT", "LIVE_UNKNOWN")
@@ -122,6 +125,7 @@ class LiveOrderReconciliationService:
             }
         )
         order_log.raw_response = existing_audit
+        LiveExecutionLedgerService(self.session).sync(order_log, response)
         recommendation.status = recommendation_status_for_live_order(order_log.status)
         self.session.flush()
         if commit:

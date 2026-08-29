@@ -171,7 +171,20 @@ python -m scripts.run_live_order_reconciliation_worker --once
 python -m scripts.check_live_order_status --recommendation-id <id>
 ```
 
-수동 조회는 기존대로 지원하며 audit의 `reconciliation_source`는 `MANUAL` 또는 `WORKER`입니다. 성공적인 재조회 시 기존 `manual_reconciliation` boolean을 이 source와 `reconciled_at`으로 대체합니다. 상태 컬럼은 String, audit는 기존 JSONB이므로 migration은 없습니다. 과거 terminal 주문의 잘못된 추천 상태를 일괄 변경하지는 않으며 필요 시 수동 조회로 정정합니다.
+수동 조회는 기존대로 지원하며 audit의 `reconciliation_source`는 `MANUAL` 또는 `WORKER`입니다. 성공적인 재조회 시 기존 `manual_reconciliation` boolean을 이 source와 `reconciled_at`으로 대체합니다. 이 상태/audit 형식 변경 자체에는 migration이 필요하지 않습니다. 과거 terminal 주문의 잘못된 추천 상태를 일괄 변경하지는 않으며 필요 시 수동 조회로 정정합니다.
+
+## LIVE execution/fill ledger
+
+`order_logs.amount_krw`, `quantity`, `price`는 주문 요청/승인 값입니다. 실제 체결 결과는 별도 nullable 컬럼인 `executed_quantity`, `executed_funds_krw`, `average_execution_price`, `paid_fee`, `remaining_quantity`, `trades_count`, `execution_synced_at`에 저장합니다. `execution_synced_at`은 Upbit 체결시각이 아니라 시스템이 응답을 DB에 마지막으로 동기화한 시각입니다.
+
+실제 체결금액은 정상적인 `executed_funds`를 우선 사용하고, 없을 때만 유효한 `trades[].funds` 합계를 사용합니다. 평균 체결가는 실제 체결금액을 실제 체결수량으로 나눈 값이며 요청금액·ticker·주문 price로 추정하지 않습니다. 개별 `trades[]`는 `order_fills`에 저장되고 exchange trade UUID의 unique constraint로 반복 reconciliation 중복을 막습니다. 기존 `raw_response` audit는 삭제하거나 축약하지 않습니다.
+
+과거 데이터 backfill은 저장된 `raw_response.order_status_response`만 사용하며 기본값은 dry-run입니다. 네트워크, 주문, Telegram, AI 호출은 하지 않습니다. Production에서 `--apply`는 이번 기능 배포와 별개의 승인된 운영 작업으로 취급합니다.
+
+```bash
+python -m scripts.backfill_live_execution_ledger
+python -m scripts.backfill_live_execution_ledger --apply
+```
 
 UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고 미확정으로 남습니다. 반복 오류 로그는 운영자가 조사해야 합니다. cursor는 재시작하면 초기화되며, 여러 사용자별 Upbit 계정을 라우팅하는 worker가 아니라 현재 배포에 설정된 단일 Upbit 계정용입니다.
 
