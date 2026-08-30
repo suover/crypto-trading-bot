@@ -472,7 +472,7 @@ class MarketUniverseService:
         if pipeline_run_id is not None:
             statement = statement.where(
                 AnalysisRun.pipeline_run_id == pipeline_run_id,
-                AnalysisRun.run_type == "MANUAL",
+                AnalysisRun.run_type.in_(("ACCOUNT_SNAPSHOT", "MANUAL")),
                 AnalysisRun.status == "SUCCESS",
             )
         result: dict[str, dict[str, Decimal]] = {}

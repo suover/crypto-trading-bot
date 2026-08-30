@@ -419,3 +419,37 @@ def test_ranking_does_not_reward_missing_risk_metrics() -> None:
 
     assert ranked[0]["market"] == "KRW-BTC"
     assert ranked[0]["score"] > ranked[1]["score"]
+
+
+def test_balance_reader_accepts_new_and_legacy_account_run_types() -> None:
+    settings = Settings(database_url="postgresql://test:test@localhost/test")
+    session = MagicMock()
+    session.scalars.return_value = [
+        SimpleNamespace(
+            currency="KRW",
+            balance=Decimal("1000"),
+            locked=Decimal("10"),
+            avg_buy_price=Decimal("0"),
+        )
+    ]
+    provider = MagicMock(exchange_code="UPBIT")
+    service = MarketUniverseService(
+        session,
+        settings=settings,
+        market_data_provider=provider,
+        registry_service=MagicMock(),
+        candle_service=MagicMock(),
+    )
+
+    balances = service._load_balances(
+        1, "UPBIT", "11111111-1111-1111-1111-111111111111"
+    )
+
+    statement = session.scalars.call_args.args[0]
+    expanding_values = [
+        value
+        for value in statement.compile().params.values()
+        if isinstance(value, list)
+    ]
+    assert ["ACCOUNT_SNAPSHOT", "MANUAL"] in expanding_values
+    assert balances["KRW"]["total"] == Decimal("1010")

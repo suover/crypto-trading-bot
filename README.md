@@ -394,6 +394,14 @@ python -m scripts.backfill_live_execution_ledger
 python -m scripts.backfill_live_execution_ledger --apply
 ```
 
+### Portfolio valuation snapshot
+
+AI 분석 pipeline은 계좌 스냅샷과 Market Universe 구축 후, AI 추천 전에 `PortfolioSnapshot`과 보유자산별 `PortfolioPositionSnapshot`을 저장합니다. 이 단계는 새 API를 호출하지 않고 동일 `pipeline_run_id`에 저장된 `AccountSnapshot`, `MarketUniverseCandidate`, `MarketSnapshot`만 사용합니다. 새 계좌 수집 run type은 `ACCOUNT_SNAPSHOT`이며 과거 `MANUAL` 계좌 run도 reader에서 계속 지원합니다.
+
+`known_total_value_krw`는 현금과 가격을 확보한 position만 합친 알려진 범위의 가치입니다. 모든 양수 보유자산 가격을 확보한 `COMPLETE`에서만 `total_value_krw`가 저장되며, `PARTIAL`에서는 누락 자산을 0원으로 간주하지 않고 `total_value_krw=NULL`로 둡니다. 가격 평가 가능 여부와 cost basis/PnL 계산 가능 여부는 별개입니다. 현금-only portfolio의 position 원가와 미실현손익은 0이고 percentage는 NULL입니다.
+
+Portfolio snapshot은 실제 Upbit 계좌 전체의 현재 평가로 수동 거래·입출금·봇 외 거래 영향도 포함할 수 있습니다. `OrderFill`은 봇이 생성한 LIVE 주문의 체결 ledger이므로 Portfolio valuation을 봇 성과로 해석하면 안 됩니다.
+
 기본 설정은 `LIVE_ORDER_RECONCILIATION_ENABLED=true`, interval 60초, batch 20개입니다. `ORDER_EXECUTION_MODE`가 LIVE가 아니거나 enabled=false이면 조회 없이 대기합니다. 신규 주문용 LIVE 활성화 플래그를 끄더라도 모드가 LIVE인 동안 기존 주문의 상태 추적은 계속 가능합니다.
 
 ```bash

@@ -43,6 +43,10 @@ PIPELINE_STEPS = [
         module="scripts.build_market_universe",
     ),
     PipelineStep(
+        name="Portfolio valuation snapshot 저장",
+        module="scripts.capture_portfolio_valuation",
+    ),
+    PipelineStep(
         name="AI 매매 추천 생성",
         module="scripts.generate_ai_trade_recommendations",
     ),

@@ -186,6 +186,14 @@ python -m scripts.backfill_live_execution_ledger
 python -m scripts.backfill_live_execution_ledger --apply
 ```
 
+## Account-level Portfolio valuation
+
+예약 분석은 동일 pipeline에 저장된 account snapshot과 universe market snapshot을 사용해 AI 추천 전에 `PortfolioSnapshot`과 `PortfolioPositionSnapshot`을 생성합니다. 이 단계는 DB-only이며 Upbit/OpenAI/Telegram을 새로 호출하지 않습니다. 신규 account run type은 `ACCOUNT_SNAPSHOT`이고 기존 `MANUAL` account run은 legacy source로 계속 읽을 수 있습니다.
+
+`known_total_value_krw`는 가격이 확인된 범위의 합계입니다. 보유자산 하나라도 동일 pipeline 가격이 없으면 상태는 `PARTIAL`, `total_value_krw`는 NULL이며 이전 pipeline 가격으로 보충하지 않습니다. 가격이 모두 있어도 avg buy price가 빠지면 계좌 가치 평가는 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
+
+이 snapshot은 실제 Upbit 계좌 전체의 현재 평가이며 봇 성과가 아닙니다. `OrderFill`은 봇이 생성한 LIVE 주문 체결 원장이므로 두 데이터 계층을 직접적인 수익률로 결합하지 않습니다.
+
 UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고 미확정으로 남습니다. 반복 오류 로그는 운영자가 조사해야 합니다. cursor는 재시작하면 초기화되며, 여러 사용자별 Upbit 계정을 라우팅하는 worker가 아니라 현재 배포에 설정된 단일 Upbit 계정용입니다.
 
 ## 실패 시 수동 대응

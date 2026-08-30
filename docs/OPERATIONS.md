@@ -140,6 +140,10 @@ python -m scripts.backfill_live_execution_ledger
 python -m scripts.backfill_live_execution_ledger --apply
 ```
 
+AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 데이터만 읽으며 별도 Upbit ticker나 외부 API를 호출하지 않습니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
+
+`COMPLETE`는 KRW와 모든 양수 보유자산의 동일-pipeline 가격을 확보했다는 뜻입니다. `PARTIAL`의 `known_total_value_krw`는 알려진 범위만 합한 값이며 전체 계좌 총자산이 아닙니다. `total_value_krw`는 PARTIAL에서 NULL입니다. 가격은 모두 있어도 cost basis가 하나라도 없으면 valuation은 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
+
 이 worker는 LIVE·UPBIT 주문의 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN` 상태만 Upbit GET으로 조회하고 DB를 동기화합니다. 새 주문 생성, 자동 재주문, 자동 취소, Telegram 승인 생성, AI 호출은 하지 않습니다. API 오류 시 미확정 상태를 유지하고 다음 cycle에서 다시 조회합니다. terminal 주문과 MOCK 주문은 polling하지 않습니다.
 
 `LIVE_ORDER_RECONCILIATION_ENABLED=false` 또는 non-LIVE 모드에서는 조회 없이 대기합니다. Production LIVE 점검은 worker 실행과 활성화를 요구합니다. `--once`는 한 batch만 처리하고 종료하며, 실제 LIVE 환경에서는 기존 주문의 private GET이 발생합니다.

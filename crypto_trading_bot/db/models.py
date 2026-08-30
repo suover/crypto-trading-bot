@@ -239,6 +239,117 @@ class MarketUniverseCandidate(Base):
     )
 
 
+class PortfolioSnapshot(Base):
+    __tablename__ = "portfolio_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "exchange",
+            "pipeline_run_id",
+            name="uq_portfolio_snapshots_user_exchange_pipeline",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=False, unique=True
+    )
+    pipeline_run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    cash_available_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    cash_locked_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    cash_total_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    priced_positions_value_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    known_total_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    total_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    positions_estimated_cost_basis_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    unrealized_pnl_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    unrealized_pnl_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    position_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unpriced_asset_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    missing_cost_basis_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    valuation_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class PortfolioPositionSnapshot(Base):
+    __tablename__ = "portfolio_position_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_snapshot_id",
+            "currency",
+            name="uq_portfolio_positions_snapshot_currency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    portfolio_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    account_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("account_snapshots.id"), nullable=False, index=True
+    )
+    market_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("market_snapshots.id"), nullable=True, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    currency: Mapped[str] = mapped_column(String(20), nullable=False)
+    available_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    locked_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    total_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    avg_buy_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    mark_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    market_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    estimated_cost_basis_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    unrealized_pnl_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    unrealized_pnl_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    valuation_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    price_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class TradeRecommendation(Base):
     __tablename__ = "trade_recommendations"
 

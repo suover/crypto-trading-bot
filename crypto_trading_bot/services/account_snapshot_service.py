@@ -41,7 +41,7 @@ class AccountSnapshotService:
         analysis_run = AnalysisRun(
             user_id=user.id,
             pipeline_run_id=get_pipeline_run_id(pipeline_run_id),
-            run_type="MANUAL",
+            run_type="ACCOUNT_SNAPSHOT",
             trading_mode=settings.trading_mode,
             status="STARTED",
         )
