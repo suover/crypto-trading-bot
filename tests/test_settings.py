@@ -27,6 +27,11 @@ SETTINGS_ENV_NAMES = (
     "LIVE_ORDER_RECONCILIATION_ENABLED",
     "LIVE_ORDER_RECONCILIATION_INTERVAL_SECONDS",
     "LIVE_ORDER_RECONCILIATION_BATCH_SIZE",
+    "OPERATIONAL_ALERTING_ENABLED",
+    "OPERATIONAL_ALERT_INTERVAL_SECONDS",
+    "LIVE_ORDER_STALE_ALERT_AFTER_SECONDS",
+    "OPERATIONAL_ALERT_MAX_RETRIES",
+    "OPERATIONAL_ALERT_RETRY_DELAYS_MINUTES",
 )
 
 
@@ -57,6 +62,46 @@ def test_openai_trade_defaults() -> None:
     assert settings.live_order_reconciliation_batch_size == 20
     assert settings.bot_trading_pnl_enabled is False
     assert settings.bot_trading_pnl_interval_seconds == 300
+    assert settings.operational_alerting_enabled is False
+    assert settings.operational_alert_interval_seconds == 60
+    assert settings.live_order_stale_alert_after_seconds == 600
+    assert settings.operational_alert_max_retries == 3
+    assert settings.operational_alert_retry_delay_list == [1, 5, 15]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("operational_alert_interval_seconds", 9),
+        ("operational_alert_interval_seconds", 3601),
+        ("live_order_stale_alert_after_seconds", 0),
+        ("operational_alert_max_retries", -1),
+        ("operational_alert_max_retries", 11),
+    ],
+)
+def test_operational_alert_settings_reject_invalid_bounds(field, value) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            **{field: value},
+        )
+
+
+@pytest.mark.parametrize(
+    ("retry_count", "delays"),
+    [(3, "1,5"), (1, "0"), (1, "invalid")],
+)
+def test_operational_alert_settings_validate_retry_schedule(
+    retry_count, delays
+) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            operational_alert_max_retries=retry_count,
+            operational_alert_retry_delays_minutes=delays,
+        )
 
 
 @pytest.mark.parametrize(

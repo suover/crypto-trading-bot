@@ -20,4 +20,10 @@ def send_latest_ai_trade_recommendations() -> None:
 
 
 if __name__ == "__main__":
-    send_latest_ai_trade_recommendations()
+    from crypto_trading_bot.operational.error_reporting import (
+        run_with_operational_error_reporting,
+    )
+
+    run_with_operational_error_reporting(
+        send_latest_ai_trade_recommendations, service_hint="TELEGRAM"
+    )

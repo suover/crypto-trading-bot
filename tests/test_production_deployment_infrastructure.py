@@ -62,6 +62,7 @@ def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
         "mock-order-retry-worker",
         "live-order-reconciliation-worker",
         "bot-trading-pnl-worker",
+        "operational-alert-worker",
         "ai-trade-analysis",
         "ai-trade-scheduler",
     ):
@@ -170,3 +171,55 @@ def test_bot_pnl_worker_is_db_only_default_runtime_and_deploy_managed() -> None:
     worker = read_repository_file("scripts/run_bot_trading_pnl_worker.py")
     for forbidden in ("UpbitClient", "OpenAI", "Telegram", "requests", "httpx"):
         assert forbidden not in worker
+
+
+def test_operational_alert_worker_is_minimum_secret_default_runtime() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  operational-alert-worker:", 1)[1].split("\nsecrets:", 1)[
+        0
+    ]
+    assert "profiles:" not in service
+    assert "restart: unless-stopped" in service
+    assert "scripts.run_operational_alert_worker" in service
+    secret_block = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    assert "postgres_password" in secret_block
+    assert "telegram_bot_token" in secret_block
+    assert "upbit_access_key" not in secret_block
+    assert "upbit_secret_key" not in secret_block
+    assert "openai_api_key" not in secret_block
+    for variable in (
+        "OPENAI_API_KEY_FILE",
+        "UPBIT_ACCESS_KEY_FILE",
+        "UPBIT_SECRET_KEY_FILE",
+    ):
+        assert f'{variable}: ""' in service
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "operational-alert-worker" in block
+    worker = read_repository_file("scripts/run_operational_alert_worker.py")
+    for forbidden in ("UpbitClient", "OpenAI", "requests", "httpx"):
+        assert forbidden not in worker
+
+
+def test_operational_alert_diagnostic_is_read_only_and_network_free() -> None:
+    diagnostic = read_repository_file("scripts/check_operational_alerts.py")
+    for forbidden in (
+        ".add(",
+        ".flush(",
+        ".commit(",
+        "TelegramClient",
+        "UpbitClient",
+        "OpenAI",
+        "requests",
+        "httpx",
+    ):
+        assert forbidden not in diagnostic
+    assert "session.rollback()" in diagnostic

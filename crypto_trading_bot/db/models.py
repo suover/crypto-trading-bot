@@ -601,6 +601,87 @@ class OrderRetryNotification(Base):
     )
 
 
+class OperationalAlert(Base):
+    __tablename__ = "operational_alerts"
+    __table_args__ = (
+        UniqueConstraint("dedup_key", name="uq_operational_alerts_dedup_key"),
+        CheckConstraint(
+            "alert_type IN ('PIPELINE_FAILURE', 'STALE_LIVE_ORDER')",
+            name="ck_operational_alerts_type",
+        ),
+        CheckConstraint(
+            "severity IN ('WARNING', 'CRITICAL')",
+            name="ck_operational_alerts_severity",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('PENDING', 'SENT', 'FAILED')",
+            name="ck_operational_alerts_delivery_status",
+        ),
+        CheckConstraint(
+            "delivery_attempt_count >= 0",
+            name="ck_operational_alerts_attempt_count",
+        ),
+        Index(
+            "ix_operational_alerts_delivery_due",
+            "delivery_status",
+            "next_retry_at",
+        ),
+        Index(
+            "ix_operational_alerts_type_resolved",
+            "alert_type",
+            "resolved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    alert_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True, index=True
+    )
+    pipeline_run_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, index=True
+    )
+    analysis_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=True, index=True
+    )
+    order_log_id: Mapped[int | None] = mapped_column(
+        ForeignKey("order_logs.id"), nullable=True, index=True
+    )
+    recommendation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("trade_recommendations.id"), nullable=True, index=True
+    )
+    error_category: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    http_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    safe_message: Mapped[str] = mapped_column(Text, nullable=False)
+    dedup_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    delivery_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'PENDING'")
+    )
+    delivery_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
+    next_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class OrderLog(Base):
     __tablename__ = "order_logs"
 

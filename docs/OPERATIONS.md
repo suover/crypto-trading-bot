@@ -255,6 +255,41 @@ docker compose ps postgres
 
 위와 같은 외부 포트 매핑이 보이면 즉시 Compose 파일 조합을 확인합니다. 서버에서는 `docker-compose.local.yml`을 함께 사용하지 않습니다.
 
+## Operational Alerting 운영
+
+`operational-alert-worker`는 DB와 Telegram만 사용하는 별도 프로세스입니다. 거래,
+reconciliation, portfolio/PnL transaction과 결합되지 않으며 Upbit/OpenAI client를
+사용하지 않습니다. 기본 설정은 다음과 같습니다.
+
+```env
+OPERATIONAL_ALERTING_ENABLED=false
+OPERATIONAL_ALERT_INTERVAL_SECONDS=60
+LIVE_ORDER_STALE_ALERT_AFTER_SECONDS=600
+OPERATIONAL_ALERT_MAX_RETRIES=3
+OPERATIONAL_ALERT_RETRY_DELAYS_MINUTES=1,5,15
+```
+
+활성화 전 읽기 전용 진단으로 stale LIVE 주문과 pending/retryable outbox 수를 확인합니다.
+
+```bash
+python -m scripts.check_operational_alerts
+```
+
+진단은 INSERT/UPDATE/commit과 Telegram/Upbit/OpenAI 호출을 하지 않습니다. Worker는
+LIVE·UPBIT의 `LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`만 `OrderLog.created_at` 기준으로
+감지합니다. 주문당 deterministic dedup key를 사용해 경고는 한 번만 만들고, 주문이
+terminal이 되면 alert의 `resolved_at`만 갱신합니다. 주문이나 추천 상태는 바꾸지 않습니다.
+
+권장 Production rollout 순서는 deploy와 migration 완료, dry-run 결과 확인,
+`OPERATIONAL_ALERTING_ENABLED=true` 설정, worker recreate, 로그 확인, runtime safety
+검사입니다. 설정과 worker 활성화는 운영자가 직접 수행합니다.
+
+```bash
+docker compose up -d --no-deps --force-recreate operational-alert-worker
+docker compose logs --tail=100 operational-alert-worker
+bash scripts/check_server_runtime_safety.sh --production-live
+```
+
 ## Production scheduler 관리
 
 Production scheduled LIVE에서는 scheduler profile을 명시해 실행합니다.

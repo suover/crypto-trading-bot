@@ -465,6 +465,28 @@ docker compose --profile manual run --rm ai-trade-analysis
 docker compose ps -a
 ```
 
+### Operational Alerting
+
+Operational Alerting은 거래 엔진이 아니라 기존 pipeline 실패와 장기 미확정 LIVE
+주문을 운영자에게 알리는 별도 계층입니다. 주문 생성·취소·재주문, reconciliation,
+AI 판단을 수행하거나 변경하지 않습니다.
+
+Pipeline child는 raw exception 대신 분류된 category와 고정 안전 문구만 임시 JSON으로
+부모에게 전달합니다. 부모는 `OperationalAlert` outbox를 먼저 저장한 뒤 즉시 Telegram
+발송을 시도하며, 일시 실패는 같은 alert row를 재시도합니다. Background worker는
+`LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`인 LIVE·UPBIT 주문을 `created_at` 기준으로
+감지해 주문당 한 번만 경고합니다.
+
+배포 기본값은 `OPERATIONAL_ALERTING_ENABLED=false`입니다. 이 flag는 stale 감지와
+outbox retry worker만 제어하며 기존 pipeline 실패의 즉시 알림 시도는 계속 유지됩니다.
+읽기 전용 사전 점검은 다음 명령을 사용합니다.
+
+```powershell
+python -m scripts.check_operational_alerts
+```
+
+이 진단은 DB SELECT만 수행하며 Telegram, Upbit, OpenAI를 호출하지 않습니다.
+
 ### 서버 런타임 안전 점검
 
 ```powershell

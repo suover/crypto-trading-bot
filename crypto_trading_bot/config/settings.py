@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     bot_trading_pnl_enabled: bool = False
     bot_trading_pnl_interval_seconds: int = Field(default=300, ge=30, le=86400)
 
+    # DB + Telegram operational alerts. Background worker rollout is opt-in.
+    operational_alerting_enabled: bool = False
+    operational_alert_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    live_order_stale_alert_after_seconds: int = Field(default=600, ge=1, le=604800)
+    operational_alert_max_retries: int = Field(default=3, ge=0, le=10)
+    operational_alert_retry_delays_minutes: str = "1,5,15"
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
@@ -213,6 +220,10 @@ class Settings(BaseSettings):
                 "MARKET_UNIVERSE_MIN_24H_TRADE_VALUE_KRW must be finite and non-negative"
             )
 
+        # Validate the configured retry schedule during Settings construction rather
+        # than waiting for the background worker to start.
+        self.operational_alert_retry_delay_list
+
         return self
 
     @property
@@ -273,6 +284,26 @@ class Settings(BaseSettings):
         if any(delay <= 0 for delay in delays):
             raise ValueError("mock order retry delays must be greater than 0")
 
+        return delays
+
+    @property
+    def operational_alert_retry_delay_list(self) -> list[int]:
+        try:
+            delays = [
+                int(value.strip())
+                for value in self.operational_alert_retry_delays_minutes.split(",")
+                if value.strip()
+            ]
+        except ValueError:
+            raise ValueError(
+                "OPERATIONAL_ALERT_RETRY_DELAYS_MINUTES must contain integers"
+            ) from None
+        if len(delays) < self.operational_alert_max_retries:
+            raise ValueError(
+                "OPERATIONAL_ALERT_RETRY_DELAYS_MINUTES must cover max retries"
+            )
+        if any(delay <= 0 for delay in delays):
+            raise ValueError("operational alert retry delays must be greater than 0")
         return delays
 
     model_config = SettingsConfigDict(

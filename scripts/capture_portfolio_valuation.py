@@ -21,4 +21,8 @@ def capture_portfolio_valuation() -> None:
 
 
 if __name__ == "__main__":
-    capture_portfolio_valuation()
+    from crypto_trading_bot.operational.error_reporting import (
+        run_with_operational_error_reporting,
+    )
+
+    run_with_operational_error_reporting(capture_portfolio_valuation)

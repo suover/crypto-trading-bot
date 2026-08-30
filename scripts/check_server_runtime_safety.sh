@@ -132,6 +132,7 @@ fi
 container_running "crypto-trading-telegram-listener" && pass_check "telegram-listener가 실행 중입니다." || fail_check "telegram-listener가 실행 중이 아닙니다."
 container_running "crypto-trading-mock-order-retry-worker" && pass_check "mock-order-retry-worker가 실행 중입니다." || fail_check "mock-order-retry-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-bot-trading-pnl-worker" && pass_check "bot-trading-pnl-worker가 실행 중입니다." || fail_check "bot-trading-pnl-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-operational-alert-worker" && pass_check "operational-alert-worker가 실행 중입니다." || fail_check "operational-alert-worker가 실행 중이 아닙니다."
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
@@ -143,6 +144,12 @@ if [[ "$MODE" == "production-live" ]]; then
     pass_check "production-live: bot PnL accounting 설정이 활성화되어 있습니다."
   else
     warn "production-live: BOT_TRADING_PNL_ENABLED가 false입니다. 거래에는 영향 없이 analytics 갱신만 비활성화됩니다."
+  fi
+  OPERATIONAL_ALERTING_ENABLED="$(get_env_value OPERATIONAL_ALERTING_ENABLED)"
+  if [[ "${OPERATIONAL_ALERTING_ENABLED:-false}" == "true" ]]; then
+    pass_check "production-live: operational alerting 설정이 활성화되어 있습니다."
+  else
+    warn "production-live: OPERATIONAL_ALERTING_ENABLED가 false입니다. 거래에는 직접 영향 없이 운영 경고만 비활성화됩니다."
   fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."

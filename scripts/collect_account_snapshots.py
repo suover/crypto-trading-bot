@@ -24,4 +24,10 @@ def collect_account_snapshots() -> None:
 
 
 if __name__ == "__main__":
-    collect_account_snapshots()
+    from crypto_trading_bot.operational.error_reporting import (
+        run_with_operational_error_reporting,
+    )
+
+    run_with_operational_error_reporting(
+        collect_account_snapshots, service_hint="UPBIT"
+    )

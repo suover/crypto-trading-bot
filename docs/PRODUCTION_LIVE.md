@@ -139,6 +139,33 @@ docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
 
+## Operational Alerting
+
+Operational Alerting은 주문을 실행하는 계층이 아닙니다. Pipeline 실패를
+`UPBIT_*`, `OPENAI_*`, `TELEGRAM_*`, `DATABASE`, `CONFIGURATION`,
+`DATA_VALIDATION`, `UNKNOWN`으로 분류하고, raw exception이나 credential 대신 고정된
+안전 문구를 `operational_alerts` outbox에 저장합니다. Telegram 실패 시 같은 row에서
+기본 1·5·15분 간격으로 재시도하며 무한 재시도하지 않습니다.
+
+Stale 감지는 LIVE·UPBIT 주문 중 `LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`만 대상으로
+하며 기본 600초를 `OrderLog.created_at`부터 계산합니다. `updated_at`이나
+`execution_synced_at`을 상태 시작 시각으로 해석하지 않습니다. 감지는 경고만 생성하며
+Upbit GET/POST, 자동 취소, 자동 재주문, 주문/추천 상태 변경을 하지 않습니다.
+
+배포만으로 활성화되지 않도록 `OPERATIONAL_ALERTING_ENABLED=false`가 기본입니다.
+Production에서는 migration 후 다음 read-only 진단을 먼저 실행하고 결과를 확인한 다음
+운영자가 flag를 켜고 worker를 recreate합니다.
+
+```bash
+python -m scripts.check_operational_alerts
+docker compose up -d --no-deps --force-recreate operational-alert-worker
+docker compose logs --tail=100 operational-alert-worker
+```
+
+Worker에는 PostgreSQL password와 Telegram token만 mount하며 Upbit/OpenAI secret은
+제공하지 않습니다. Pipeline 실패의 즉시 Telegram 시도는 worker enable flag와 무관하게
+유지됩니다.
+
 ## 기존 LIVE 주문 자동 reconciliation
 
 `live-order-reconciliation-worker`는 이미 존재하는 LIVE·UPBIT 주문 중 `LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`만 조회합니다. UUID가 없으면 `recommendation-{recommendation_id}`로 기존 주문을 GET합니다. **새 BUY/SELL 생성, 자동 재주문, 자동 주문 취소, 추천/Telegram 승인 생성, AI 호출은 하지 않습니다.** MOCK retry worker와 역할이 분리되어 있습니다.

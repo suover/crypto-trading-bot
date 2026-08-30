@@ -14,4 +14,8 @@ def build_market_universe() -> None:
 
 
 if __name__ == "__main__":
-    build_market_universe()
+    from crypto_trading_bot.operational.error_reporting import (
+        run_with_operational_error_reporting,
+    )
+
+    run_with_operational_error_reporting(build_market_universe)
