@@ -134,6 +134,7 @@ docker compose logs --tail=100 migrate
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
 docker compose logs --tail=100 live-order-reconciliation-worker
+docker compose logs --tail=100 bot-trading-pnl-worker
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
@@ -193,6 +194,23 @@ python -m scripts.backfill_live_execution_ledger --apply
 `known_total_value_krw`는 가격이 확인된 범위의 합계입니다. 보유자산 하나라도 동일 pipeline 가격이 없으면 상태는 `PARTIAL`, `total_value_krw`는 NULL이며 이전 pipeline 가격으로 보충하지 않습니다. 가격이 모두 있어도 avg buy price가 빠지면 계좌 가치 평가는 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
 
 이 snapshot은 실제 Upbit 계좌 전체의 현재 평가이며 봇 성과가 아닙니다. `OrderFill`은 봇이 생성한 LIVE 주문 체결 원장이므로 두 데이터 계층을 직접적인 수익률로 결합하지 않습니다.
+
+## Bot-attributed realized PnL
+
+Bot Trading PnL은 Portfolio와 분리된 DB-only derived accounting입니다. terminal 실제 bot execution 중 `LIVE_DONE`과 `LIVE_EXECUTED_CANCELLED`의 유효한 `executed_quantity`, `executed_funds_krw`, `paid_fee`만 BOT FIFO로 계산합니다. BUY fee는 원가, SELL fee는 proceeds 차감으로 반영합니다. `amount_krw`, 요청 quantity/price, 추천값, ticker, 계좌 평단은 source가 아닙니다.
+
+Bot BUY lot으로 원가를 증명할 수 없는 기존·수동 보유분 SELL은 `UNMATCHED`로 남고 realized PnL이나 승률에 포함하지 않습니다. 일부만 증명되면 matched 부분만 recognized하고 `PARTIALLY_MATCHED`로 둡니다. FULLY_MATCHED SELL만 win/loss/breakeven denominator입니다.
+
+기본 설정은 다음과 같아 배포만으로 자동 계산을 활성화하지 않습니다.
+
+```env
+BOT_TRADING_PNL_ENABLED=false
+BOT_TRADING_PNL_INTERVAL_SECONDS=300
+```
+
+기본 rebuild는 read-only dry-run입니다. `--apply`는 Production DB에 Codex가 실행하지 않으며 별도 승인과 백업 후 수행합니다. worker는 별도 advisory lock 아래 source signature가 바뀐 경우만 transaction 단위로 derived table을 rebuild하며, 거래·reconciliation 실패/rollback 경로와 결합되지 않습니다.
+
+Known limitation: Upbit 앱에서 직접 한 거래와 입출금은 import하지 않습니다. 과거 bot BUY 물량을 사용자가 수동 SELL/출금하면 execution ledger만으로 external depletion을 완벽히 알 수 없습니다. BOT FIFO는 fungible asset의 물리적 coin 식별이 아니라 bot-created execution 사이의 attribution policy입니다.
 
 UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고 미확정으로 남습니다. 반복 오류 로그는 운영자가 조사해야 합니다. cursor는 재시작하면 초기화되며, 여러 사용자별 Upbit 계정을 라우팅하는 worker가 아니라 현재 배포에 설정된 단일 Upbit 계정용입니다.
 

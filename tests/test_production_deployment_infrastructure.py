@@ -61,6 +61,7 @@ def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
         "telegram-listener",
         "mock-order-retry-worker",
         "live-order-reconciliation-worker",
+        "bot-trading-pnl-worker",
         "ai-trade-analysis",
         "ai-trade-scheduler",
     ):
@@ -134,3 +135,38 @@ def test_reconciliation_worker_is_in_default_runtime_and_all_deploy_stages() -> 
     )[1].split("elif container_running", 1)[0]
     assert "crypto-trading-live-order-reconciliation-worker" in production_block
     assert "LIVE_ORDER_RECONCILIATION_ENABLED" in production_block
+
+
+def test_bot_pnl_worker_is_db_only_default_runtime_and_deploy_managed() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  bot-trading-pnl-worker:", 1)[1].split("\nsecrets:", 1)[0]
+    assert "profiles:" not in service
+    assert "restart: unless-stopped" in service
+    assert "scripts.run_bot_trading_pnl_worker" in service
+    secret_block = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    assert "postgres_password" in secret_block
+    assert "upbit_access_key" not in secret_block
+    assert "upbit_secret_key" not in secret_block
+    assert "openai_api_key" not in secret_block
+    assert "telegram_bot_token" not in secret_block
+    for variable in (
+        "OPENAI_API_KEY_FILE",
+        "TELEGRAM_BOT_TOKEN_FILE",
+        "UPBIT_ACCESS_KEY_FILE",
+        "UPBIT_SECRET_KEY_FILE",
+    ):
+        assert f'{variable}: ""' in service
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "bot-trading-pnl-worker" in block
+    worker = read_repository_file("scripts/run_bot_trading_pnl_worker.py")
+    for forbidden in ("UpbitClient", "OpenAI", "Telegram", "requests", "httpx"):
+        assert forbidden not in worker

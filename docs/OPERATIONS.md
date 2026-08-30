@@ -94,6 +94,7 @@ docker compose up -d --build
 - `telegram-listener`
 - `mock-order-retry-worker`
 - `live-order-reconciliation-worker`
+- `bot-trading-pnl-worker`
 
 `ai-trade-scheduler`는 기본 런타임에서 시작되지 않습니다.
 
@@ -103,7 +104,9 @@ docker compose up -d --build
 docker compose ps -a
 ```
 
-`postgres`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`가 실행 중인지 확인합니다. `migrate`는 정상적으로 완료된 뒤 종료될 수 있습니다.
+`postgres`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `bot-trading-pnl-worker`가 실행 중인지 확인합니다. `migrate`는 정상적으로 완료된 뒤 종료될 수 있습니다.
+
+`bot-trading-pnl-worker`도 기본 runtime에 포함되지만 `BOT_TRADING_PNL_ENABLED=false` 기본값에서는 DB accounting query/write 없이 대기합니다.
 
 ## 로그 확인
 
@@ -131,6 +134,12 @@ docker compose logs --tail=100 mock-order-retry-worker
 docker compose logs --tail=100 live-order-reconciliation-worker
 ```
 
+Bot PnL accounting 로그:
+
+```bash
+docker compose logs --tail=100 bot-trading-pnl-worker
+```
+
 LIVE execution ledger에서 `amount_krw`/`quantity`/`price`는 주문 요청값이고, `executed_quantity`/`executed_funds_krw`/`average_execution_price`/`paid_fee`는 Upbit 응답에서 정규화한 실제 체결값입니다. 개별 `trades[]`는 `order_fills`에 저장되고 원본 `raw_response`는 유지됩니다. `execution_synced_at`은 거래소 체결시각이 아니라 마지막 DB 동기화 시각입니다.
 
 과거 저장 JSON을 점검할 때는 먼저 dry-run만 실행합니다. 이 명령은 네트워크를 사용하지 않고 `LIVE`·`UPBIT`의 `raw_response.order_status_response`만 읽습니다. `--apply`는 대상 DB를 재확인한 뒤 별도 승인된 작업에서만 사용합니다.
@@ -139,6 +148,22 @@ LIVE execution ledger에서 `amount_krw`/`quantity`/`price`는 주문 요청값�
 python -m scripts.backfill_live_execution_ledger
 python -m scripts.backfill_live_execution_ledger --apply
 ```
+
+## Bot Trading PnL accounting
+
+Portfolio snapshot은 수동 거래와 입출금을 포함할 수 있는 실제 계좌 전체 상태입니다. Bot Trading PnL은 이와 별개로 이 프로그램이 만든 terminal LIVE 주문의 정규화된 체결 summary만 사용합니다. `LIVE_DONE`/`LIVE_EXECUTED_CANCELLED`만 source이고, BUY fee는 FIFO lot 원가에 포함하며 SELL fee는 proceeds에서 차감합니다.
+
+봇 BUY lot이 없는 SELL은 `UNMATCHED`, 일부 수량만 연결되면 `PARTIALLY_MATCHED`입니다. 해당 수량의 원가를 계좌 평단이나 Portfolio에서 추정하지 않습니다. 불완전 terminal source가 발견되면 같은 market의 이후 chronology는 fail-closed로 계산하지 않고 summary를 `PARTIAL`로 둡니다. 다른 market은 계속 계산합니다.
+
+점검은 항상 dry-run부터 시작합니다. 기본 명령은 SELECT와 normalization만 수행하며 INSERT/UPDATE/DELETE/flush/commit/row lock을 하지 않습니다. Production `--apply`는 별도 승인된 운영 작업으로 취급합니다.
+
+```bash
+python -m scripts.rebuild_bot_trading_pnl
+python -m scripts.rebuild_bot_trading_pnl --apply
+python -m scripts.run_bot_trading_pnl_worker --once
+```
+
+worker는 DB-only이며 주문 생성/조회/취소, Upbit, AI, Telegram 호출이 없습니다. `BOT_TRADING_PNL_ENABLED=false`가 rollout-safe 기본이고 interval 기본값은 300초입니다.
 
 AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 데이터만 읽으며 별도 Upbit ticker나 외부 API를 호출하지 않습니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
 

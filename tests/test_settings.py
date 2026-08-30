@@ -55,6 +55,8 @@ def test_openai_trade_defaults() -> None:
     assert settings.live_order_reconciliation_enabled is True
     assert settings.live_order_reconciliation_interval_seconds == 60
     assert settings.live_order_reconciliation_batch_size == 20
+    assert settings.bot_trading_pnl_enabled is False
+    assert settings.bot_trading_pnl_interval_seconds == 300
 
 
 @pytest.mark.parametrize(
@@ -72,6 +74,16 @@ def test_reconciliation_settings_reject_unbounded_polling(field, value) -> None:
             _env_file=None,
             database_url="postgresql://test:test@localhost/test",
             **{field: value},
+        )
+
+
+@pytest.mark.parametrize("value", [0, 29, 86401])
+def test_bot_pnl_worker_interval_rejects_unbounded_values(value) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            bot_trading_pnl_interval_seconds=value,
         )
 
 

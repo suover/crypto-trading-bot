@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     live_order_reconciliation_interval_seconds: int = Field(default=60, ge=10, le=3600)
     live_order_reconciliation_batch_size: int = Field(default=20, ge=1, le=100)
 
+    # DB-only derived bot execution accounting. Disabled until explicitly rolled out.
+    bot_trading_pnl_enabled: bool = False
+    bot_trading_pnl_interval_seconds: int = Field(default=300, ge=30, le=86400)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

@@ -38,9 +38,10 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | `telegram-listener`       | 상시 실행      | Telegram 승인/거절 버튼 콜백 수신               |
 | `mock-order-retry-worker` | 상시 실행      | 실패한 모의 주문 및 알림 재시도 처리                 |
 | `live-order-reconciliation-worker` | 상시 실행 | 기존 LIVE 주문 상태 GET 및 DB 동기화 (MOCK에서는 대기) |
+| `bot-trading-pnl-worker` | 상시 실행 | 실제 bot LIVE 체결의 DB-only FIFO 회계 (기본 비활성) |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
-기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`를 실행합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
+기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `bot-trading-pnl-worker`를 실행합니다. Bot PnL worker는 설정 기본값에서 DB 접근 없이 대기합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
 
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
@@ -401,6 +402,21 @@ AI 분석 pipeline은 계좌 스냅샷과 Market Universe 구축 후, AI 추천 
 `known_total_value_krw`는 현금과 가격을 확보한 position만 합친 알려진 범위의 가치입니다. 모든 양수 보유자산 가격을 확보한 `COMPLETE`에서만 `total_value_krw`가 저장되며, `PARTIAL`에서는 누락 자산을 0원으로 간주하지 않고 `total_value_krw=NULL`로 둡니다. 가격 평가 가능 여부와 cost basis/PnL 계산 가능 여부는 별개입니다. 현금-only portfolio의 position 원가와 미실현손익은 0이고 percentage는 NULL입니다.
 
 Portfolio snapshot은 실제 Upbit 계좌 전체의 현재 평가로 수동 거래·입출금·봇 외 거래 영향도 포함할 수 있습니다. `OrderFill`은 봇이 생성한 LIVE 주문의 체결 ledger이므로 Portfolio valuation을 봇 성과로 해석하면 안 됩니다.
+
+### Bot Trading PnL accounting
+
+Bot Trading PnL은 계좌 전체 Portfolio와 분리된 derived accounting입니다. `LIVE_DONE`과 실제 부분 체결 후 취소된 `LIVE_EXECUTED_CANCELLED` 중 유효한 `executed_quantity`, `executed_funds_krw`, `paid_fee`만 사용합니다. 요청 `amount_krw`/`quantity`/`price`, 추천 금액, ticker, Portfolio 평가는 원가나 실현손익에 사용하지 않습니다.
+
+봇 BUY 수수료는 BOT FIFO lot 원가에 포함하고, 봇 SELL 수수료는 매도대금에서 차감합니다. BOT BUY lineage로 원가를 확인할 수 있는 SELL 수량만 recognized realized PnL에 포함합니다. 기존·수동 보유분을 봇이 SELL한 경우는 `UNMATCHED`, 일부만 연결되면 `PARTIALLY_MATCHED`이며 알 수 없는 원가를 0으로 추정하지 않습니다. 이 FIFO는 fungible coin의 실물 식별이 아니라 bot execution 사이의 명시적인 accounting attribution policy입니다.
+
+기본 rebuild 명령은 read-only dry-run이고 `--apply`만 derived table을 transaction 안에서 교체합니다. 둘 다 Upbit/OpenAI/Telegram/network를 호출하지 않습니다.
+
+```bash
+python -m scripts.rebuild_bot_trading_pnl
+python -m scripts.rebuild_bot_trading_pnl --apply
+```
+
+자동 worker는 `BOT_TRADING_PNL_ENABLED=false`가 기본이며, 활성화하면 기본 300초 간격으로 source signature가 변한 scope만 재계산합니다. 별도 PostgreSQL advisory lock을 사용하며 거래/reconciliation transaction과 결합되지 않습니다.
 
 기본 설정은 `LIVE_ORDER_RECONCILIATION_ENABLED=true`, interval 60초, batch 20개입니다. `ORDER_EXECUTION_MODE`가 LIVE가 아니거나 enabled=false이면 조회 없이 대기합니다. 신규 주문용 LIVE 활성화 플래그를 끄더라도 모드가 LIVE인 동안 기존 주문의 상태 추적은 계속 가능합니다.
 

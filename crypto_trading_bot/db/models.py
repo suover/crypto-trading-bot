@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -689,6 +690,267 @@ class OrderFill(Base):
     raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BotInventoryLot(Base):
+    __tablename__ = "bot_inventory_lots"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_buy_order_log_id", name="uq_bot_inventory_lots_source_buy_order"
+        ),
+        CheckConstraint(
+            "acquired_quantity > 0 AND remaining_quantity >= 0",
+            name="ck_bot_inventory_lots_quantities",
+        ),
+        CheckConstraint(
+            "gross_buy_funds_krw > 0 AND buy_fee_krw >= 0",
+            name="ck_bot_inventory_lots_buy_values",
+        ),
+        CheckConstraint(
+            "original_cost_basis_krw > 0 AND remaining_cost_basis_krw >= 0",
+            name="ck_bot_inventory_lots_cost_basis",
+        ),
+        Index(
+            "ix_bot_inventory_lots_scope_fifo",
+            "user_id",
+            "exchange",
+            "market",
+            "opened_at",
+            "source_buy_order_log_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_buy_order_log_id: Mapped[int] = mapped_column(
+        ForeignKey("order_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    acquired_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    remaining_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    gross_buy_funds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    buy_fee_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    original_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    remaining_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    unit_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class BotSellRealization(Base):
+    __tablename__ = "bot_sell_realizations"
+    __table_args__ = (
+        UniqueConstraint(
+            "source_sell_order_log_id",
+            name="uq_bot_sell_realizations_source_sell_order",
+        ),
+        CheckConstraint(
+            "status IN ('FULLY_MATCHED', 'PARTIALLY_MATCHED', 'UNMATCHED')",
+            name="ck_bot_sell_realizations_status",
+        ),
+        CheckConstraint(
+            "sold_quantity > 0 AND matched_quantity >= 0 AND unmatched_quantity >= 0 "
+            "AND matched_quantity + unmatched_quantity = sold_quantity",
+            name="ck_bot_sell_realizations_quantities",
+        ),
+        CheckConstraint(
+            "gross_sell_proceeds_krw > 0 AND sell_fee_krw >= 0",
+            name="ck_bot_sell_realizations_sell_values",
+        ),
+        Index(
+            "ix_bot_sell_realizations_scope_order",
+            "user_id",
+            "exchange",
+            "market",
+            "source_sell_order_log_id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_sell_order_log_id: Mapped[int] = mapped_column(
+        ForeignKey("order_logs.id", ondelete="CASCADE"), nullable=False
+    )
+    sold_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    gross_sell_proceeds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    sell_fee_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    matched_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    unmatched_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    recognized_gross_proceeds_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    recognized_sell_fee_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    recognized_net_proceeds_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    recognized_cost_basis_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    recognized_realized_pnl_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    attribution_method: Mapped[str] = mapped_column(
+        String(30), nullable=False, server_default=text("'BOT_FIFO'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class BotPnlMatch(Base):
+    __tablename__ = "bot_pnl_matches"
+    __table_args__ = (
+        UniqueConstraint(
+            "sell_realization_id", "buy_lot_id", name="uq_bot_pnl_matches_sell_lot"
+        ),
+        CheckConstraint(
+            "matched_quantity > 0 AND allocated_buy_cost_basis_krw >= 0",
+            name="ck_bot_pnl_matches_quantity_cost",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    sell_realization_id: Mapped[int] = mapped_column(
+        ForeignKey("bot_sell_realizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    buy_lot_id: Mapped[int] = mapped_column(
+        ForeignKey("bot_inventory_lots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    matched_quantity: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    allocated_buy_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    allocated_sell_gross_proceeds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    allocated_sell_fee_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    allocated_sell_net_proceeds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    realized_pnl_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class BotTradingPnlSummary(Base):
+    __tablename__ = "bot_trading_pnl_summaries"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "exchange", name="uq_bot_trading_pnl_summaries_user_exchange"
+        ),
+        CheckConstraint(
+            "accounting_status IN ('COMPLETE', 'PARTIAL')",
+            name="ck_bot_trading_pnl_summaries_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    processed_order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    processed_buy_order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    processed_sell_order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    gross_buy_funds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    gross_sell_funds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    total_buy_fees_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    total_sell_fees_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    total_fees_krw: Mapped[Decimal] = mapped_column(Numeric(30, 10), nullable=False)
+    recognized_sell_proceeds_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    recognized_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    recognized_realized_pnl_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    recognized_realized_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    open_bot_cost_basis_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    open_bot_lot_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    fully_matched_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    partially_matched_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    unmatched_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    winning_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    losing_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    breakeven_sell_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    win_rate_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    incomplete_order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    accounting_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_order_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_signature: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_last_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
     )
 
 
