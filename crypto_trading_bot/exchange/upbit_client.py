@@ -14,6 +14,7 @@ from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
     UpbitOrderNotFoundError,
     UpbitOrderOperationError,
+    UpbitOrderReadError,
     UpbitOrderRejectedError,
     UpbitSafeError,
 )
@@ -201,6 +202,19 @@ class UpbitClient:
         )
         return self._decode_order_response(response, "get_order")
 
+    def get_order_chance(self, market: str) -> dict[str, Any]:
+        normalized_market = market.strip()
+        if not normalized_market:
+            raise ValueError("market must not be empty")
+        response = self._request_order(
+            method="GET",
+            path="/v1/orders/chance",
+            operation="get_order_chance",
+            params={"market": normalized_market},
+            read_only=True,
+        )
+        return self._decode_read_response(response, "get_order_chance")
+
     def _create_order(
         self,
         body: dict[str, str],
@@ -230,6 +244,7 @@ class UpbitClient:
         operation: str,
         params: dict[str, str] | None = None,
         json_body: dict[str, str] | None = None,
+        read_only: bool = False,
     ) -> httpx.Response:
         authorization_params = params if params is not None else json_body
         try:
@@ -261,8 +276,19 @@ class UpbitClient:
             response.raise_for_status()
             return response
         except httpx.HTTPStatusError as error:
+            if read_only:
+                classified = self._classify_http_error(error, operation)
+                raise UpbitOrderReadError(classified.safe_error) from None
             raise self._classify_http_error(error, operation) from None
         except (httpx.TimeoutException, httpx.TransportError) as error:
+            if read_only:
+                raise UpbitOrderReadError(
+                    UpbitSafeError(
+                        error_type=type(error).__name__,
+                        operation=operation,
+                        message="Upbit read-only response was not confirmed",
+                    )
+                ) from None
             raise UpbitOrderAmbiguousError(
                 UpbitSafeError(
                     error_type=type(error).__name__,
@@ -294,6 +320,33 @@ class UpbitClient:
                     operation=operation,
                     status_code=response.status_code,
                     message="Upbit returned an unexpected response type",
+                )
+            )
+        return data
+
+    @staticmethod
+    def _decode_read_response(
+        response: httpx.Response,
+        operation: str,
+    ) -> dict[str, Any]:
+        try:
+            data = response.json()
+        except ValueError, TypeError:
+            raise UpbitOrderReadError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an invalid read-only response",
+                )
+            ) from None
+        if not isinstance(data, dict):
+            raise UpbitOrderReadError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an unexpected read-only response type",
                 )
             )
         return data

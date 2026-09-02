@@ -290,6 +290,36 @@ docker compose logs --tail=100 operational-alert-worker
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
 
+## Upbit Order Chance rollout
+
+Order Chance preflight는 `LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false`가 기본입니다.
+비활성화 상태에서는 기존 LIVE 실행과 account/ticker 검증이 그대로 유지됩니다. 활성화하면
+기존 OrderLog/identifier recovery 이후 새 주문을 만들 때만 인증된
+`GET /v1/orders/chance`를 호출하고, 실패하거나 응답이 불완전하면 fail-closed합니다.
+
+추천 단계의 5,000원 기준은 네트워크 없는 conservative pre-screen입니다. 활성화된 실제
+LIVE 실행에서는 chance의 current min/max/type/balance/fee가 canonical preflight이며,
+내부 건별·일일 BUY 한도는 별도로 계속 적용됩니다. 승인된 BUY 금액이나 SELL 수량은
+자동으로 줄이지 않습니다.
+
+Production rollout은 다음 순서를 사용합니다.
+
+1. 배포 후 `LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false`를 확인합니다.
+2. `bash scripts/check_server_runtime_safety.sh --production-live`를 실행합니다.
+3. 아래 read-only 진단 결과를 검토합니다.
+4. `.env`를 백업한 뒤 운영자가 flag를 `true`로 변경합니다.
+5. Telegram listener 등 설정을 읽는 필요한 container를 recreate합니다.
+6. runtime safety와 container 로그를 다시 확인합니다.
+7. 별도 인위적 주문 없이 자연스러운 다음 Telegram 승인 주문에서 관찰합니다.
+
+```bash
+python -m scripts.check_upbit_order_chance --market KRW-BTC
+```
+
+진단은 `GET /v1/orders/chance`만 호출하며 `/v1/orders`, `/v1/orders/test`, DB write,
+Telegram, OpenAI 호출을 하지 않습니다. Chance GET 실패는 주문 생성 전이므로
+`LIVE_FAILED`; 실제 POST 응답 불명확만 기존 `LIVE_UNKNOWN`입니다.
+
 ## Production scheduler 관리
 
 Production scheduled LIVE에서는 scheduler profile을 명시해 실행합니다.

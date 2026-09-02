@@ -19,6 +19,8 @@ def test_production_runtime_safety_mode_preserves_limited_live_policy() -> None:
     assert 'LIVE_ORDER_CONFIRMATION" == "ENABLE_LIVE_UPBIT_ORDERS"' in script
     assert "DAILY_MAX_ORDER_AMOUNT_KRW가 유효한 양의 정수가 아닙니다" in script
     assert "더 보수적인 유효한 안전 정책입니다" in script
+    assert "Upbit Order Chance preflight가 활성화되어 있습니다" in script
+    assert "current order-condition preflight는 사용하지 않습니다" in script
     assert 'fail_check "production-live: DAILY_MAX_ORDER_AMOUNT_KRW가 MAX' not in script
     assert "LIVE_ORDER_CONFIRMATION=${" not in script
 

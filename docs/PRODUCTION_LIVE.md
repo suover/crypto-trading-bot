@@ -166,6 +166,42 @@ Worker에는 PostgreSQL password와 Telegram token만 mount하며 Upbit/OpenAI s
 제공하지 않습니다. Pipeline 실패의 즉시 Telegram 시도는 worker enable flag와 무관하게
 유지됩니다.
 
+## Upbit Order Chance / LIVE execution preflight
+
+기본값 `LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false`에서는 기존 LIVE 실행 경로가 유지됩니다.
+활성화 시 Telegram 승인과 기존 안전검증, local OrderLog 확인, identifier recovery가 먼저
+실행되고 새로운 `POST /v1/orders` 직전에만 `GET /v1/orders/chance`를 조회합니다.
+
+- 시장가 BUY는 `bid_types`의 `price`, BUY minimum/maximum, `bid_account.balance`,
+  `bid_fee`에 따른 `승인금액 + 수수료 reserve`를 검증합니다.
+- 시장가 SELL은 `ask_types`의 `market`, `ask_account.balance`, 실행 직전 ticker 평가액과
+  SELL minimum, `ask_fee`를 검증합니다.
+- deprecated `market.order_types`는 사용하지 않습니다.
+- 내부 `MAX_ORDER_AMOUNT_KRW`와 `DAILY_MAX_ORDER_AMOUNT_KRW`는 계속 별도로 적용됩니다.
+- 승인금액/수량은 잔고나 수수료 조건에 맞춰 자동 축소하지 않습니다.
+
+성공/실패 audit에는 normalized rule summary와 정형 reason code만 저장합니다. Chance raw
+account payload, Authorization, JWT, API key는 저장하거나 출력하지 않습니다. Chance fee는
+preflight 정보일 뿐 `paid_fee`, OrderFill, Portfolio, Bot PnL의 source가 아닙니다.
+
+Production rollout:
+
+```bash
+# 1. 배포 후 flag=false 및 runtime 확인
+bash scripts/check_server_runtime_safety.sh --production-live
+
+# 2. 인증 GET-only 진단
+python -m scripts.check_upbit_order_chance --market KRW-BTC
+
+# 3. 결과 검토와 .env 백업 후 운영자가 flag=true로 변경
+# 4. 필요한 container recreate 후 재확인
+bash scripts/check_server_runtime_safety.sh --production-live
+```
+
+Chance GET의 401/403/429/5xx/timeout/malformed 응답은 주문 전 실패이므로
+`actual_order_executed=false`, `LIVE_FAILED`입니다. Chance가 통과한 뒤 실제 POST 응답이
+불명확한 경우에는 기존 identifier recovery와 `LIVE_UNKNOWN` semantics를 유지합니다.
+
 ## 기존 LIVE 주문 자동 reconciliation
 
 `live-order-reconciliation-worker`는 이미 존재하는 LIVE·UPBIT 주문 중 `LIVE_PLACED`, `LIVE_WAIT`, `LIVE_UNKNOWN`만 조회합니다. UUID가 없으면 `recommendation-{recommendation_id}`로 기존 주문을 GET합니다. **새 BUY/SELL 생성, 자동 재주문, 자동 주문 취소, 추천/Telegram 승인 생성, AI 호출은 하지 않습니다.** MOCK retry worker와 역할이 분리되어 있습니다.

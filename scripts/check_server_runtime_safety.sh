@@ -151,6 +151,12 @@ if [[ "$MODE" == "production-live" ]]; then
   else
     warn "production-live: OPERATIONAL_ALERTING_ENABLED가 false입니다. 거래에는 직접 영향 없이 운영 경고만 비활성화됩니다."
   fi
+  LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED="$(get_env_value LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED)"
+  if [[ "${LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED:-false}" == "true" ]]; then
+    pass_check "production-live: Upbit Order Chance preflight가 활성화되어 있습니다."
+  else
+    warn "production-live: Upbit Order Chance preflight가 비활성화되어 있습니다. 기존 LIVE 주문 검증은 유지되지만 거래소 current order-condition preflight는 사용하지 않습니다."
+  fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."
 else

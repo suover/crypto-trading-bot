@@ -20,7 +20,9 @@ from crypto_trading_bot.services.live_order_execution_service import (
     recommendation_status_for_live_order,
 )
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
+    UpbitOrderAmbiguousError,
     UpbitOrderNotFoundError,
+    UpbitOrderReadError,
     UpbitSafeError,
 )
 from crypto_trading_bot.services.live_order_safety import (
@@ -38,6 +40,7 @@ def set_live_order_env(
     *,
     enabled: str = "true",
     confirmation: str = LIVE_ORDER_CONFIRMATION_TEXT,
+    chance_preflight: str = "false",
 ) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
     monkeypatch.setenv("UPBIT_ACCESS_KEY", "access")
@@ -50,6 +53,7 @@ def set_live_order_env(
     monkeypatch.setenv("DAILY_MAX_ORDER_AMOUNT_KRW", "30000")
     monkeypatch.setenv("LIVE_ORDER_ENABLED", enabled)
     monkeypatch.setenv("LIVE_ORDER_CONFIRMATION", confirmation)
+    monkeypatch.setenv("LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED", chance_preflight)
 
     clear_settings_cache()
 
@@ -159,6 +163,32 @@ class FakeSession:
         self.refreshed_objects.append(instance)
 
 
+def build_order_chance(
+    *,
+    bid_balance: str = "100000",
+    ask_balance: str = "1",
+    bid_min: str = "5000",
+    ask_min: str = "5000",
+    max_total: str = "1000000000",
+    bid_fee: str = "0.0005",
+) -> dict[str, Any]:
+    return {
+        "bid_fee": bid_fee,
+        "ask_fee": "0.0005",
+        "market": {
+            "id": "KRW-BTC",
+            "order_sides": ["ask", "bid"],
+            "bid_types": ["limit", "price"],
+            "ask_types": ["limit", "market"],
+            "bid": {"currency": "KRW", "min_total": bid_min},
+            "ask": {"currency": "KRW", "min_total": ask_min},
+            "max_total": max_total,
+        },
+        "bid_account": {"currency": "KRW", "balance": bid_balance},
+        "ask_account": {"currency": "BTC", "balance": ask_balance},
+    }
+
+
 class FakeUpbitClient:
     def __init__(
         self,
@@ -166,6 +196,8 @@ class FakeUpbitClient:
         tickers: list[dict[str, Any]] | None = None,
         remote_order: dict[str, Any] | None = None,
         created_order_response: dict[str, Any] | None = None,
+        order_chance: dict[str, Any] | None = None,
+        order_chance_error: Exception | None = None,
     ) -> None:
         self.buy_orders: list[dict[str, Any]] = []
         self.sell_orders: list[dict[str, Any]] = []
@@ -173,6 +205,9 @@ class FakeUpbitClient:
         self.remote_order = remote_order
         self.created_order_response = created_order_response
         self.account_calls = 0
+        self.order_chance = order_chance or build_order_chance()
+        self.order_chance_error = order_chance_error
+        self.order_chance_calls: list[str] = []
         self.tickers = (
             tickers
             if tickers is not None
@@ -184,6 +219,12 @@ class FakeUpbitClient:
     def get_accounts(self) -> list[dict[str, Any]]:
         self.account_calls += 1
         return self.accounts
+
+    def get_order_chance(self, market: str) -> dict[str, Any]:
+        self.order_chance_calls.append(market)
+        if self.order_chance_error is not None:
+            raise self.order_chance_error
+        return self.order_chance
 
     def get_tickers(self, markets: list[str]) -> list[dict[str, Any]]:
         self.ticker_calls.append(markets)
@@ -442,6 +483,8 @@ def test_execute_places_live_buy_order_and_records_order_log(
     assert order_log.status == LIVE_ORDER_STATUS
     assert order_log.exchange_order_id == "live-buy-order-uuid"
     assert order_log.raw_response["actual_order_executed"] is True
+    assert "preflight" not in order_log.raw_response
+    assert fake_upbit_client.order_chance_calls == []
 
 
 def test_execute_records_executed_cancel_without_duplicate_submission(
@@ -987,3 +1030,210 @@ def test_valid_ratio_remote_order_is_recovered_without_duplicate_submission(
     assert client.buy_orders == []
     assert client.sell_orders == []
     assert client.lookup_calls == [{"uuid": None, "identifier": "recommendation-1"}]
+
+
+def test_order_chance_enabled_buy_passes_without_changing_approved_amount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    recommendation = build_recommendation(recommended_amount_krw=Decimal("5000"))
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(order_chance=build_order_chance(bid_balance="5002.5"))
+    result = LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert client.order_chance_calls == ["KRW-BTC"]
+    assert client.buy_orders[0]["amount_krw"] == Decimal("5000")
+    assert result.order_log.amount_krw == Decimal("5000")
+    assert result.order_log.raw_response["preflight"]["result"] == "PASSED"
+    assert result.order_log.raw_response["preflight"]["fee_reserve_krw"] == "2.5000"
+    assert result.order_log.paid_fee is None
+    assert not any(isinstance(item, OrderFill) for item in session.added_objects)
+
+
+@pytest.mark.parametrize(
+    ("chance", "reason_code"),
+    [
+        (build_order_chance(bid_balance="4999.99"), "INSUFFICIENT_QUOTE_BALANCE"),
+        (build_order_chance(bid_balance="5002.49"), "INSUFFICIENT_FEE_RESERVE"),
+        (build_order_chance(bid_min="5000.01"), "BELOW_EXCHANGE_MINIMUM"),
+        (build_order_chance(max_total="4999.99"), "ABOVE_EXCHANGE_MAXIMUM"),
+    ],
+)
+def test_order_chance_buy_failure_persists_without_silent_clamp_or_post(
+    monkeypatch: pytest.MonkeyPatch,
+    chance: dict[str, Any],
+    reason_code: str,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    recommendation = build_recommendation(recommended_amount_krw=Decimal("5000"))
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(order_chance=chance)
+    result = LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert result.failed is True
+    assert result.unknown is False
+    assert result.order_log.status == "LIVE_FAILED"
+    assert result.order_log.amount_krw == Decimal("5000")
+    assert result.order_log.raw_response["actual_order_executed"] is False
+    assert result.order_log.raw_response["preflight"]["reason_code"] == reason_code
+    assert client.buy_orders == []
+    assert client.sell_orders == []
+
+
+def test_order_chance_sell_uses_chance_balance_without_get_accounts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    recommendation = build_recommendation(
+        action="SELL",
+        recommended_amount_krw=None,
+        recommended_quantity=Decimal("0.0001"),
+    )
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(
+        accounts=[{"currency": "BTC", "balance": "0"}],
+        order_chance=build_order_chance(ask_balance="0.0001"),
+    )
+    result = LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert client.account_calls == 0
+    assert client.sell_orders[0]["quantity"] == Decimal("0.0001")
+    assert result.order_log.quantity == Decimal("0.0001")
+    assert result.order_log.raw_response["preflight"]["fee_rate"] == "0.0005"
+
+
+@pytest.mark.parametrize(
+    ("quantity", "ticker", "chance", "reason_code"),
+    [
+        (
+            Decimal("0.0001"),
+            "100000000",
+            build_order_chance(ask_balance="0.00009999"),
+            "INSUFFICIENT_BASE_BALANCE",
+        ),
+        (
+            Decimal("0.00004"),
+            "100000000",
+            build_order_chance(ask_min="5000"),
+            "BELOW_EXCHANGE_MINIMUM",
+        ),
+    ],
+)
+def test_order_chance_sell_failure_preserves_approved_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+    quantity: Decimal,
+    ticker: str,
+    chance: dict[str, Any],
+    reason_code: str,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    recommendation = build_recommendation(
+        action="SELL", recommended_amount_krw=None, recommended_quantity=quantity
+    )
+    session = FakeSession(recommendation)
+    client = FakeUpbitClient(
+        tickers=[{"market": "KRW-BTC", "trade_price": ticker}],
+        order_chance=chance,
+    )
+    result = LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert result.failed is True
+    assert result.order_log.quantity == quantity
+    assert result.order_log.raw_response["preflight"]["reason_code"] == reason_code
+    assert client.sell_orders == []
+    assert client.account_calls == 0
+
+
+def test_order_chance_api_failure_is_live_failed_not_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    error = UpbitOrderReadError(
+        UpbitSafeError(
+            error_type="ReadTimeout",
+            operation="get_order_chance",
+            message="safe read failure",
+        )
+    )
+    session = FakeSession(build_recommendation())
+    client = FakeUpbitClient(order_chance_error=error)
+    result = LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert result.order_log.status == "LIVE_FAILED"
+    assert result.failed is True
+    assert result.unknown is False
+    assert result.order_log.raw_response["preflight"]["reason_code"] == (
+        "ORDER_CHANCE_API_FAILED"
+    )
+    assert client.buy_orders == []
+
+
+def test_existing_order_and_identifier_recovery_precede_order_chance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    recommendation = build_recommendation()
+    existing = OrderLog(
+        id=99,
+        recommendation_id=1,
+        user_id=1,
+        trading_mode="LIVE",
+        exchange="UPBIT",
+        market="KRW-BTC",
+        side="BUY",
+        order_type="MARKET",
+        amount_krw=Decimal("5000"),
+        status="LIVE_PLACED",
+        raw_response={},
+    )
+    local_client = FakeUpbitClient()
+    local_result = LiveOrderExecutionService(
+        session=FakeSession(recommendation, existing), upbit_client=local_client
+    ).execute(1)
+    assert local_result.already_executed is True
+    assert local_client.order_chance_calls == []
+
+    remote_client = FakeUpbitClient(remote_order={"uuid": "remote", "state": "done"})
+    remote_result = LiveOrderExecutionService(
+        session=FakeSession(build_recommendation()), upbit_client=remote_client
+    ).execute(1)
+    assert remote_result.recovered is True
+    assert remote_client.order_chance_calls == []
+
+
+def test_post_ambiguity_remains_live_unknown_after_successful_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+
+    class AmbiguousCreateClient(FakeUpbitClient):
+        def create_market_buy_order(self, *args, **kwargs):
+            raise UpbitOrderAmbiguousError(
+                UpbitSafeError(
+                    error_type="ReadTimeout",
+                    operation="create_order",
+                    message="create response was not confirmed",
+                )
+            )
+
+    session = FakeSession(build_recommendation())
+    client = AmbiguousCreateClient(order_chance=build_order_chance())
+    result = LiveOrderExecutionService(
+        session=session,
+        upbit_client=client,
+        reconciliation_attempts=1,
+        sleep_fn=lambda _: None,
+    ).execute(1)
+    assert result.order_log.status == "LIVE_UNKNOWN"
+    assert result.unknown is True
+    assert result.order_log.raw_response["preflight"]["result"] == "PASSED"
+
+
+def test_order_chance_does_not_relax_internal_daily_buy_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_live_order_env(monkeypatch, chance_preflight="true")
+    session = FakeSession(
+        build_recommendation(recommended_amount_krw=Decimal("6000")),
+        today_live_order_amount_krw=Decimal("25000"),
+    )
+    client = FakeUpbitClient(order_chance=build_order_chance())
+    with pytest.raises(LiveOrderExecutionError, match="Daily live order amount"):
+        LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
+    assert client.order_chance_calls == ["KRW-BTC"]
+    assert client.buy_orders == []

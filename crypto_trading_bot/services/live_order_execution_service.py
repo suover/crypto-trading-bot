@@ -21,6 +21,7 @@ from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
     UpbitOrderNotFoundError,
     UpbitOrderOperationError,
+    UpbitOrderReadError,
     UpbitOrderRejectedError,
 )
 from crypto_trading_bot.exchange.upbit_market_data_provider import (
@@ -34,6 +35,11 @@ from crypto_trading_bot.services.live_order_safety import (
 )
 from crypto_trading_bot.services.live_execution_ledger_service import (
     LiveExecutionLedgerService,
+)
+from crypto_trading_bot.services.upbit_order_chance_service import (
+    UpbitOrderChancePreflightService,
+    UpbitOrderChanceValidationError,
+    parse_upbit_order_chance,
 )
 
 
@@ -232,6 +238,26 @@ class LiveOrderExecutionService:
         plan = self.build_execution_plan(recommendation.id)
         self._revalidate_dynamic_market_at_execution(plan)
         plan = self._revalidate_sell_at_execution(plan)
+        try:
+            preflight_audit = self._run_order_chance_preflight(plan)
+        except UpbitOrderReadError:
+            return self._persist_preflight_failure(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                reason_code="ORDER_CHANCE_API_FAILED",
+                commit=commit,
+            )
+        except UpbitOrderChanceValidationError as error:
+            return self._persist_preflight_failure(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                reason_code=error.reason_code,
+                commit=commit,
+            )
         self._validate_daily_live_order_limit(recommendation.user_id, plan)
         self._validate_sell_balance(plan)
 
@@ -248,6 +274,7 @@ class LiveOrderExecutionService:
                     executed=False,
                     identifier=identifier,
                     safe_error=error.safe_error.as_dict(),
+                    preflight=preflight_audit,
                 ),
                 error_message=str(error),
                 commit=commit,
@@ -259,6 +286,7 @@ class LiveOrderExecutionService:
                 approval_request_id=approval_request_id,
                 identifier=identifier,
                 create_error=error,
+                preflight=preflight_audit,
                 commit=commit,
             )
 
@@ -280,6 +308,7 @@ class LiveOrderExecutionService:
                     identifier=identifier,
                     create_response=create_response,
                     safe_error=error.safe_error.as_dict(),
+                    preflight=preflight_audit,
                 ),
                 error_message=str(error),
                 commit=commit,
@@ -293,6 +322,7 @@ class LiveOrderExecutionService:
             order_response=order_response,
             recovered=False,
             create_response=create_response,
+            preflight=preflight_audit,
             commit=commit,
         )
 
@@ -304,6 +334,7 @@ class LiveOrderExecutionService:
         approval_request_id: int | None,
         identifier: str,
         create_error: UpbitOrderAmbiguousError,
+        preflight: dict[str, Any] | None,
         commit: bool,
     ) -> LiveOrderExecutionResult:
         last_error: UpbitOrderOperationError = create_error
@@ -323,6 +354,7 @@ class LiveOrderExecutionService:
                 order_response=order_response,
                 recovered=True,
                 create_response=None,
+                preflight=preflight,
                 commit=commit,
             )
         return self._persist_result(
@@ -335,6 +367,7 @@ class LiveOrderExecutionService:
                 executed=None,
                 identifier=identifier,
                 safe_error=last_error.safe_error.as_dict(),
+                preflight=preflight,
             ),
             error_message=str(last_error),
             commit=commit,
@@ -350,6 +383,7 @@ class LiveOrderExecutionService:
         order_response: dict[str, Any],
         recovered: bool,
         create_response: dict[str, Any] | None,
+        preflight: dict[str, Any] | None = None,
         commit: bool,
     ) -> LiveOrderExecutionResult:
         return self._persist_result(
@@ -366,6 +400,7 @@ class LiveOrderExecutionService:
                 recovered=recovered,
                 create_response=create_response,
                 order_status_response=order_response,
+                preflight=preflight,
             ),
             error_message=None,
             recovered=recovered,
@@ -444,8 +479,9 @@ class LiveOrderExecutionService:
         create_response: dict[str, Any] | None = None,
         order_status_response: dict[str, Any] | None = None,
         safe_error: dict[str, Any] | None = None,
+        preflight: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        return {
+        audit = {
             "actual_order_executed": executed,
             "identifier": identifier,
             "recovered_by_identifier": recovered,
@@ -453,6 +489,64 @@ class LiveOrderExecutionService:
             "order_status_response": order_status_response,
             "safe_error": safe_error,
         }
+        if preflight is not None:
+            audit["preflight"] = preflight
+        return audit
+
+    def _run_order_chance_preflight(
+        self, plan: LiveOrderExecutionPlan
+    ) -> dict[str, Any] | None:
+        if not get_settings().live_order_chance_preflight_enabled:
+            return None
+        raw_chance = self.upbit_client.get_order_chance(plan.market)
+        chance = parse_upbit_order_chance(raw_chance, expected_market=plan.market)
+        preflight = UpbitOrderChancePreflightService()
+        if plan.action == "BUY":
+            if plan.amount_krw is None:
+                raise UpbitOrderChanceValidationError("INVALID_CHANCE_RESPONSE")
+            return preflight.validate_buy(
+                chance,
+                market=plan.market,
+                approved_amount_krw=plan.amount_krw,
+            ).audit
+        if plan.quantity is None or plan.amount_krw is None:
+            raise UpbitOrderChanceValidationError("INVALID_CHANCE_RESPONSE")
+        return preflight.validate_sell(
+            chance,
+            market=plan.market,
+            approved_quantity=plan.quantity,
+            current_value_krw=plan.amount_krw,
+        ).audit
+
+    def _persist_preflight_failure(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        identifier: str,
+        reason_code: str,
+        commit: bool,
+    ) -> LiveOrderExecutionResult:
+        audit = UpbitOrderChancePreflightService().failed_audit(
+            market=plan.market, reason_code=reason_code
+        )
+        return self._persist_result(
+            recommendation=recommendation,
+            plan=plan,
+            approval_request_id=approval_request_id,
+            status=LIVE_ORDER_FAILED_STATUS,
+            exchange_order_id=None,
+            audit=self._audit(
+                executed=False,
+                identifier=identifier,
+                preflight=audit,
+            ),
+            error_message=(
+                f"Upbit order chance preflight failed. reason_code={reason_code}"
+            ),
+            commit=commit,
+        )
 
     @staticmethod
     def _existing_result(
@@ -517,7 +611,7 @@ class LiveOrderExecutionService:
         )
 
     def _validate_sell_balance(self, plan: LiveOrderExecutionPlan) -> None:
-        if plan.action != "SELL":
+        if plan.action != "SELL" or get_settings().live_order_chance_preflight_enabled:
             return
         if plan.quantity is None:
             raise LiveOrderExecutionError("SELL live order requires quantity")
@@ -573,7 +667,10 @@ class LiveOrderExecutionService:
                 f"Current ticker price must be finite and positive. market={plan.market}"
             )
         current_amount = plan.quantity * current_price
-        if current_amount < MIN_UPBIT_ORDER_AMOUNT_KRW:
+        if (
+            not get_settings().live_order_chance_preflight_enabled
+            and current_amount < MIN_UPBIT_ORDER_AMOUNT_KRW
+        ):
             raise LiveOrderExecutionError(
                 "Current estimated SELL amount is below minimum Upbit order amount. "
                 f"amount_krw={current_amount}, minimum={MIN_UPBIT_ORDER_AMOUNT_KRW}"
@@ -756,6 +853,8 @@ class LiveOrderExecutionService:
                 )
             if plan.amount_krw is None:
                 raise LiveOrderSafetyError("Dynamic BUY amount is missing")
+            if settings.live_order_chance_preflight_enabled:
+                return
             krw_account = next(
                 (
                     account

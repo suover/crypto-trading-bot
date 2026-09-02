@@ -41,5 +41,9 @@ class UpbitOrderRejectedError(UpbitOrderOperationError):
     pass
 
 
+class UpbitOrderReadError(UpbitOrderOperationError):
+    """Read-only private API failure; no order creation ambiguity exists."""
+
+
 class UpbitOrderAmbiguousError(UpbitOrderOperationError):
     pass

@@ -24,6 +24,7 @@ SETTINGS_ENV_NAMES = (
     "UPBIT_ACCESS_KEY_FILE",
     "UPBIT_SECRET_KEY",
     "UPBIT_SECRET_KEY_FILE",
+    "LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED",
     "LIVE_ORDER_RECONCILIATION_ENABLED",
     "LIVE_ORDER_RECONCILIATION_INTERVAL_SECONDS",
     "LIVE_ORDER_RECONCILIATION_BATCH_SIZE",
@@ -56,6 +57,7 @@ def test_openai_trade_defaults() -> None:
     assert settings.openai_reasoning_effort == "medium"
     assert settings.market_universe_mode == "STATIC"
     assert settings.live_dynamic_market_enabled is False
+    assert settings.live_order_chance_preflight_enabled is False
     assert settings.analysis_timeframe_list == ["15m", "60m", "240m", "1d"]
     assert settings.live_order_reconciliation_enabled is True
     assert settings.live_order_reconciliation_interval_seconds == 60

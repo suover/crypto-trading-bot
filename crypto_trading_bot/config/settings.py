@@ -79,6 +79,7 @@ class Settings(BaseSettings):
 
     live_order_enabled: bool = False
     live_order_confirmation: str = Field(default="", repr=False)
+    live_order_chance_preflight_enabled: bool = False
 
     # Read-only status polling; the worker stays idle in non-LIVE mode.
     live_order_reconciliation_enabled: bool = True

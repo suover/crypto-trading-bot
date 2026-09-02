@@ -487,6 +487,26 @@ python -m scripts.check_operational_alerts
 
 이 진단은 DB SELECT만 수행하며 Telegram, Upbit, OpenAI를 호출하지 않습니다.
 
+### Upbit Order Chance LIVE preflight
+
+`LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false`가 기본이므로 배포만으로 기존 LIVE 주문
+경로는 바뀌지 않습니다. 활성화하면 Telegram 승인 이후 기존 idempotency와 identifier
+recovery를 먼저 수행하고, 새 주문 POST 직전에 Upbit `GET /v1/orders/chance`로 현재
+주문 유형, 최소·최대 금액, 주문 가능 잔고와 수수료율을 검증합니다.
+
+BUY 승인금액과 SELL 승인수량은 chance 결과에 맞춰 자동 축소하지 않습니다. 조건 미충족,
+응답 누락 또는 chance GET 실패는 `LIVE_FAILED`로 기록하고 주문을 생성하지 않습니다.
+실제 POST 이후 응답이 불명확한 경우에만 기존 `LIVE_UNKNOWN`/identifier recovery가
+그대로 적용됩니다. 추천 단계의 5,000원 상수는 네트워크 없는 conservative pre-screen이고,
+preflight 활성화 시 실제 실행의 current canonical rule은 chance 응답입니다.
+
+다음 진단은 인증된 `GET /v1/orders/chance` 한 번만 수행하며 주문/test 주문, DB,
+Telegram, OpenAI를 사용하지 않습니다.
+
+```powershell
+python -m scripts.check_upbit_order_chance --market KRW-BTC
+```
+
 ### 서버 런타임 안전 점검
 
 ```powershell

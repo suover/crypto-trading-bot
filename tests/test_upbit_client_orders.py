@@ -10,6 +10,7 @@ from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
     UpbitOrderNotFoundError,
+    UpbitOrderReadError,
     UpbitOrderRejectedError,
 )
 
@@ -281,6 +282,78 @@ def test_get_order_uses_authenticated_lookup_parameter(
 def test_get_order_rejects_invalid_lookup_values(lookup: dict[str, str]) -> None:
     with pytest.raises(ValueError):
         UpbitClient().get_order(**lookup)
+
+
+def test_get_order_chance_uses_authenticated_market_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get(url: str, **request: object) -> FakeResponse:
+        captured.update({"url": url, **request})
+        return FakeResponse({"market": {"id": "KRW-BTC"}})
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", fake_get)
+    result = UpbitClient().get_order_chance(" KRW-BTC ")
+    assert result == {"market": {"id": "KRW-BTC"}}
+    assert captured["url"] == "https://api.upbit.com/v1/orders/chance"
+    assert captured["params"] == {"market": "KRW-BTC"}
+    token = str(captured["headers"]["Authorization"]).removeprefix("Bearer ")
+    payload = jwt.decode(
+        token,
+        "test-secret-key-for-jwt-hs512-unit-test-only-0123456789abcdef0123456789abcdef",
+        algorithms=["HS512"],
+    )
+    assert "query_hash" in payload
+
+
+def test_get_order_chance_rejects_blank_market() -> None:
+    with pytest.raises(ValueError, match="market must not be empty"):
+        UpbitClient().get_order_chance(" ")
+
+
+@pytest.mark.parametrize("status", [400, 429, 500, 503])
+def test_get_order_chance_http_failure_is_read_only_error(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    request = httpx.Request("GET", "https://api.upbit.com/v1/orders/chance")
+    response = httpx.Response(status, request=request, json={"error": {}})
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.get",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderReadError) as caught:
+        UpbitClient().get_order_chance("KRW-BTC")
+    assert caught.value.safe_error.operation == "get_order_chance"
+    assert caught.value.safe_error.status_code == status
+
+
+@pytest.mark.parametrize(
+    "error", [httpx.ReadTimeout("timeout"), httpx.ConnectError("connection")]
+)
+def test_get_order_chance_transport_failure_is_not_ambiguous(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    def fake_get(*args: object, **kwargs: object) -> object:
+        raise error
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", fake_get)
+    with pytest.raises(UpbitOrderReadError):
+        UpbitClient().get_order_chance("KRW-BTC")
+
+
+@pytest.mark.parametrize("content", [b"not-json", b"[]"])
+def test_get_order_chance_rejects_invalid_or_non_object_response(
+    monkeypatch: pytest.MonkeyPatch, content: bytes
+) -> None:
+    request = httpx.Request("GET", "https://api.upbit.com/v1/orders/chance")
+    response = httpx.Response(200, request=request, content=content)
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.get",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderReadError):
+        UpbitClient().get_order_chance("KRW-BTC")
 
 
 def test_get_order_404_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
