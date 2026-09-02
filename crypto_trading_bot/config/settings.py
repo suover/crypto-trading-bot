@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     operational_alert_max_retries: int = Field(default=3, ge=0, le=10)
     operational_alert_retry_delays_minutes: str = "1,5,15"
 
+    # Read-only Upbit account activity collection. Rollout is explicitly opt-in.
+    account_activity_sync_enabled: bool = False
+    account_activity_sync_interval_seconds: int = Field(default=300, ge=30, le=86400)
+    account_activity_sync_overlap_hours: int = Field(default=168, ge=1, le=720)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

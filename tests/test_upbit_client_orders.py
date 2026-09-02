@@ -356,6 +356,113 @@ def test_get_order_chance_rejects_invalid_or_non_object_response(
         UpbitClient().get_order_chance("KRW-BTC")
 
 
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "path", "expected_params"),
+    [
+        (
+            "get_closed_orders",
+            {
+                "start_time": "2026-09-01T00:00:00+00:00",
+                "end_time": "2026-09-02T00:00:00+00:00",
+            },
+            "/v1/orders/closed",
+            {
+                "start_time": "2026-09-01T00:00:00+00:00",
+                "end_time": "2026-09-02T00:00:00+00:00",
+                "limit": 1000,
+                "order_by": "asc",
+            },
+        ),
+        (
+            "get_deposits",
+            {"page": 2},
+            "/v1/deposits",
+            {"page": 2, "limit": 100, "order_by": "desc"},
+        ),
+        (
+            "get_withdrawals",
+            {"page": 3},
+            "/v1/withdraws",
+            {"page": 3, "limit": 100, "order_by": "desc"},
+        ),
+        (
+            "get_deposits",
+            {"to": "deposit-cursor"},
+            "/v1/deposits",
+            {"to": "deposit-cursor", "limit": 100, "order_by": "desc"},
+        ),
+    ],
+)
+def test_account_activity_methods_use_authenticated_get_only(
+    monkeypatch, method_name, kwargs, path, expected_params
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_get(url: str, **request: object) -> FakeResponse:
+        captured.update({"url": url, **request})
+        return FakeResponse([])
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", fake_get)
+    assert getattr(UpbitClient(), method_name)(**kwargs) == []
+    assert captured["url"] == f"https://api.upbit.com{path}"
+    assert captured["params"] == expected_params
+    token = str(captured["headers"]["Authorization"]).removeprefix("Bearer ")
+    payload = jwt.decode(
+        token,
+        "test-secret-key-for-jwt-hs512-unit-test-only-0123456789abcdef0123456789abcdef",
+        algorithms=["HS512"],
+    )
+    assert "query_hash" in payload
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("get_closed_orders", {"start_time": "", "end_time": "x"}),
+        ("get_closed_orders", {"start_time": "x", "end_time": "y", "limit": 1001}),
+        ("get_deposits", {"page": 0}),
+        ("get_deposits", {"to": " "}),
+        ("get_withdrawals", {"order_by": "sideways"}),
+    ],
+)
+def test_account_activity_methods_reject_invalid_parameters(
+    method_name, kwargs
+) -> None:
+    with pytest.raises(ValueError):
+        getattr(UpbitClient(), method_name)(**kwargs)
+
+
+@pytest.mark.parametrize("status", [401, 403, 429, 500])
+def test_account_activity_http_errors_are_read_only(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    request = httpx.Request("GET", "https://api.upbit.com/v1/deposits")
+    response = httpx.Response(status, request=request, json={"error": {}})
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.get",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderReadError):
+        UpbitClient().get_deposits()
+
+
+@pytest.mark.parametrize("content", [b"bad-json", b"{}", b"[1]"])
+def test_account_activity_methods_reject_malformed_list_response(
+    monkeypatch: pytest.MonkeyPatch, content: bytes
+) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("GET", "https://api.upbit.com/v1/withdraws"),
+        content=content,
+    )
+    monkeypatch.setattr(
+        "crypto_trading_bot.exchange.upbit_client.httpx.get",
+        lambda *args, **kwargs: response,
+    )
+    with pytest.raises(UpbitOrderReadError):
+        UpbitClient().get_withdrawals()
+
+
 def test_get_order_404_is_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     request = httpx.Request("GET", "https://api.upbit.com/v1/order")
     response = httpx.Response(

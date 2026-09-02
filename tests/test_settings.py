@@ -33,6 +33,9 @@ SETTINGS_ENV_NAMES = (
     "LIVE_ORDER_STALE_ALERT_AFTER_SECONDS",
     "OPERATIONAL_ALERT_MAX_RETRIES",
     "OPERATIONAL_ALERT_RETRY_DELAYS_MINUTES",
+    "ACCOUNT_ACTIVITY_SYNC_ENABLED",
+    "ACCOUNT_ACTIVITY_SYNC_INTERVAL_SECONDS",
+    "ACCOUNT_ACTIVITY_SYNC_OVERLAP_HOURS",
 )
 
 
@@ -69,6 +72,9 @@ def test_openai_trade_defaults() -> None:
     assert settings.live_order_stale_alert_after_seconds == 600
     assert settings.operational_alert_max_retries == 3
     assert settings.operational_alert_retry_delay_list == [1, 5, 15]
+    assert settings.account_activity_sync_enabled is False
+    assert settings.account_activity_sync_interval_seconds == 300
+    assert settings.account_activity_sync_overlap_hours == 168
 
 
 @pytest.mark.parametrize(

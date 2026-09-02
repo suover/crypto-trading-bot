@@ -38,10 +38,11 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | `telegram-listener`       | 상시 실행      | Telegram 승인/거절 버튼 콜백 수신               |
 | `mock-order-retry-worker` | 상시 실행      | 실패한 모의 주문 및 알림 재시도 처리                 |
 | `live-order-reconciliation-worker` | 상시 실행 | 기존 LIVE 주문 상태 GET 및 DB 동기화 (MOCK에서는 대기) |
+| `account-activity-sync-worker` | 상시 실행 | Upbit 종료 주문·입금·출금 GET 및 source ledger 동기화 (기본 비활성) |
 | `bot-trading-pnl-worker` | 상시 실행 | 실제 bot LIVE 체결의 DB-only FIFO 회계 (기본 비활성) |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
-기본 서버/프로덕션 유사 런타임 명령인 `docker compose up -d --build`는 `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `bot-trading-pnl-worker`를 실행합니다. Bot PnL worker는 설정 기본값에서 DB 접근 없이 대기합니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
+기본 서버/프로덕션 유사 런타임에는 `account-activity-sync-worker`도 포함되지만 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false` 기본값에서는 DB/API 접근 없이 대기합니다. 배포만으로 authenticated polling이 시작되지 않습니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
 
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
@@ -506,6 +507,29 @@ Telegram, OpenAI를 사용하지 않습니다.
 ```powershell
 python -m scripts.check_upbit_order_chance --market KRW-BTC
 ```
+
+### Account Activity Ledger
+
+`AccountActivity`는 Upbit의 종료 주문, 입금, 출금 이력을 정규화해 저장하는 read-only
+source ledger입니다. 수동 BUY/SELL은 계좌 안의 자산 교환이므로 외부 cash-flow가 아니며,
+입금은 `IN`, 출금은 `OUT`으로만 표시합니다. 처리 중이거나 실패한 입출금을 성과상 완료
+cash-flow로 인정하는 계산은 이번 기능에 없습니다. Crypto 입출금도 현재 가격으로 소급해
+KRW 가치를 만들지 않습니다.
+
+기본 명령은 read-only API와 DB SELECT만 수행하는 dry-run입니다. DB 반영은 명시적인
+`--apply`에서만 수행합니다. 초기 기준 데이터가 없으면 timezone이 포함된 `--start-at`을
+지정해야 합니다.
+
+```powershell
+python -m scripts.check_upbit_account_activity_access
+python -m scripts.sync_account_activities --start-at 2026-08-01T00:00:00+09:00
+python -m scripts.sync_account_activities --start-at 2026-08-01T00:00:00+09:00 --apply
+```
+
+`ACCOUNT_ACTIVITY_SYNC_ENABLED=false`가 기본입니다. Ledger는 기존 OrderLog,
+Execution Ledger, Bot FIFO/PnL, Portfolio snapshot을 수정하지 않습니다. Bot 외부 주문과
+입출금을 수집하지만 external depletion attribution과 Portfolio Performance 계산은 후속
+기능입니다.
 
 ### 서버 런타임 안전 점검
 

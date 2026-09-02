@@ -774,6 +774,142 @@ class OrderFill(Base):
     )
 
 
+class AccountActivity(Base):
+    __tablename__ = "account_activities"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "exchange",
+            "source_type",
+            "exchange_activity_id",
+            name="uq_account_activities_owner_source_activity",
+        ),
+        CheckConstraint(
+            "source_type IN ('UPBIT_CLOSED_ORDER', 'UPBIT_DEPOSIT', "
+            "'UPBIT_WITHDRAWAL')",
+            name="ck_account_activities_source_type",
+        ),
+        CheckConstraint(
+            "activity_type IN ('ORDER', 'DEPOSIT', 'WITHDRAWAL')",
+            name="ck_account_activities_activity_type",
+        ),
+        CheckConstraint(
+            "origin IN ('BOT', 'EXTERNAL', 'ACCOUNT_EXTERNAL')",
+            name="ck_account_activities_origin",
+        ),
+        CheckConstraint(
+            "cash_flow_direction IS NULL OR cash_flow_direction IN ('IN', 'OUT')",
+            name="ck_account_activities_cash_flow_direction",
+        ),
+        Index(
+            "ix_account_activities_owner_occurred",
+            "user_id",
+            "exchange",
+            "occurred_at",
+        ),
+        Index(
+            "ix_account_activities_type_occurred",
+            "activity_type",
+            "occurred_at",
+        ),
+        Index(
+            "ix_account_activities_origin_type_occurred",
+            "origin",
+            "activity_type",
+            "occurred_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    origin: Mapped[str] = mapped_column(String(30), nullable=False)
+    exchange_activity_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    market: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    side: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    order_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    identifier: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str] = mapped_column(String(40), nullable=False)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    executed_quantity: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    executed_funds_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    paid_fee: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    fee_currency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    cash_flow_direction: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    source_metadata: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AccountActivitySyncState(Base):
+    __tablename__ = "account_activity_sync_states"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "exchange",
+            "source_type",
+            name="uq_account_activity_sync_states_owner_source",
+        ),
+        CheckConstraint(
+            "sync_status IN ('NEVER_SYNCED', 'COMPLETE', 'FAILED', 'OUT_OF_SCOPE')",
+            name="ck_account_activity_sync_states_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    sync_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'NEVER_SYNCED'")
+    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    coverage_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    coverage_end_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_safe_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class BotInventoryLot(Base):
     __tablename__ = "bot_inventory_lots"
     __table_args__ = (

@@ -160,6 +160,39 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "scripts.run_live_order_reconciliation_worker"]
 
+  account-activity-sync-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: crypto-trading-account-activity-sync-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: crypto_trading_bot
+      DATABASE_USER: trading_user
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      OPENAI_API_KEY: ""
+      OPENAI_API_KEY_FILE: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_BOT_TOKEN_FILE: ""
+      UPBIT_ACCESS_KEY_FILE: /run/secrets/upbit_access_key
+      UPBIT_SECRET_KEY_FILE: /run/secrets/upbit_secret_key
+      TZ: Asia/Seoul
+    secrets:
+      - postgres_password
+      - upbit_access_key
+      - upbit_secret_key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "scripts.run_account_activity_sync_worker"]
+
   bot-trading-pnl-worker:
     build:
       context: .

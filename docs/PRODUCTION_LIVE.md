@@ -273,7 +273,25 @@ BOT_TRADING_PNL_INTERVAL_SECONDS=300
 
 기본 rebuild는 read-only dry-run입니다. `--apply`는 Production DB에 Codex가 실행하지 않으며 별도 승인과 백업 후 수행합니다. worker는 별도 advisory lock 아래 source signature가 바뀐 경우만 transaction 단위로 derived table을 rebuild하며, 거래·reconciliation 실패/rollback 경로와 결합되지 않습니다.
 
-Known limitation: Upbit 앱에서 직접 한 거래와 입출금은 import하지 않습니다. 과거 bot BUY 물량을 사용자가 수동 SELL/출금하면 execution ledger만으로 external depletion을 완벽히 알 수 없습니다. BOT FIFO는 fungible asset의 물리적 coin 식별이 아니라 bot-created execution 사이의 attribution policy입니다.
+Account Activity Ledger는 Upbit 앱이나 다른 client가 만든 종료 주문과 입출금을 별도
+source ledger로 import할 수 있습니다. 그러나 아직 Bot FIFO inventory를 외부 SELL/출금에
+맞춰 차감하지 않으며 Portfolio Performance도 계산하지 않습니다. Crypto 입출금의
+event-time KRW valuation도 후속 기능입니다. 따라서 과거 bot BUY 물량의 external depletion은
+Bot PnL에 아직 반영되지 않습니다. BOT FIFO는 fungible asset의 물리적 coin 식별이 아니라
+bot-created execution 사이의 attribution policy입니다.
+
+## Account Activity source ledger
+
+`ACCOUNT_ACTIVITY_SYNC_ENABLED=false`가 rollout-safe 기본값입니다. Worker는 PostgreSQL과
+Upbit read credential만 사용하고 OpenAI/Telegram secret은 받지 않습니다. 종료 주문은
+7일 이하 window로 나누며 1,000건에 닿으면 window를 재분할합니다. 입출금은 최신순 100건
+조회 후 마지막 UUID를 `to` cursor로 이어가며 반복 cursor를 실패 처리합니다. 각 source의 coverage와 `COMPLETE`, `FAILED`,
+`OUT_OF_SCOPE` 상태는 독립적으로 저장됩니다.
+
+ORDER는 계좌 활동이지만 external cash-flow가 아닙니다. DEPOSIT은 `IN`, WITHDRAWAL은
+`OUT` source event이며, 상태가 완료됐다는 성과 계층의 해석은 아직 하지 않습니다.
+Account Activity sync는 OrderLog, recommendation, Execution Ledger, Bot PnL 및 Portfolio
+Snapshot을 수정하지 않습니다.
 
 UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고 미확정으로 남습니다. 반복 오류 로그는 운영자가 조사해야 합니다. cursor는 재시작하면 초기화되며, 여러 사용자별 Upbit 계정을 라우팅하는 worker가 아니라 현재 배포에 설정된 단일 Upbit 계정용입니다.
 

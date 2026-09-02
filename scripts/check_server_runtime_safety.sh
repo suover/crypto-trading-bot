@@ -133,6 +133,7 @@ container_running "crypto-trading-telegram-listener" && pass_check "telegram-lis
 container_running "crypto-trading-mock-order-retry-worker" && pass_check "mock-order-retry-worker가 실행 중입니다." || fail_check "mock-order-retry-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-bot-trading-pnl-worker" && pass_check "bot-trading-pnl-worker가 실행 중입니다." || fail_check "bot-trading-pnl-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-operational-alert-worker" && pass_check "operational-alert-worker가 실행 중입니다." || fail_check "operational-alert-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-account-activity-sync-worker" && pass_check "account-activity-sync-worker가 실행 중입니다." || fail_check "account-activity-sync-worker가 실행 중이 아닙니다."
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
@@ -156,6 +157,12 @@ if [[ "$MODE" == "production-live" ]]; then
     pass_check "production-live: Upbit Order Chance preflight가 활성화되어 있습니다."
   else
     warn "production-live: Upbit Order Chance preflight가 비활성화되어 있습니다. 기존 LIVE 주문 검증은 유지되지만 거래소 current order-condition preflight는 사용하지 않습니다."
+  fi
+  ACCOUNT_ACTIVITY_SYNC_ENABLED="$(get_env_value ACCOUNT_ACTIVITY_SYNC_ENABLED)"
+  if [[ "${ACCOUNT_ACTIVITY_SYNC_ENABLED:-false}" == "true" ]]; then
+    pass_check "production-live: Account Activity sync가 활성화되어 있습니다."
+  else
+    warn "production-live: Account Activity sync가 비활성화되어 있습니다. 거래 실행에는 영향이 없습니다."
   fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."

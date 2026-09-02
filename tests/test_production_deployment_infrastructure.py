@@ -63,6 +63,7 @@ def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
         "telegram-listener",
         "mock-order-retry-worker",
         "live-order-reconciliation-worker",
+        "account-activity-sync-worker",
         "bot-trading-pnl-worker",
         "operational-alert-worker",
         "ai-trade-analysis",
@@ -225,3 +226,70 @@ def test_operational_alert_diagnostic_is_read_only_and_network_free() -> None:
     ):
         assert forbidden not in diagnostic
     assert "session.rollback()" in diagnostic
+
+
+def test_account_activity_worker_is_opt_in_get_only_and_minimum_secret() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  account-activity-sync-worker:", 1)[1].split(
+        "  bot-trading-pnl-worker:", 1
+    )[0]
+    assert "restart: unless-stopped" in service
+    assert "scripts.run_account_activity_sync_worker" in service
+    secret_block = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    for required in ("postgres_password", "upbit_access_key", "upbit_secret_key"):
+        assert required in secret_block
+    assert "openai_api_key" not in secret_block
+    assert "telegram_bot_token" not in secret_block
+    for variable in ("OPENAI_API_KEY_FILE", "TELEGRAM_BOT_TOKEN_FILE"):
+        assert f'{variable}: ""' in service
+
+    worker = read_repository_file("scripts/run_account_activity_sync_worker.py")
+    assert "account_activity_sync_enabled" in worker
+    for forbidden in (
+        "create_market_buy_order",
+        "create_market_sell_order",
+        "withdraws/coin",
+        "withdraws/krw",
+        "Telegram",
+        "OpenAI",
+    ):
+        assert forbidden not in worker
+
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "account-activity-sync-worker" in block
+
+
+def test_account_activity_scripts_do_not_contain_write_endpoints_or_other_systems() -> (
+    None
+):
+    combined = "\n".join(
+        read_repository_file(path)
+        for path in (
+            "scripts/sync_account_activities.py",
+            "scripts/check_upbit_account_activity_access.py",
+            "scripts/run_account_activity_sync_worker.py",
+            "crypto_trading_bot/services/account_activity_sync_service.py",
+        )
+    )
+    for forbidden in (
+        "create_market_buy_order",
+        "create_market_sell_order",
+        "/v1/withdraws/coin",
+        "/v1/withdraws/krw",
+        "cancel_order",
+        "TelegramClient",
+        "OpenAI",
+        "BotInventoryLot",
+        "PortfolioPositionSnapshot",
+        "LiveExecutionLedgerService",
+    ):
+        assert forbidden not in combined

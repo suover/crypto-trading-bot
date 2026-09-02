@@ -215,6 +215,111 @@ class UpbitClient:
         )
         return self._decode_read_response(response, "get_order_chance")
 
+    def get_closed_orders(
+        self,
+        *,
+        start_time: str,
+        end_time: str,
+        limit: int = 1000,
+        order_by: str = "asc",
+    ) -> list[dict[str, Any]]:
+        if not start_time.strip() or not end_time.strip():
+            raise ValueError("start_time and end_time must not be blank")
+        self._validate_private_list_options(limit, 1000, order_by)
+        return self._request_private_list(
+            path="/v1/orders/closed",
+            operation="get_closed_orders",
+            params={
+                "start_time": start_time,
+                "end_time": end_time,
+                "limit": limit,
+                "order_by": order_by,
+            },
+        )
+
+    def get_deposits(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 100,
+        order_by: str = "desc",
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._get_account_activity_page(
+            path="/v1/deposits",
+            operation="get_deposits",
+            page=page,
+            limit=limit,
+            order_by=order_by,
+            to=to,
+        )
+
+    def get_withdrawals(
+        self,
+        *,
+        page: int = 1,
+        limit: int = 100,
+        order_by: str = "desc",
+        to: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._get_account_activity_page(
+            path="/v1/withdraws",
+            operation="get_withdrawals",
+            page=page,
+            limit=limit,
+            order_by=order_by,
+            to=to,
+        )
+
+    def _get_account_activity_page(
+        self,
+        *,
+        path: str,
+        operation: str,
+        page: int,
+        limit: int,
+        order_by: str,
+        to: str | None,
+    ) -> list[dict[str, Any]]:
+        if page < 1:
+            raise ValueError("page must be greater than 0")
+        self._validate_private_list_options(limit, 100, order_by)
+        params: dict[str, object] = {"limit": limit, "order_by": order_by}
+        if to is None:
+            params["page"] = page
+        elif not to.strip():
+            raise ValueError("to must not be blank")
+        else:
+            params["to"] = to
+        return self._request_private_list(
+            path=path,
+            operation=operation,
+            params=params,
+        )
+
+    def _request_private_list(
+        self,
+        *,
+        path: str,
+        operation: str,
+        params: Mapping[str, object],
+    ) -> list[dict[str, Any]]:
+        response = self._request_order(
+            method="GET",
+            path=path,
+            operation=operation,
+            params=params,
+            read_only=True,
+        )
+        return self._decode_read_list_response(response, operation)
+
+    @staticmethod
+    def _validate_private_list_options(limit: int, maximum: int, order_by: str) -> None:
+        if limit < 1 or limit > maximum:
+            raise ValueError(f"limit must be between 1 and {maximum}")
+        if order_by not in {"asc", "desc"}:
+            raise ValueError("order_by must be asc or desc")
+
     def _create_order(
         self,
         body: dict[str, str],
@@ -242,7 +347,7 @@ class UpbitClient:
         method: str,
         path: str,
         operation: str,
-        params: dict[str, str] | None = None,
+        params: Mapping[str, object] | None = None,
         json_body: dict[str, str] | None = None,
         read_only: bool = False,
     ) -> httpx.Response:
@@ -341,6 +446,33 @@ class UpbitClient:
                 )
             ) from None
         if not isinstance(data, dict):
+            raise UpbitOrderReadError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an unexpected read-only response type",
+                )
+            )
+        return data
+
+    @staticmethod
+    def _decode_read_list_response(
+        response: httpx.Response,
+        operation: str,
+    ) -> list[dict[str, Any]]:
+        try:
+            data = response.json()
+        except ValueError, TypeError:
+            raise UpbitOrderReadError(
+                UpbitSafeError(
+                    error_type="InvalidResponse",
+                    operation=operation,
+                    status_code=response.status_code,
+                    message="Upbit returned an invalid read-only response",
+                )
+            ) from None
+        if not isinstance(data, list) or any(not isinstance(row, dict) for row in data):
             raise UpbitOrderReadError(
                 UpbitSafeError(
                     error_type="InvalidResponse",
