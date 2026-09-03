@@ -275,10 +275,19 @@ BOT_TRADING_PNL_INTERVAL_SECONDS=300
 
 Account Activity Ledger는 Upbit 앱이나 다른 client가 만든 종료 주문과 입출금을 별도
 source ledger로 import할 수 있습니다. 그러나 아직 Bot FIFO inventory를 외부 SELL/출금에
-맞춰 차감하지 않으며 Portfolio Performance도 계산하지 않습니다. Crypto 입출금의
-event-time KRW valuation도 후속 기능입니다. 따라서 과거 bot BUY 물량의 external depletion은
+맞춰 차감하지 않습니다. Portfolio Performance는 완료된 DEPOSIT/WITHDRAWAL을 별도
+derived table에서 event-time KRW 평가합니다. 따라서 과거 bot BUY 물량의 external depletion은
 Bot PnL에 아직 반영되지 않습니다. BOT FIFO는 fungible asset의 물리적 coin 식별이 아니라
 bot-created execution 사이의 attribution policy입니다.
+
+## Portfolio Performance rollout
+
+`PORTFOLIO_PERFORMANCE_ENABLED=false`, interval 300초가 기본값이므로 배포만으로 public
+candle 조회나 derived DB write가 시작되지 않습니다. 먼저
+`python -m scripts.rebuild_portfolio_performance` dry-run을 확인하고 운영 `--apply`와 flag
+변경은 DB backup 및 별도 승인 후 수행합니다. Performance는 Modified Dietz와 100 기준
+index를 사용하며 PARTIAL period는 0%로 연결하지 않습니다. Worker는 DB 및 public Upbit
+1분봉 GET만 사용하고 주문/OpenAI/Telegram/private Upbit API와 격리됩니다.
 
 ## Account Activity source ledger
 
@@ -289,7 +298,8 @@ Upbit read credential만 사용하고 OpenAI/Telegram secret은 받지 않습니
 `OUT_OF_SCOPE` 상태는 독립적으로 저장됩니다.
 
 ORDER는 계좌 활동이지만 external cash-flow가 아닙니다. DEPOSIT은 `IN`, WITHDRAWAL은
-`OUT` source event이며, 상태가 완료됐다는 성과 계층의 해석은 아직 하지 않습니다.
+`OUT` source event입니다. 완료 상태의 성과 계층 해석은 Portfolio Performance derived
+accounting에서만 수행하며 source ledger 자체를 변경하지 않습니다.
 Account Activity sync는 OrderLog, recommendation, Execution Ledger, Bot PnL 및 Portfolio
 Snapshot을 수정하지 않습니다.
 

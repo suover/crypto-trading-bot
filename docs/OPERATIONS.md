@@ -165,6 +165,29 @@ python -m scripts.run_bot_trading_pnl_worker --once
 
 worker는 DB-only이며 주문 생성/조회/취소, Upbit, AI, Telegram 호출이 없습니다. `BOT_TRADING_PNL_ENABLED=false`가 rollout-safe 기본이고 interval 기본값은 300초입니다.
 
+## Portfolio Performance accounting
+
+계좌 성과는 `COMPLETE PortfolioSnapshot`과 완료된 Account Activity 입출금을 사용합니다.
+ORDER는 제외하고, crypto flow는 event 시각 이전에 완전히 종료된 Upbit 1분봉 종가로
+평가합니다. 여기서 event 시각은 `created_at/occurred_at`이 아니라 완료 `done_at/completed_at`입니다.
+Period inclusion은 `(previous_snapshot, current_snapshot]`입니다. Deposit과 withdrawal coverage 또는 가격이 불완전하면 해당 period와 이후
+cumulative chain은 `PARTIAL`입니다.
+
+Modified Dietz period return을 100 기준 performance index로 연결하므로 외부 입출금이
+high-water mark/drawdown/MDD를 직접 왜곡하지 않습니다. 먼저 dry-run을 확인하고 운영 반영은
+별도 승인과 백업 후에만 `--apply`로 수행합니다.
+KRW high-water mark/drawdown은 최초 COMPLETE NAV에 index를 적용한 조정값이며 raw NAV가
+아닙니다.
+
+```bash
+python -m scripts.rebuild_portfolio_performance
+python -m scripts.rebuild_portfolio_performance --apply
+docker compose logs --tail=100 portfolio-performance-worker
+```
+
+`PORTFOLIO_PERFORMANCE_ENABLED=false`가 배포 기본값입니다. Worker는 PostgreSQL secret만
+mount하며 Upbit private key, OpenAI, Telegram secret을 받지 않습니다.
+
 AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 데이터만 읽으며 별도 Upbit ticker나 외부 API를 호출하지 않습니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
 
 `COMPLETE`는 KRW와 모든 양수 보유자산의 동일-pipeline 가격을 확보했다는 뜻입니다. `PARTIAL`의 `known_total_value_krw`는 알려진 범위만 합한 값이며 전체 계좌 총자산이 아닙니다. `total_value_krw`는 PARTIAL에서 NULL입니다. 가격은 모두 있어도 cost basis가 하나라도 없으면 valuation은 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.

@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Any
 
 from crypto_trading_bot.exchange.market_data import (
@@ -115,9 +116,24 @@ class UpbitMarketDataProvider:
         return self.client.get_orderbooks(markets, count=count)
 
     def get_minute_candles(
-        self, market: str, unit: int, count: int
+        self,
+        market: str,
+        unit: int,
+        count: int,
+        to: datetime | str | None = None,
     ) -> list[dict[str, Any]]:
-        return self.client.get_minute_candles(market=market, unit=unit, count=count)
+        if to is None:
+            return self.client.get_minute_candles(
+                market=market,
+                unit=unit,
+                count=count,
+            )
+        return self.client.get_minute_candles(
+            market=market,
+            unit=unit,
+            count=count,
+            to=to,
+        )
 
     def get_day_candles(self, market: str, count: int) -> list[dict[str, Any]]:
         return self.client.get_day_candles(market, count=count)

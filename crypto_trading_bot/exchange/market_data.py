@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
@@ -55,7 +56,11 @@ class ExchangeMarketDataProvider(Protocol):
     ) -> list[dict[str, Any]]: ...
 
     def get_minute_candles(
-        self, market: str, unit: int, count: int
+        self,
+        market: str,
+        unit: int,
+        count: int,
+        to: datetime | str | None = None,
     ) -> list[dict[str, Any]]: ...
 
     def get_day_candles(self, market: str, count: int) -> list[dict[str, Any]]: ...

@@ -214,8 +214,9 @@ class PortfolioValuationService:
                 if currency in duplicate_candidate_assets
                 else candidate_by_asset.get(currency)
             )
-            supported = candidate is not None and self._trading_supported(candidate)
-            market = candidate.market if supported else None
+            # A persisted same-pipeline ticker is valuation evidence even when
+            # trading policy disallows new orders for the market.
+            market = candidate.market if candidate is not None else None
             market_snapshot = (
                 market_snapshot_by_market.get(market) if market is not None else None
             )
@@ -401,22 +402,6 @@ class PortfolioValuationService:
             )
             .order_by(AnalysisRun.id.desc())
             .limit(1)
-        )
-
-    @staticmethod
-    def _trading_supported(candidate: MarketUniverseCandidate) -> bool:
-        feature_data = candidate.feature_data
-        if (
-            isinstance(feature_data, dict)
-            and feature_data.get("trading_supported") is False
-        ):
-            return False
-        event_data = candidate.market_event_data
-        if not isinstance(event_data, dict):
-            return True
-        raw_event = event_data.get("raw")
-        return not (
-            isinstance(raw_event, dict) and raw_event.get("trading_supported") is False
         )
 
     @staticmethod

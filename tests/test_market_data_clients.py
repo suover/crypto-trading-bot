@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -51,6 +52,42 @@ def test_upbit_dynamic_public_endpoints(monkeypatch: pytest.MonkeyPatch) -> None
             {"params": {"market": "KRW-BTC", "count": 50}, "timeout": 5.0},
         ),
     ]
+
+
+def test_upbit_minute_candles_support_timezone_aware_to(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def get(url: str, **kwargs: Any) -> Response:
+        captured.update(url=url, **kwargs)
+        return Response([])
+
+    monkeypatch.setattr("crypto_trading_bot.exchange.upbit_client.httpx.get", get)
+    client = UpbitClient(candle_request_interval_seconds=0)
+    client.get_minute_candles(
+        "KRW-BTC",
+        unit=1,
+        count=10,
+        to=datetime(
+            2026,
+            9,
+            3,
+            12,
+            34,
+            56,
+            tzinfo=timezone(timedelta(hours=9)),
+        ),
+    )
+
+    assert captured["url"].endswith("/v1/candles/minutes/1")
+    assert captured["params"] == {
+        "market": "KRW-BTC",
+        "count": 10,
+        "to": "2026-09-03T03:34:56+00:00",
+    }
+    with pytest.raises(ValueError, match="timezone-aware"):
+        client.get_minute_candles("KRW-BTC", to=datetime(2026, 9, 3, 12, 34, 56))
 
 
 def test_upbit_public_429_is_paced_and_retried(

@@ -65,6 +65,7 @@ def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
         "live-order-reconciliation-worker",
         "account-activity-sync-worker",
         "bot-trading-pnl-worker",
+        "portfolio-performance-worker",
         "operational-alert-worker",
         "ai-trade-analysis",
         "ai-trade-scheduler",
@@ -174,6 +175,48 @@ def test_bot_pnl_worker_is_db_only_default_runtime_and_deploy_managed() -> None:
     worker = read_repository_file("scripts/run_bot_trading_pnl_worker.py")
     for forbidden in ("UpbitClient", "OpenAI", "Telegram", "requests", "httpx"):
         assert forbidden not in worker
+
+
+def test_portfolio_performance_worker_is_opt_in_and_minimum_secret() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  portfolio-performance-worker:", 1)[1].split(
+        "  operational-alert-worker:", 1
+    )[0]
+    assert "profiles:" not in service
+    assert "restart: unless-stopped" in service
+    assert "scripts.run_portfolio_performance_worker" in service
+    secret_block = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    assert "postgres_password" in secret_block
+    for forbidden_secret in (
+        "upbit_access_key",
+        "upbit_secret_key",
+        "openai_api_key",
+        "telegram_bot_token",
+    ):
+        assert forbidden_secret not in secret_block
+    worker = read_repository_file("scripts/run_portfolio_performance_worker.py")
+    assert "portfolio_performance_enabled" in worker
+    for forbidden in (
+        "create_market_buy_order",
+        "create_market_sell_order",
+        "Telegram",
+        "OpenAI",
+    ):
+        assert forbidden not in worker
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "portfolio-performance-worker" in block
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    assert "PORTFOLIO_PERFORMANCE_ENABLED" in safety
+    assert "거래 실행에는 영향이 없습니다" in safety
 
 
 def test_operational_alert_worker_is_minimum_secret_default_runtime() -> None:

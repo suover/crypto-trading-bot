@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
 from decimal import Decimal
 from hashlib import sha512
 from time import monotonic, sleep
@@ -617,6 +618,7 @@ class UpbitClient:
         market: str,
         unit: int = 15,
         count: int = 50,
+        to: datetime | str | None = None,
     ) -> list[dict[str, Any]]:
         allowed_units = {1, 3, 5, 10, 15, 30, 60, 240}
 
@@ -626,12 +628,21 @@ class UpbitClient:
         if count < 1 or count > 200:
             raise ValueError("count must be between 1 and 200")
 
+        params: dict[str, object] = {"market": market, "count": count}
+        if isinstance(to, datetime):
+            if to.tzinfo is None or to.utcoffset() is None:
+                raise ValueError("to datetime must be timezone-aware")
+            params["to"] = to.astimezone(UTC).isoformat(timespec="seconds")
+        elif isinstance(to, str):
+            if not to.strip():
+                raise ValueError("to must not be empty")
+            params["to"] = to.strip()
+        elif to is not None:
+            raise ValueError("to must be a datetime, string, or None")
+
         return self._request_public_list(
             f"/v1/candles/minutes/{unit}",
-            params={
-                "market": market,
-                "count": count,
-            },
+            params=params,
             response_name="candle",
             candle_group=True,
         )

@@ -40,6 +40,7 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | `live-order-reconciliation-worker` | 상시 실행 | 기존 LIVE 주문 상태 GET 및 DB 동기화 (MOCK에서는 대기) |
 | `account-activity-sync-worker` | 상시 실행 | Upbit 종료 주문·입금·출금 GET 및 source ledger 동기화 (기본 비활성) |
 | `bot-trading-pnl-worker` | 상시 실행 | 실제 bot LIVE 체결의 DB-only FIFO 회계 (기본 비활성) |
+| `portfolio-performance-worker` | 상시 실행 | 외부 입출금 영향을 제거한 계좌 성과 계산 (기본 비활성) |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
 기본 서버/프로덕션 유사 런타임에는 `account-activity-sync-worker`도 포함되지만 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false` 기본값에서는 DB/API 접근 없이 대기합니다. 배포만으로 authenticated polling이 시작되지 않습니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
@@ -404,6 +405,38 @@ AI 분석 pipeline은 계좌 스냅샷과 Market Universe 구축 후, AI 추천 
 
 Portfolio snapshot은 실제 Upbit 계좌 전체의 현재 평가로 수동 거래·입출금·봇 외 거래 영향도 포함할 수 있습니다. `OrderFill`은 봇이 생성한 LIVE 주문의 체결 ledger이므로 Portfolio valuation을 봇 성과로 해석하면 안 됩니다.
 
+거래 eligibility와 valuation eligibility는 분리됩니다. 신규 BUY 금지 또는 거래 경고
+자산도 같은 pipeline의 실제 KRW ticker가 유효하면 평가할 수 있습니다. ticker가 없거나
+유효하지 않으면 기존처럼 `PARTIAL`이며 0원으로 추정하지 않습니다.
+
+### Portfolio Performance accounting
+
+Portfolio Performance는 계좌 전체 `COMPLETE` NAV에서 완료된 외부 입출금만 제거하는
+derived accounting이며 Bot Trading PnL과 별개입니다. `ORDER`는 계좌 내부 교환이라
+cash-flow가 아니고, deposit `ACCEPTED`와 withdrawal `DONE`만 반영합니다. KRW는 원금액,
+crypto는 Upbit `done_at`으로 저장된 `completed_at` 전에 완전히 종료된 가장 가까운 1분봉
+종가로 KRW 평가합니다. `occurred_at`은 요청 생성 시각일 뿐 성과 cash-flow 시각으로
+사용하지 않습니다. 완료 상태인데 `completed_at`이 없으면 `PARTIAL`입니다.
+현재 가격이나 미래 candle로 보충하지 않으며 가격·activity coverage가 불완전하면 period는
+`PARTIAL`입니다.
+
+중간 NAV가 없는 현재 snapshot 주기에는 strict TWR가 불가능하므로 Modified Dietz를
+사용합니다. `r=(V_end-V_start-ΣC)/(V_start+Σ(w*C))`, `w`는 cash-flow 시점부터 period
+종료까지 남은 시간 비율입니다. 100에서 시작하는 cash-flow-neutral performance index를
+연결해 cumulative return, high-water mark, drawdown, MDD를 계산합니다. 불완전 period를
+0%로 가정하지 않고 cumulative chain을 끊습니다.
+`high_water_mark_krw`와 `drawdown_krw`도 최초 COMPLETE NAV에 performance index를
+적용한 cash-flow-neutral KRW-equivalent이며 raw NAV 최고값이 아닙니다.
+
+```bash
+python -m scripts.rebuild_portfolio_performance
+python -m scripts.rebuild_portfolio_performance --apply
+```
+
+기본 명령은 DB write 없는 dry-run입니다. Worker는
+`PORTFOLIO_PERFORMANCE_ENABLED=false`가 기본이고, 활성화해도 DB와 public Upbit candle
+GET만 사용하며 주문·OpenAI·Telegram을 호출하지 않습니다.
+
 ### Bot Trading PnL accounting
 
 Bot Trading PnL은 계좌 전체 Portfolio와 분리된 derived accounting입니다. `LIVE_DONE`과 실제 부분 체결 후 취소된 `LIVE_EXECUTED_CANCELLED` 중 유효한 `executed_quantity`, `executed_funds_krw`, `paid_fee`만 사용합니다. 요청 `amount_krw`/`quantity`/`price`, 추천 금액, ticker, Portfolio 평가는 원가나 실현손익에 사용하지 않습니다.
@@ -528,8 +561,8 @@ python -m scripts.sync_account_activities --start-at 2026-08-01T00:00:00+09:00 -
 
 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false`가 기본입니다. Ledger는 기존 OrderLog,
 Execution Ledger, Bot FIFO/PnL, Portfolio snapshot을 수정하지 않습니다. Bot 외부 주문과
-입출금을 수집하지만 external depletion attribution과 Portfolio Performance 계산은 후속
-기능입니다.
+입출금을 수집하지만 external depletion attribution은 후속 기능입니다. Portfolio
+Performance는 완료 상태와 event-time 가격을 별도 derived table에서 해석합니다.
 
 ### 서버 런타임 안전 점검
 

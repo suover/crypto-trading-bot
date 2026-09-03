@@ -36,6 +36,8 @@ SETTINGS_ENV_NAMES = (
     "ACCOUNT_ACTIVITY_SYNC_ENABLED",
     "ACCOUNT_ACTIVITY_SYNC_INTERVAL_SECONDS",
     "ACCOUNT_ACTIVITY_SYNC_OVERLAP_HOURS",
+    "PORTFOLIO_PERFORMANCE_ENABLED",
+    "PORTFOLIO_PERFORMANCE_INTERVAL_SECONDS",
 )
 
 
@@ -75,6 +77,8 @@ def test_openai_trade_defaults() -> None:
     assert settings.account_activity_sync_enabled is False
     assert settings.account_activity_sync_interval_seconds == 300
     assert settings.account_activity_sync_overlap_hours == 168
+    assert settings.portfolio_performance_enabled is False
+    assert settings.portfolio_performance_interval_seconds == 300
 
 
 @pytest.mark.parametrize(

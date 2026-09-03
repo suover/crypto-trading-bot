@@ -183,12 +183,13 @@ docker compose --profile manual --profile scheduler build \
   live-order-reconciliation-worker \
   account-activity-sync-worker \
   bot-trading-pnl-worker \
+  portfolio-performance-worker \
   operational-alert-worker \
   ai-trade-analysis \
   ai-trade-scheduler
 
 CURRENT_STAGE="application runtime stop"
-docker compose stop telegram-listener mock-order-retry-worker live-order-reconciliation-worker account-activity-sync-worker bot-trading-pnl-worker operational-alert-worker
+docker compose stop telegram-listener mock-order-retry-worker live-order-reconciliation-worker account-activity-sync-worker bot-trading-pnl-worker portfolio-performance-worker operational-alert-worker
 echo "telegram-listener와 retry/reconciliation worker를 migration 직전에 중지했습니다."
 
 CURRENT_STAGE="database migration"
@@ -206,6 +207,7 @@ docker compose up -d --no-deps --force-recreate \
   live-order-reconciliation-worker \
   account-activity-sync-worker \
   bot-trading-pnl-worker \
+  portfolio-performance-worker \
   operational-alert-worker
 
 CURRENT_STAGE="scheduler recreate"
@@ -221,6 +223,7 @@ container_running "crypto-trading-mock-order-retry-worker" || fail "mock-order-r
 container_running "crypto-trading-live-order-reconciliation-worker" || fail "live-order-reconciliation-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-account-activity-sync-worker" || fail "account-activity-sync-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-bot-trading-pnl-worker" || fail "bot-trading-pnl-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-portfolio-performance-worker" || fail "portfolio-performance-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-operational-alert-worker" || fail "operational-alert-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-ai-trade-scheduler" || fail "ai-trade-scheduler가 실행 중이 아닙니다."
 
@@ -240,6 +243,7 @@ echo "- mock-order-retry-worker=running"
 echo "- live-order-reconciliation-worker=running"
 echo "- account-activity-sync-worker=running"
 echo "- bot-trading-pnl-worker=running"
+echo "- portfolio-performance-worker=running"
 echo "- operational-alert-worker=running"
 echo "- ai-trade-scheduler=running"
 echo "deployment_success=true"

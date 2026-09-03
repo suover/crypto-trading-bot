@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     account_activity_sync_interval_seconds: int = Field(default=300, ge=30, le=86400)
     account_activity_sync_overlap_hours: int = Field(default=168, ge=1, le=720)
 
+    # Derived account-level performance. Rollout is explicitly opt-in.
+    portfolio_performance_enabled: bool = False
+    portfolio_performance_interval_seconds: int = Field(default=300, ge=30, le=86400)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

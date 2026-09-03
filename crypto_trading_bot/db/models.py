@@ -910,6 +910,163 @@ class AccountActivitySyncState(Base):
     )
 
 
+class AccountCashFlowValuation(Base):
+    __tablename__ = "account_cash_flow_valuations"
+    __table_args__ = (
+        CheckConstraint(
+            "direction IS NULL OR direction IN ('IN', 'OUT')",
+            name="ck_cash_flow_valuations_direction",
+        ),
+        CheckConstraint(
+            "valuation_status IN ('COMPLETE', 'PARTIAL')",
+            name="ck_cash_flow_valuations_status",
+        ),
+        Index(
+            "ix_cash_flow_valuations_owner_event",
+            "user_id",
+            "exchange",
+            "event_time",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    account_activity_id: Mapped[int] = mapped_column(
+        ForeignKey("account_activities.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    direction: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    native_amount: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    event_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    valuation_price_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    cash_flow_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    price_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    valuation_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )
+    safe_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    valued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class PortfolioPerformanceSnapshot(Base):
+    __tablename__ = "portfolio_performance_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "performance_status IN ('BASELINE', 'COMPLETE', 'PARTIAL')",
+            name="ck_portfolio_performance_status",
+        ),
+        CheckConstraint(
+            "return_method = 'MODIFIED_DIETZ'",
+            name="ck_portfolio_performance_return_method",
+        ),
+        Index(
+            "ix_portfolio_performance_owner_period",
+            "user_id",
+            "exchange",
+            "period_end_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    portfolio_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolio_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    previous_portfolio_snapshot_id: Mapped[int | None] = mapped_column(
+        ForeignKey("portfolio_snapshots.id", ondelete="SET NULL"), nullable=True
+    )
+    period_start_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    period_end_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    start_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    end_value_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    external_inflow_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    external_outflow_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    net_external_flow_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    return_method: Mapped[str] = mapped_column(String(30), nullable=False)
+    period_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    cumulative_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    performance_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    high_water_mark_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    high_water_mark_krw: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    drawdown_index: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    drawdown_krw: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    drawdown_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    max_drawdown_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    performance_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )
+    safe_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    calculated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class BotInventoryLot(Base):
     __tablename__ = "bot_inventory_lots"
     __table_args__ = (

@@ -429,7 +429,7 @@ def test_missing_same_pipeline_price_does_not_fall_back_to_other_pipeline(
         assert result.portfolio_snapshot.total_value_krw is None
 
 
-def test_unsupported_holding_does_not_treat_synthetic_market_as_supported(
+def test_trading_unsupported_holding_with_persisted_ticker_is_still_valued(
     session_factory, settings
 ) -> None:
     with session_factory() as session:
@@ -468,10 +468,11 @@ def test_unsupported_holding_does_not_treat_synthetic_market_as_supported(
             .positions[0]
         )
 
-        assert position.market is None
-        assert position.market_snapshot_id is None
-        assert position.mark_price is None
-        assert position.valuation_status == "UNPRICED"
+        assert position.market == "KRW-DELISTED"
+        assert position.market_snapshot_id is not None
+        assert position.mark_price == 100
+        assert position.market_value_krw == 200
+        assert position.valuation_status == "PRICED"
 
 
 def test_negative_position_balance_makes_portfolio_partial_without_fake_value(
