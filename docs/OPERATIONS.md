@@ -188,7 +188,7 @@ docker compose logs --tail=100 portfolio-performance-worker
 `PORTFOLIO_PERFORMANCE_ENABLED=false`가 배포 기본값입니다. Worker는 PostgreSQL secret만
 mount하며 Upbit private key, OpenAI, Telegram secret을 받지 않습니다.
 
-AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 데이터만 읽으며 별도 Upbit ticker나 외부 API를 호출하지 않습니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
+AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 가격을 우선합니다. Upbit 가격이 없는 보유자산은 `PORTFOLIO_COINGECKO_ASSET_MAPPING`에 명시적인 `ASSET=coingecko-id`가 있는 경우에만 CoinGecko KRW 현재가를 조회합니다. 기본 매핑은 비어 있고 symbol 자동 추론은 하지 않으며, 누락·비정상·요청 실패는 0원이 아닌 `UNPRICED`로 유지합니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
 
 `COMPLETE`는 KRW와 모든 양수 보유자산의 동일-pipeline 가격을 확보했다는 뜻입니다. `PARTIAL`의 `known_total_value_krw`는 알려진 범위만 합한 값이며 전체 계좌 총자산이 아닙니다. `total_value_krw`는 PARTIAL에서 NULL입니다. 가격은 모두 있어도 cost basis가 하나라도 없으면 valuation은 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
 

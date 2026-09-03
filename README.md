@@ -98,6 +98,7 @@ UPBIT_ORDERBOOK_COUNT=15
 
 COINGECKO_ENABLED=true
 COINGECKO_API_BASE_URL=https://api.coingecko.com/api/v3
+PORTFOLIO_COINGECKO_ASSET_MAPPING=
 COINGECKO_API_KEY=
 COINGECKO_REQUEST_TIMEOUT_SECONDS=5
 
@@ -399,7 +400,7 @@ python -m scripts.backfill_live_execution_ledger --apply
 
 ### Portfolio valuation snapshot
 
-AI 분석 pipeline은 계좌 스냅샷과 Market Universe 구축 후, AI 추천 전에 `PortfolioSnapshot`과 보유자산별 `PortfolioPositionSnapshot`을 저장합니다. 이 단계는 새 API를 호출하지 않고 동일 `pipeline_run_id`에 저장된 `AccountSnapshot`, `MarketUniverseCandidate`, `MarketSnapshot`만 사용합니다. 새 계좌 수집 run type은 `ACCOUNT_SNAPSHOT`이며 과거 `MANUAL` 계좌 run도 reader에서 계속 지원합니다.
+AI 분석 pipeline은 계좌 스냅샷과 Market Universe 구축 후, AI 추천 전에 `PortfolioSnapshot`과 보유자산별 `PortfolioPositionSnapshot`을 저장합니다. 이 단계는 동일 `pipeline_run_id`에 저장된 `AccountSnapshot`, `MarketUniverseCandidate`, `MarketSnapshot`을 우선 사용합니다. 새 계좌 수집 run type은 `ACCOUNT_SNAPSHOT`이며 과거 `MANUAL` 계좌 run도 reader에서 계속 지원합니다.
 
 `known_total_value_krw`는 현금과 가격을 확보한 position만 합친 알려진 범위의 가치입니다. 모든 양수 보유자산 가격을 확보한 `COMPLETE`에서만 `total_value_krw`가 저장되며, `PARTIAL`에서는 누락 자산을 0원으로 간주하지 않고 `total_value_krw=NULL`로 둡니다. 가격 평가 가능 여부와 cost basis/PnL 계산 가능 여부는 별개입니다. 현금-only portfolio의 position 원가와 미실현손익은 0이고 percentage는 NULL입니다.
 
@@ -407,7 +408,12 @@ Portfolio snapshot은 실제 Upbit 계좌 전체의 현재 평가로 수동 거�
 
 거래 eligibility와 valuation eligibility는 분리됩니다. 신규 BUY 금지 또는 거래 경고
 자산도 같은 pipeline의 실제 KRW ticker가 유효하면 평가할 수 있습니다. ticker가 없거나
-유효하지 않으면 기존처럼 `PARTIAL`이며 0원으로 추정하지 않습니다.
+유효하지 않으면 `PORTFOLIO_COINGECKO_ASSET_MAPPING`에 명시한 asset identity에 한해서만
+CoinGecko KRW 현재가를 fallback으로 사용합니다. 예를 들어 운영에서
+`APENFT=apenft,QI=qiswap`처럼 설정할 수 있으며, symbol만으로 ID를 추론하지 않습니다.
+매핑이 없거나 CoinGecko 가격이 누락·비정상이거나 요청이 실패하면 기존처럼 `PARTIAL`이며
+0원으로 추정하지 않습니다. 유효한 same-pipeline Upbit 가격이 있으면 CoinGecko보다 항상
+우선하며 해당 asset은 외부 가격 요청 대상에서도 제외됩니다.
 
 ### Portfolio Performance accounting
 
@@ -424,7 +430,8 @@ crypto는 Upbit `done_at`으로 저장된 `completed_at` 전에 완전히 종료
 사용합니다. `r=(V_end-V_start-ΣC)/(V_start+Σ(w*C))`, `w`는 cash-flow 시점부터 period
 종료까지 남은 시간 비율입니다. 100에서 시작하는 cash-flow-neutral performance index를
 연결해 cumulative return, high-water mark, drawdown, MDD를 계산합니다. 불완전 period를
-0%로 가정하지 않고 cumulative chain을 끊습니다.
+0%로 가정하지 않고 cumulative chain을 끊습니다. 이후 처음 나타나는 `COMPLETE` NAV는
+index 100의 새 baseline이 되며, 그 다음 연속 `COMPLETE` period부터 수익률 계산을 재개합니다.
 `high_water_mark_krw`와 `drawdown_krw`도 최초 COMPLETE NAV에 performance index를
 적용한 cash-flow-neutral KRW-equivalent이며 raw NAV 최고값이 아닙니다.
 

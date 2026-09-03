@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     coingecko_api_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_api_key: str = Field(default="", repr=False)
     coingecko_request_timeout_seconds: float = 5.0
+    portfolio_coingecko_asset_mapping: str = ""
 
     # Fear & Greed Index
     fear_greed_enabled: bool = True
@@ -233,6 +234,7 @@ class Settings(BaseSettings):
         # Validate the configured retry schedule during Settings construction rather
         # than waiting for the background worker to start.
         self.operational_alert_retry_delay_list
+        self.portfolio_coingecko_asset_identity_map
 
         return self
 
@@ -251,6 +253,29 @@ class Settings(BaseSettings):
             for market in self.market_blocklist.split(",")
             if market.strip()
         ]
+
+    @property
+    def portfolio_coingecko_asset_identity_map(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for raw_entry in self.portfolio_coingecko_asset_mapping.split(","):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            asset, separator, coin_id = entry.partition("=")
+            normalized_asset = asset.strip().upper()
+            normalized_coin_id = coin_id.strip().lower()
+            if not separator or not normalized_asset or not normalized_coin_id:
+                raise ValueError(
+                    "PORTFOLIO_COINGECKO_ASSET_MAPPING entries must use "
+                    "ASSET=coingecko-id"
+                )
+            if normalized_asset in mapping:
+                raise ValueError(
+                    "PORTFOLIO_COINGECKO_ASSET_MAPPING contains duplicate asset: "
+                    f"{normalized_asset}"
+                )
+            mapping[normalized_asset] = normalized_coin_id
+        return mapping
 
     @property
     def analysis_timeframe_list(self) -> list[str]:

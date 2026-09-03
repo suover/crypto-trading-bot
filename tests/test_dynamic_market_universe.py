@@ -198,6 +198,21 @@ def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding(
     assert position["unrealized_pnl_percentage"] == "25.00"
 
 
+def test_portfolio_coingecko_mapping_does_not_affect_universe_ranking() -> None:
+    service = build_service(
+        markets=[descriptor("KRW-BTC"), descriptor("KRW-XRP")],
+        tickers=[ticker("KRW-BTC", "1000"), ticker("KRW-XRP", "900")],
+        balances={"KRW": balance("10000")},
+        portfolio_coingecko_asset_mapping="APENFT=apenft,QI=qiswap",
+    )
+
+    result = service.build_and_persist()
+
+    assert [candidate.market for candidate in result.candidates] == ["KRW-BTC"]
+    assert result.candidates[0].selection_source == "RANKED"
+    assert result.candidates[0].buy_eligible is True
+
+
 def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
     ranking = RecordingRanking(
         {

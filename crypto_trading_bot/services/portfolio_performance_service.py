@@ -198,6 +198,18 @@ class PortfolioPerformanceService:
             if previous is None:
                 plans.append(self._baseline(snapshot))
                 continue
+            if (
+                _complete_nav(snapshot) is not None
+                and plans[-1].performance_index is None
+            ):
+                plans.append(
+                    self._baseline(
+                        snapshot,
+                        previous=previous,
+                        safe_reason="REBASELINE_AFTER_PARTIAL_GAP",
+                    )
+                )
+                continue
             plans.append(
                 self._period(
                     snapshot,
@@ -210,7 +222,13 @@ class PortfolioPerformanceService:
             )
         return tuple(plans)
 
-    def _baseline(self, snapshot: PortfolioSnapshot) -> PerformancePlan:
+    def _baseline(
+        self,
+        snapshot: PortfolioSnapshot,
+        *,
+        previous: PortfolioSnapshot | None = None,
+        safe_reason: str = "NO_PREVIOUS_SNAPSHOT",
+    ) -> PerformancePlan:
         end_at = _db_utc(snapshot.captured_at)
         end_value = _complete_nav(snapshot)
         if end_value is None:
@@ -219,7 +237,9 @@ class PortfolioPerformanceService:
             user_id=snapshot.user_id,
             exchange=snapshot.exchange,
             portfolio_snapshot_id=snapshot.id,
-            previous_portfolio_snapshot_id=None,
+            previous_portfolio_snapshot_id=previous.id
+            if previous is not None
+            else None,
             period_start_at=None,
             period_end_at=end_at,
             start_value_krw=None,
@@ -238,7 +258,7 @@ class PortfolioPerformanceService:
             drawdown_percentage=Decimal("0"),
             max_drawdown_percentage=Decimal("0"),
             performance_status="BASELINE",
-            safe_reason="NO_PREVIOUS_SNAPSHOT",
+            safe_reason=safe_reason,
             calculated_at=self.now_fn(),
         )
 

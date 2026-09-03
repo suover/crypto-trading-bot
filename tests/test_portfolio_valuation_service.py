@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from sqlalchemy import (
     BigInteger,
@@ -189,10 +191,13 @@ def add_universe_source(
     return run
 
 
-def build_service(session, settings: Settings) -> PortfolioValuationService:
+def build_service(
+    session, settings: Settings, *, coingecko_client=None
+) -> PortfolioValuationService:
     return PortfolioValuationService(
         session,
         settings=settings,
+        coingecko_client=coingecko_client,
         now_fn=lambda: datetime(2026, 8, 30, tzinfo=UTC),
     )
 
@@ -277,6 +282,7 @@ def test_cash_only_portfolio_is_complete_with_zero_position_pnl(
 def test_unpriced_holding_is_preserved_and_total_is_null(
     session_factory, settings
 ) -> None:
+    coingecko = MagicMock()
     with session_factory() as session:
         user = add_user(session)
         add_account_source(
@@ -300,7 +306,9 @@ def test_unpriced_holding_is_preserved_and_total_is_null(
             [{"market": "KRW-ABC", "base_asset": "ABC"}],
         )
 
-        result = build_service(session, settings).capture(pipeline_run_id=PIPELINE_A)
+        result = build_service(session, settings, coingecko_client=coingecko).capture(
+            pipeline_run_id=PIPELINE_A
+        )
         snapshot = result.portfolio_snapshot
         (position,) = result.positions
 
@@ -312,6 +320,120 @@ def test_unpriced_holding_is_preserved_and_total_is_null(
         assert snapshot.total_value_krw is None
         assert snapshot.unpriced_asset_count == 1
         assert snapshot.valuation_status == "PARTIAL"
+        coingecko.get_markets.assert_not_called()
+
+
+def test_explicit_coingecko_fallback_prices_unlisted_assets_and_keeps_upbit_priority(
+    session_factory,
+) -> None:
+    configured = Settings(
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_coingecko_asset_mapping=(
+            "BTC=must-not-be-requested,APENFT=apenft,QI=qiswap"
+        ),
+    )
+    coingecko = MagicMock()
+    coingecko.get_markets.return_value = [
+        {"id": "apenft", "current_price": "0.5"},
+        {"id": "qiswap", "current_price": "2"},
+        {"id": "benqi", "current_price": "999999"},
+    ]
+    with session_factory() as session:
+        user = add_user(session)
+        add_account_source(
+            session,
+            user,
+            PIPELINE_A,
+            [
+                {"currency": "KRW", "balance": "100", "locked": "0"},
+                {
+                    "currency": "BTC",
+                    "balance": "1",
+                    "locked": "0",
+                    "avg_buy_price": "80",
+                },
+                {
+                    "currency": "APENFT",
+                    "balance": "10",
+                    "locked": "0",
+                    "avg_buy_price": "0.1",
+                },
+                {
+                    "currency": "QI",
+                    "balance": "5",
+                    "locked": "0",
+                    "avg_buy_price": "1",
+                },
+            ],
+        )
+        add_universe_source(
+            session,
+            user,
+            PIPELINE_A,
+            [{"market": "KRW-BTC", "base_asset": "BTC", "price": "100"}],
+        )
+
+        result = build_service(session, configured, coingecko_client=coingecko).capture(
+            pipeline_run_id=PIPELINE_A
+        )
+
+        positions = {position.currency: position for position in result.positions}
+        coingecko.get_markets.assert_called_once_with(
+            ["apenft", "qiswap"], vs_currency="krw"
+        )
+        assert positions["BTC"].price_source == "MARKET_SNAPSHOT"
+        assert positions["BTC"].mark_price == 100
+        assert positions["APENFT"].price_source == "COINGECKO"
+        assert positions["APENFT"].market_value_krw == Decimal("5.0")
+        assert positions["QI"].price_source == "COINGECKO"
+        assert positions["QI"].mark_price == 2
+        assert positions["QI"].market is None
+        assert result.portfolio_snapshot.priced_positions_value_krw == Decimal("115.0")
+        assert result.portfolio_snapshot.total_value_krw == Decimal("215.0")
+        assert result.portfolio_snapshot.valuation_status == "COMPLETE"
+
+
+@pytest.mark.parametrize(
+    ("response", "error"),
+    [
+        ([], None),
+        ([{"id": "apenft", "current_price": "NaN"}], None),
+        (None, httpx.ConnectError("offline")),
+    ],
+)
+def test_coingecko_missing_invalid_or_error_remains_unpriced(
+    session_factory, response, error
+) -> None:
+    configured = Settings(
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_coingecko_asset_mapping="APENFT=apenft",
+    )
+    coingecko = MagicMock()
+    if error is None:
+        coingecko.get_markets.return_value = response
+    else:
+        coingecko.get_markets.side_effect = error
+    with session_factory() as session:
+        user = add_user(session)
+        add_account_source(
+            session,
+            user,
+            PIPELINE_A,
+            [
+                {"currency": "KRW", "balance": "100", "locked": "0"},
+                {"currency": "APENFT", "balance": "10", "locked": "0"},
+            ],
+        )
+        add_universe_source(session, user, PIPELINE_A, [])
+
+        result = build_service(session, configured, coingecko_client=coingecko).capture(
+            pipeline_run_id=PIPELINE_A
+        )
+
+        assert result.positions[0].valuation_status == "UNPRICED"
+        assert result.positions[0].price_source == "UNAVAILABLE"
+        assert result.portfolio_snapshot.valuation_status == "PARTIAL"
+        assert result.portfolio_snapshot.total_value_krw is None
 
 
 def test_missing_cost_basis_does_not_make_complete_valuation_partial(

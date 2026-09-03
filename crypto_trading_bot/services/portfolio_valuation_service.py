@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 
+import httpx
 from sqlalchemy import case, select
 from sqlalchemy.orm import Session
 
@@ -16,6 +17,7 @@ from crypto_trading_bot.db.models import (
     PortfolioSnapshot,
     User,
 )
+from crypto_trading_bot.market_data.coingecko_client import CoinGeckoClient
 from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
@@ -38,10 +40,12 @@ class PortfolioValuationService:
         session: Session,
         *,
         settings: Settings | None = None,
+        coingecko_client: CoinGeckoClient | None = None,
         now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
+        self.coingecko_client = coingecko_client or CoinGeckoClient(self.settings)
         self.now_fn = now_fn
 
     def capture(
@@ -190,6 +194,36 @@ class PortfolioValuationService:
         if cash_row is None or cash_total is None:
             invalid_account_data = True
 
+        upbit_price_by_asset: dict[
+            str, tuple[str | None, MarketSnapshot | None, Decimal | None]
+        ] = {}
+        held_unpriced_assets: list[str] = []
+        for currency, account_row in account_by_currency.items():
+            if currency == quote_asset:
+                continue
+            available = self._non_negative_decimal(account_row.balance)
+            locked = self._non_negative_decimal(account_row.locked)
+            if available is None or locked is None or available + locked <= 0:
+                continue
+            candidate = (
+                None
+                if currency in duplicate_candidate_assets
+                else candidate_by_asset.get(currency)
+            )
+            market = candidate.market if candidate is not None else None
+            market_snapshot = (
+                market_snapshot_by_market.get(market) if market is not None else None
+            )
+            mark_price = (
+                self._positive_decimal(market_snapshot.current_price)
+                if market_snapshot is not None
+                else None
+            )
+            upbit_price_by_asset[currency] = (market, market_snapshot, mark_price)
+            if mark_price is None:
+                held_unpriced_assets.append(currency)
+        coingecko_prices = self._get_coingecko_prices(held_unpriced_assets)
+
         position_values: list[dict[str, object]] = []
         priced_positions_value = Decimal("0")
         positions_cost_basis = Decimal("0")
@@ -209,22 +243,15 @@ class PortfolioValuationService:
             if total_quantity <= 0:
                 continue
 
-            candidate = (
-                None
-                if currency in duplicate_candidate_assets
-                else candidate_by_asset.get(currency)
-            )
             # A persisted same-pipeline ticker is valuation evidence even when
             # trading policy disallows new orders for the market.
-            market = candidate.market if candidate is not None else None
-            market_snapshot = (
-                market_snapshot_by_market.get(market) if market is not None else None
+            market, market_snapshot, mark_price = upbit_price_by_asset.get(
+                currency, (None, None, None)
             )
-            mark_price = (
-                self._positive_decimal(market_snapshot.current_price)
-                if market_snapshot is not None
-                else None
-            )
+            price_source = "MARKET_SNAPSHOT"
+            if mark_price is None:
+                mark_price = coingecko_prices.get(currency)
+                price_source = "COINGECKO" if mark_price is not None else "UNAVAILABLE"
             market_value = (
                 total_quantity * mark_price if mark_price is not None else None
             )
@@ -271,9 +298,7 @@ class PortfolioValuationService:
                     "valuation_status": (
                         "PRICED" if market_value is not None else "UNPRICED"
                     ),
-                    "price_source": (
-                        "MARKET_SNAPSHOT" if mark_price is not None else "UNAVAILABLE"
-                    ),
+                    "price_source": price_source,
                 }
             )
 
@@ -337,6 +362,36 @@ class PortfolioValuationService:
             positions=positions,
             already_captured=False,
         )
+
+    def _get_coingecko_prices(self, assets: list[str]) -> dict[str, Decimal]:
+        if not self.settings.coingecko_enabled:
+            return {}
+        identity_map = self.settings.portfolio_coingecko_asset_identity_map
+        requested = {
+            asset: identity_map[asset]
+            for asset in sorted(set(assets))
+            if asset in identity_map
+        }
+        if not requested:
+            return {}
+        try:
+            rows = self.coingecko_client.get_markets(
+                list(dict.fromkeys(requested.values())), vs_currency="krw"
+            )
+        except httpx.HTTPError, ValueError:
+            return {}
+        price_by_id: dict[str, Decimal] = {}
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                continue
+            price = self._positive_decimal(row.get("current_price"))
+            if price is not None:
+                price_by_id[row["id"]] = price
+        return {
+            asset: price_by_id[coin_id]
+            for asset, coin_id in requested.items()
+            if coin_id in price_by_id
+        }
 
     def _get_existing(
         self, user_id: int, exchange: str, pipeline_run_id: str

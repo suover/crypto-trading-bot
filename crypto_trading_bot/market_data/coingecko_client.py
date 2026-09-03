@@ -9,9 +9,14 @@ class CoinGeckoClient:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
 
-    def get_markets(self, coin_ids: list[str]) -> list[dict[str, Any]]:
+    def get_markets(
+        self, coin_ids: list[str], *, vs_currency: str = "usd"
+    ) -> list[dict[str, Any]]:
         if not coin_ids:
             raise ValueError("coin_ids must not be empty")
+        normalized_currency = vs_currency.strip().lower()
+        if not normalized_currency:
+            raise ValueError("vs_currency must not be empty")
         unique_coin_ids = list(dict.fromkeys(coin_ids))
         base_url = self.settings.coingecko_api_base_url.rstrip("/")
         headers: dict[str, str] | None = None
@@ -26,7 +31,7 @@ class CoinGeckoClient:
         response = httpx.get(
             f"{base_url}/coins/markets",
             params={
-                "vs_currency": "usd",
+                "vs_currency": normalized_currency,
                 "ids": ",".join(unique_coin_ids),
                 "price_change_percentage": "1h,24h,7d,30d",
                 "sparkline": "false",

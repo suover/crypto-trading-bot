@@ -38,6 +38,7 @@ SETTINGS_ENV_NAMES = (
     "ACCOUNT_ACTIVITY_SYNC_OVERLAP_HOURS",
     "PORTFOLIO_PERFORMANCE_ENABLED",
     "PORTFOLIO_PERFORMANCE_INTERVAL_SECONDS",
+    "PORTFOLIO_COINGECKO_ASSET_MAPPING",
 )
 
 
@@ -79,6 +80,36 @@ def test_openai_trade_defaults() -> None:
     assert settings.account_activity_sync_overlap_hours == 168
     assert settings.portfolio_performance_enabled is False
     assert settings.portfolio_performance_interval_seconds == 300
+    assert settings.portfolio_coingecko_asset_identity_map == {}
+
+
+def test_portfolio_coingecko_mapping_is_explicit_and_does_not_change_trading_lists() -> (
+    None
+):
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_coingecko_asset_mapping=" apenft=APENFT, qi=qiswap ",
+        allowed_markets="KRW-BTC",
+        market_blocklist="KRW-XRP",
+    )
+
+    assert settings.portfolio_coingecko_asset_identity_map == {
+        "APENFT": "apenft",
+        "QI": "qiswap",
+    }
+    assert settings.allowed_market_list == ["KRW-BTC"]
+    assert settings.market_block_list == ["KRW-XRP"]
+
+
+@pytest.mark.parametrize("value", ["QI", "=qiswap", "QI=", "QI=qiswap,QI=benqi"])
+def test_portfolio_coingecko_mapping_rejects_ambiguous_entries(value: str) -> None:
+    with pytest.raises(ValueError, match="PORTFOLIO_COINGECKO_ASSET_MAPPING"):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            portfolio_coingecko_asset_mapping=value,
+        )
 
 
 @pytest.mark.parametrize(

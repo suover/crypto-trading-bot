@@ -201,6 +201,25 @@ def test_coingecko_validation(monkeypatch: pytest.MonkeyPatch) -> None:
         client.get_markets(["bitcoin"])
 
 
+def test_coingecko_supports_explicit_krw_market_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def get(url: str, **kwargs: Any) -> Response:
+        captured.update(url=url, **kwargs)
+        return Response([])
+
+    monkeypatch.setattr(
+        "crypto_trading_bot.market_data.coingecko_client.httpx.get", get
+    )
+
+    CoinGeckoClient(settings()).get_markets(["qiswap"], vs_currency="KRW")
+
+    assert captured["params"]["vs_currency"] == "krw"
+    assert captured["params"]["ids"] == "qiswap"
+
+
 def test_fear_greed_parses_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "crypto_trading_bot.market_data.fear_greed_client.httpx.get",

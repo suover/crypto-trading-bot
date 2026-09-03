@@ -223,7 +223,7 @@ def test_cash_flow_periods_and_partial_sources_fail_closed() -> None:
     assert uncovered[1].safe_reason == "ACCOUNT_ACTIVITY_COVERAGE_INCOMPLETE"
 
 
-def test_incomplete_cash_flow_breaks_chain_instead_of_assuming_zero() -> None:
+def test_incomplete_cash_flow_rebaselines_next_complete_snapshot() -> None:
     incomplete = flow(1, 12, "100")
     incomplete = CashFlowValuationPlan(
         **{
@@ -243,7 +243,65 @@ def test_incomplete_cash_flow_breaks_chain_instead_of_assuming_zero() -> None:
         coverage(),
     )
     assert plans[1].safe_reason == "CASH_FLOW_VALUATION_INCOMPLETE"
-    assert plans[2].safe_reason == "CUMULATIVE_CHAIN_BROKEN"
+    assert plans[2].performance_status == "BASELINE"
+    assert plans[2].safe_reason == "REBASELINE_AFTER_PARTIAL_GAP"
+    assert plans[2].performance_index == 100
+
+
+def test_partial_then_complete_creates_new_baseline() -> None:
+    plans = service()._calculate(
+        (snapshot(1, 0, None, "PARTIAL"), snapshot(2, 24, "150")),
+        (),
+        coverage(),
+    )
+
+    assert plans[0].performance_status == "PARTIAL"
+    assert plans[0].safe_reason == "NAV_INCOMPLETE"
+    assert plans[1].performance_status == "BASELINE"
+    assert plans[1].safe_reason == "REBASELINE_AFTER_PARTIAL_GAP"
+    assert plans[1].period_return_percentage is None
+    assert plans[1].cumulative_return_percentage == 0
+    assert plans[1].performance_index == 100
+    assert plans[1].drawdown_percentage == 0
+    assert plans[1].max_drawdown_percentage == 0
+
+
+def test_return_starts_after_rebaseline_and_multiple_partial_snapshots() -> None:
+    plans = service()._calculate(
+        (
+            snapshot(1, 0, None, "PARTIAL"),
+            snapshot(2, 12, None, "PARTIAL"),
+            snapshot(3, 24, "100"),
+            snapshot(4, 48, "110"),
+        ),
+        (),
+        coverage(),
+    )
+
+    assert [plan.performance_status for plan in plans[:2]] == ["PARTIAL", "PARTIAL"]
+    assert plans[2].performance_status == "BASELINE"
+    assert plans[2].performance_index == 100
+    assert plans[3].performance_status == "COMPLETE"
+    assert plans[3].period_return_percentage == Decimal("10.0000000000")
+    assert plans[3].performance_index == Decimal("110.0000000000")
+
+
+def test_complete_partial_complete_starts_a_fresh_baseline() -> None:
+    plans = service()._calculate(
+        (
+            snapshot(1, 0, "100"),
+            snapshot(2, 24, None, "PARTIAL"),
+            snapshot(3, 48, "125"),
+        ),
+        (),
+        coverage(),
+    )
+
+    assert plans[0].safe_reason == "NO_PREVIOUS_SNAPSHOT"
+    assert plans[1].performance_status == "PARTIAL"
+    assert plans[2].performance_status == "BASELINE"
+    assert plans[2].safe_reason == "REBASELINE_AFTER_PARTIAL_GAP"
+    assert plans[2].performance_index == 100
 
 
 def test_malformed_complete_cash_flow_is_still_fail_closed() -> None:
