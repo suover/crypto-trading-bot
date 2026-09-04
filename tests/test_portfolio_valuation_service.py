@@ -393,6 +393,136 @@ def test_explicit_coingecko_fallback_prices_unlisted_assets_and_keeps_upbit_prio
         assert result.portfolio_snapshot.valuation_status == "COMPLETE"
 
 
+def test_excluded_assets_remain_auditable_but_do_not_affect_nav_or_coingecko(
+    session_factory,
+) -> None:
+    configured = Settings(
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_excluded_assets=" qi, APENFT,qi ",
+        portfolio_coingecko_asset_mapping=("QI=qiswap,APENFT=apenft,ABC=abc-token"),
+    )
+    coingecko = MagicMock()
+    coingecko.get_markets.return_value = [{"id": "abc-token", "current_price": "10"}]
+    with session_factory() as session:
+        user = add_user(session)
+        add_account_source(
+            session,
+            user,
+            PIPELINE_A,
+            [
+                {"currency": "KRW", "balance": "100", "locked": "0"},
+                {
+                    "currency": "BTC",
+                    "balance": "1",
+                    "locked": "0",
+                    "avg_buy_price": "80",
+                },
+                {
+                    "currency": "QI",
+                    "balance": "2",
+                    "locked": "0",
+                    "avg_buy_price": "0",
+                },
+                {
+                    "currency": "APENFT",
+                    "balance": "3",
+                    "locked": "0",
+                    "avg_buy_price": "0",
+                },
+                {
+                    "currency": "ABC",
+                    "balance": "4",
+                    "locked": "0",
+                    "avg_buy_price": "1",
+                },
+            ],
+        )
+        add_universe_source(
+            session,
+            user,
+            PIPELINE_A,
+            [
+                {"market": "KRW-BTC", "base_asset": "BTC", "price": "100"},
+                {"market": "KRW-QI", "base_asset": "QI", "price": "999"},
+                {"market": "KRW-APENFT", "base_asset": "APENFT"},
+            ],
+        )
+
+        result = build_service(session, configured, coingecko_client=coingecko).capture(
+            pipeline_run_id=PIPELINE_A
+        )
+
+        positions = {position.currency: position for position in result.positions}
+        coingecko.get_markets.assert_called_once_with(["abc-token"], vs_currency="krw")
+        for asset in ("QI", "APENFT"):
+            position = positions[asset]
+            assert position.valuation_status == "EXCLUDED"
+            assert position.price_source == "POLICY_EXCLUDED"
+            assert position.mark_price is None
+            assert position.market_value_krw is None
+            assert position.estimated_cost_basis_krw is None
+            assert position.unrealized_pnl_krw is None
+            assert position.unrealized_pnl_percentage is None
+        assert positions["QI"].market == "KRW-QI"
+        assert positions["QI"].market_snapshot_id is None
+        assert positions["ABC"].price_source == "COINGECKO"
+        assert positions["ABC"].market_value_krw == 40
+        assert result.portfolio_snapshot.position_count == 4
+        assert result.portfolio_snapshot.unpriced_asset_count == 0
+        assert result.portfolio_snapshot.missing_cost_basis_count == 0
+        assert result.portfolio_snapshot.priced_positions_value_krw == 140
+        assert result.portfolio_snapshot.known_total_value_krw == 240
+        assert result.portfolio_snapshot.total_value_krw == 240
+        assert result.portfolio_snapshot.positions_estimated_cost_basis_krw == 84
+        assert result.portfolio_snapshot.unrealized_pnl_krw == 56
+        assert result.portfolio_snapshot.valuation_status == "COMPLETE"
+        assert result.portfolio_snapshot.valuation_policy_signature == (
+            configured.portfolio_valuation_policy_signature
+        )
+        source_qi = session.scalar(
+            select(AccountSnapshot).where(AccountSnapshot.currency == "QI")
+        )
+        assert source_qi is not None
+        assert source_qi.balance == 2
+
+
+def test_excluded_only_fallback_candidates_do_not_call_coingecko(
+    session_factory,
+) -> None:
+    configured = Settings(
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_excluded_assets="QI",
+        portfolio_coingecko_asset_mapping="QI=qiswap",
+    )
+    coingecko = MagicMock()
+    with session_factory() as session:
+        user = add_user(session)
+        add_account_source(
+            session,
+            user,
+            PIPELINE_A,
+            [
+                {"currency": "KRW", "balance": "100", "locked": "0"},
+                {"currency": "QI", "balance": "2", "locked": "0"},
+            ],
+        )
+        add_universe_source(
+            session,
+            user,
+            PIPELINE_A,
+            [{"market": "KRW-QI", "base_asset": "QI", "price": "999"}],
+        )
+
+        result = build_service(session, configured, coingecko_client=coingecko).capture(
+            pipeline_run_id=PIPELINE_A
+        )
+
+        coingecko.get_markets.assert_not_called()
+        assert result.positions[0].valuation_status == "EXCLUDED"
+        assert result.portfolio_snapshot.total_value_krw == 100
+        assert result.portfolio_snapshot.valuation_status == "COMPLETE"
+
+
 @pytest.mark.parametrize(
     ("response", "error"),
     [

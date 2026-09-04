@@ -138,13 +138,20 @@ class MarketUniverseService:
         pipeline_run_id: str | None,
     ) -> MarketUniverseBuildResult:
         balances = self._load_balances(user.id, exchange, pipeline_run_id)
+        excluded_assets = self.settings.portfolio_excluded_asset_set
         held_assets = {
             currency
             for currency, values in balances.items()
-            if currency != quote_asset and values["total"] > 0
+            if currency != quote_asset
+            and currency not in excluded_assets
+            and values["total"] > 0
         }
         if self.settings.market_universe_mode == "STATIC":
-            descriptors = self._static_descriptors(exchange)
+            descriptors = [
+                descriptor
+                for descriptor in self._static_descriptors(exchange)
+                if descriptor.base_asset not in excluded_assets
+            ]
             tickers = self.provider.get_tickers(
                 markets=[descriptor.market for descriptor in descriptors]
             )
@@ -156,6 +163,7 @@ class MarketUniverseService:
             descriptor
             for descriptor in descriptors
             if descriptor.quote_asset == quote_asset
+            and descriptor.base_asset not in excluded_assets
         ]
         warning_excluded = 0
         caution_excluded = 0

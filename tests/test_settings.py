@@ -39,6 +39,7 @@ SETTINGS_ENV_NAMES = (
     "PORTFOLIO_PERFORMANCE_ENABLED",
     "PORTFOLIO_PERFORMANCE_INTERVAL_SECONDS",
     "PORTFOLIO_COINGECKO_ASSET_MAPPING",
+    "PORTFOLIO_EXCLUDED_ASSETS",
 )
 
 
@@ -81,6 +82,40 @@ def test_openai_trade_defaults() -> None:
     assert settings.portfolio_performance_enabled is False
     assert settings.portfolio_performance_interval_seconds == 300
     assert settings.portfolio_coingecko_asset_identity_map == {}
+    assert settings.portfolio_excluded_asset_set == set()
+    assert settings.portfolio_valuation_policy_signature is None
+
+
+def test_portfolio_excluded_assets_are_normalized_and_signature_is_deterministic() -> (
+    None
+):
+    variants = (
+        "QI,APENFT",
+        "APENFT,QI",
+        " qi, APENFT,qi ",
+    )
+    configured = [
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            portfolio_excluded_assets=value,
+        )
+        for value in variants
+    ]
+
+    assert all(
+        item.portfolio_excluded_asset_set == {"QI", "APENFT"} for item in configured
+    )
+    assert len({item.portfolio_valuation_policy_signature for item in configured}) == 1
+    different = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        portfolio_excluded_assets="QI",
+    )
+    assert (
+        different.portfolio_valuation_policy_signature
+        != configured[0].portfolio_valuation_policy_signature
+    )
 
 
 def test_portfolio_coingecko_mapping_is_explicit_and_does_not_change_trading_lists() -> (

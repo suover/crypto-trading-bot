@@ -190,7 +190,15 @@ mount하며 Upbit private key, OpenAI, Telegram secret을 받지 않습니다.
 
 AI 분석 pipeline은 AccountSnapshot → Market Universe → Portfolio valuation → AI recommendation → Telegram 순서로 실행됩니다. Portfolio 단계는 동일 `CRYPTO_TRADING_PIPELINE_RUN_ID`의 DB 가격을 우선합니다. Upbit 가격이 없는 보유자산은 `PORTFOLIO_COINGECKO_ASSET_MAPPING`에 명시적인 `ASSET=coingecko-id`가 있는 경우에만 CoinGecko KRW 현재가를 조회합니다. 기본 매핑은 비어 있고 symbol 자동 추론은 하지 않으며, 누락·비정상·요청 실패는 0원이 아닌 `UNPRICED`로 유지합니다. 새 계좌 수집은 `ACCOUNT_SNAPSHOT` run type을 사용하고 legacy `MANUAL` account run도 조회 호환됩니다.
 
-`COMPLETE`는 KRW와 모든 양수 보유자산의 동일-pipeline 가격을 확보했다는 뜻입니다. `PARTIAL`의 `known_total_value_krw`는 알려진 범위만 합한 값이며 전체 계좌 총자산이 아닙니다. `total_value_krw`는 PARTIAL에서 NULL입니다. 가격은 모두 있어도 cost basis가 하나라도 없으면 valuation은 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
+`PORTFOLIO_EXCLUDED_ASSETS`는 기본값이 빈 explicit policy입니다. 여기에 포함된 currency는
+AccountSnapshot과 PortfolioPosition audit row를 유지하되 position을
+`EXCLUDED`/`POLICY_EXCLUDED`로 기록하고 NAV, unpriced count, aggregate cost basis/PnL 및
+CoinGecko 요청에서 제외합니다. Market Universe의 ranked/static/held 후보와 신규 LIVE 주문도
+차단합니다. 이는 cash-flow나 손실이 아니며 Account Activity와 Bot FIFO/PnL을 변경하지
+않습니다. exclusion signature가 연속 COMPLETE snapshot 사이에서 달라지면 Performance는
+정책 차이를 수익률로 계산하지 않고 새 index-100 baseline을 만듭니다.
+
+`COMPLETE`는 KRW와 정책상 포함된 모든 양수 보유자산의 가격을 확보했다는 뜻입니다. `PARTIAL`의 `known_total_value_krw`는 알려진 범위만 합한 값이며 전체 계좌 총자산이 아닙니다. `total_value_krw`는 PARTIAL에서 NULL입니다. 가격은 모두 있어도 포함자산 cost basis가 하나라도 없으면 valuation은 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
 
 이 worker는 LIVE·UPBIT 주문의 `LIVE_PLACED` / `LIVE_WAIT` / `LIVE_UNKNOWN` 상태만 Upbit GET으로 조회하고 DB를 동기화합니다. 새 주문 생성, 자동 재주문, 자동 취소, Telegram 승인 생성, AI 호출은 하지 않습니다. API 오류 시 미확정 상태를 유지하고 다음 cycle에서 다시 조회합니다. terminal 주문과 MOCK 주문은 polling하지 않습니다.
 

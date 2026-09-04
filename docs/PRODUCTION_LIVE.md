@@ -252,11 +252,47 @@ python -m scripts.backfill_live_execution_ledger --apply
 
 ## Account-level Portfolio valuation
 
-예약 분석은 동일 pipeline에 저장된 account snapshot과 universe market snapshot을 사용해 AI 추천 전에 `PortfolioSnapshot`과 `PortfolioPositionSnapshot`을 생성합니다. 이 단계는 DB-only이며 Upbit/OpenAI/Telegram을 새로 호출하지 않습니다. 신규 account run type은 `ACCOUNT_SNAPSHOT`이고 기존 `MANUAL` account run은 legacy source로 계속 읽을 수 있습니다.
+예약 분석은 동일 pipeline에 저장된 account snapshot과 universe market snapshot을 사용해 AI 추천 전에 `PortfolioSnapshot`과 `PortfolioPositionSnapshot`을 생성합니다. Upbit 가격이 없고 explicit CoinGecko mapping이 있는 포함자산에 한해서만 CoinGecko KRW 현재가를 조회하며 Upbit private API/OpenAI/Telegram은 호출하지 않습니다. 신규 account run type은 `ACCOUNT_SNAPSHOT`이고 기존 `MANUAL` account run은 legacy source로 계속 읽을 수 있습니다.
 
-`known_total_value_krw`는 가격이 확인된 범위의 합계입니다. 보유자산 하나라도 동일 pipeline 가격이 없으면 상태는 `PARTIAL`, `total_value_krw`는 NULL이며 이전 pipeline 가격으로 보충하지 않습니다. 가격이 모두 있어도 avg buy price가 빠지면 계좌 가치 평가는 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
+`known_total_value_krw`는 정책상 포함되고 가격이 확인된 범위의 합계입니다. 포함자산 하나라도 same-pipeline Upbit 가격이나 explicit CoinGecko fallback 가격이 없으면 상태는 `PARTIAL`, `total_value_krw`는 NULL이며 이전 pipeline 가격으로 보충하지 않습니다. 포함자산 가격이 모두 있어도 avg buy price가 빠지면 계좌 가치 평가는 COMPLETE일 수 있지만 aggregate cost basis와 미실현손익은 NULL입니다.
 
 이 snapshot은 실제 Upbit 계좌 전체의 현재 평가이며 봇 성과가 아닙니다. `OrderFill`은 봇이 생성한 LIVE 주문 체결 원장이므로 두 데이터 계층을 직접적인 수익률로 결합하지 않습니다.
+
+`PORTFOLIO_EXCLUDED_ASSETS`는 계좌 source를 삭제하지 않고 운용 Portfolio에서만 제외하는
+명시적 정책입니다. 제외 position은 `EXCLUDED`/`POLICY_EXCLUDED`로 남고 NAV, unpriced 및
+cost-basis completeness, CoinGecko 요청, Market Universe와 신규 주문 대상에서 빠집니다.
+CoinGecko mapping보다 exclusion이 우선합니다. 저장된 policy signature가 바뀐 첫 COMPLETE
+snapshot은 가짜 손익을 방지하기 위해 `REBASELINE_AFTER_VALUATION_POLICY_CHANGE` baseline이
+됩니다. Account Activity와 Bot Trading PnL은 변경하지 않습니다.
+
+Production rollout은 운영자가 승인과 백업 후 다음 순서로 수행합니다. Codex 작업에서는
+실행하지 않습니다.
+
+1. 새 코드와 migration 배포
+2. DB와 `.env` 백업
+3. `PORTFOLIO_EXCLUDED_ASSETS`에 승인된 자산 명시
+4. 같은 자산을 `PORTFOLIO_COINGECKO_ASSET_MAPPING`에서 제거
+5. scheduler recreate
+6. 새 PortfolioSnapshot 생성 확인
+7. 제외 position의 `EXCLUDED` 상태와 CoinGecko 요청 제외 확인
+8. Portfolio `COMPLETE` 확인
+9. Performance policy-change baseline 확인
+10. 다음 연속 COMPLETE snapshot에서 period return 재개 확인
+11. runtime safety 점검
+
+예시는 정책 설명용이며 repository 기본값은 모두 비어 있습니다.
+
+```env
+PORTFOLIO_EXCLUDED_ASSETS=QI,APENFT
+PORTFOLIO_COINGECKO_ASSET_MAPPING=
+```
+
+향후 외부 가격평가가 필요한 별도 자산만 mapping에 유지합니다.
+
+```env
+PORTFOLIO_EXCLUDED_ASSETS=QI,APENFT
+PORTFOLIO_COINGECKO_ASSET_MAPPING=ABC=abc-token
+```
 
 ## Bot-attributed realized PnL
 

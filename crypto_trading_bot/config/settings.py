@@ -1,3 +1,4 @@
+from hashlib import sha256
 from functools import lru_cache
 from pathlib import Path
 from decimal import Decimal
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     coingecko_api_key: str = Field(default="", repr=False)
     coingecko_request_timeout_seconds: float = 5.0
     portfolio_coingecko_asset_mapping: str = ""
+    portfolio_excluded_assets: str = ""
 
     # Fear & Greed Index
     fear_greed_enabled: bool = True
@@ -276,6 +278,25 @@ class Settings(BaseSettings):
                 )
             mapping[normalized_asset] = normalized_coin_id
         return mapping
+
+    @property
+    def portfolio_excluded_asset_set(self) -> set[str]:
+        return {
+            asset.strip().upper()
+            for asset in self.portfolio_excluded_assets.split(",")
+            if asset.strip()
+        }
+
+    @property
+    def portfolio_valuation_policy_signature(self) -> str | None:
+        excluded_assets = self.portfolio_excluded_asset_set
+        if not excluded_assets:
+            # Legacy snapshots predate policy identity and therefore contain NULL.
+            # Keeping the empty policy as NULL avoids a false rollout discontinuity.
+            return None
+        canonical = ",".join(sorted(excluded_assets))
+        digest = sha256(canonical.encode("utf-8")).hexdigest()
+        return f"excluded-assets-v1:{digest}"
 
     @property
     def analysis_timeframe_list(self) -> list[str]:

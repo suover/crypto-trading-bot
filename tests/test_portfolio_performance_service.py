@@ -34,13 +34,20 @@ class CandleProvider:
         return self.rows
 
 
-def snapshot(snapshot_id: int, hours: int, value: str | None, status="COMPLETE"):
+def snapshot(
+    snapshot_id: int,
+    hours: int,
+    value: str | None,
+    status="COMPLETE",
+    policy: str | None = None,
+):
     row = PortfolioSnapshot(
         analysis_run_id=snapshot_id,
         pipeline_run_id=f"00000000-0000-0000-0000-{snapshot_id:012d}",
         user_id=1,
         exchange="UPBIT",
         quote_asset="KRW",
+        valuation_policy_signature=policy,
         priced_positions_value_krw=Decimal("0"),
         position_count=0,
         unpriced_asset_count=0,
@@ -235,9 +242,9 @@ def test_incomplete_cash_flow_rebaselines_next_complete_snapshot() -> None:
     )
     plans = service()._calculate(
         (
-            snapshot(1, 0, "100"),
-            snapshot(2, 24, "200"),
-            snapshot(3, 48, "210"),
+            snapshot(1, 0, "100", policy="policy-a"),
+            snapshot(2, 24, "200", policy="policy-a"),
+            snapshot(3, 48, "210", policy="policy-b"),
         ),
         (incomplete,),
         coverage(),
@@ -302,6 +309,60 @@ def test_complete_partial_complete_starts_a_fresh_baseline() -> None:
     assert plans[2].performance_status == "BASELINE"
     assert plans[2].safe_reason == "REBASELINE_AFTER_PARTIAL_GAP"
     assert plans[2].performance_index == 100
+
+
+def test_policy_change_rebaselines_without_treating_removed_value_as_loss() -> None:
+    plans = service()._calculate(
+        (
+            snapshot(1, 0, "1000", policy="policy-a"),
+            snapshot(2, 24, "757", policy="policy-b"),
+            snapshot(3, 48, "832.7", policy="policy-b"),
+        ),
+        (),
+        coverage(),
+    )
+
+    assert plans[0].performance_status == "BASELINE"
+    assert plans[1].performance_status == "BASELINE"
+    assert plans[1].safe_reason == "REBASELINE_AFTER_VALUATION_POLICY_CHANGE"
+    assert plans[1].period_return_percentage is None
+    assert plans[1].cumulative_return_percentage == 0
+    assert plans[1].performance_index == 100
+    assert plans[1].drawdown_percentage == 0
+    assert plans[1].max_drawdown_percentage == 0
+    assert plans[2].performance_status == "COMPLETE"
+    assert plans[2].period_return_percentage == Decimal("10.0000000000")
+    assert plans[2].performance_index == Decimal("110.0000000000")
+
+
+def test_same_policy_keeps_normal_complete_chronology() -> None:
+    plans = service()._calculate(
+        (
+            snapshot(1, 0, "100", policy="policy-a"),
+            snapshot(2, 24, "110", policy="policy-a"),
+        ),
+        (),
+        coverage(),
+    )
+
+    assert plans[1].performance_status == "COMPLETE"
+    assert plans[1].period_return_percentage == Decimal("10.0000000000")
+
+
+def test_partial_gap_reason_remains_distinct_from_policy_change() -> None:
+    plans = service()._calculate(
+        (
+            snapshot(1, 0, "100", policy="policy-a"),
+            snapshot(2, 24, None, "PARTIAL", policy="policy-b"),
+            snapshot(3, 48, "90", policy="policy-b"),
+        ),
+        (),
+        coverage(),
+    )
+
+    assert plans[1].safe_reason == "NAV_INCOMPLETE"
+    assert plans[2].performance_status == "BASELINE"
+    assert plans[2].safe_reason == "REBASELINE_AFTER_PARTIAL_GAP"
 
 
 def test_malformed_complete_cash_flow_is_still_fail_closed() -> None:

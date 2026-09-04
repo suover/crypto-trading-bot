@@ -213,6 +213,23 @@ def test_portfolio_coingecko_mapping_does_not_affect_universe_ranking() -> None:
     assert result.candidates[0].buy_eligible is True
 
 
+def test_portfolio_excluded_asset_is_not_ranked_or_added_as_held() -> None:
+    service = build_service(
+        markets=[descriptor("KRW-BTC"), descriptor("KRW-QI")],
+        tickers=[ticker("KRW-BTC", "1000"), ticker("KRW-QI", "2000")],
+        balances={"KRW": balance("10000"), "QI": balance("2")},
+        portfolio_excluded_assets="qi",
+    )
+
+    result = service.build_and_persist()
+
+    assert [candidate.market for candidate in result.candidates] == ["KRW-BTC"]
+    collected_markets = (
+        service.candle_service.collect_timeframes_for_markets.call_args.args[0]
+    )
+    assert collected_markets == ["KRW-BTC"]
+
+
 def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
     ranking = RecordingRanking(
         {

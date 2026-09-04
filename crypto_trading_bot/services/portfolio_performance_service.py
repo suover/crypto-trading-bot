@@ -210,6 +210,20 @@ class PortfolioPerformanceService:
                     )
                 )
                 continue
+            if (
+                _complete_nav(snapshot) is not None
+                and _complete_nav(previous) is not None
+                and snapshot.valuation_policy_signature
+                != previous.valuation_policy_signature
+            ):
+                plans.append(
+                    self._baseline(
+                        snapshot,
+                        previous=previous,
+                        safe_reason="REBASELINE_AFTER_VALUATION_POLICY_CHANGE",
+                    )
+                )
+                continue
             plans.append(
                 self._period(
                     snapshot,

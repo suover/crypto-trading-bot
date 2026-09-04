@@ -86,10 +86,20 @@ def validate_live_order_request(
     assert_live_order_safety_enabled(settings)
 
     normalized_action = action.strip().upper()
+    normalized_market = market.strip().upper()
 
     if normalized_action not in {"BUY", "SELL"}:
         raise LiveOrderSafetyError(
             f"Live order action must be BUY or SELL. action={action}"
+        )
+
+    market_parts = normalized_market.split("-", maxsplit=1)
+    if (
+        len(market_parts) == 2
+        and market_parts[1] in settings.portfolio_excluded_asset_set
+    ):
+        raise LiveOrderSafetyError(
+            f"Live order market is excluded by portfolio policy. market={market}"
         )
 
     if (

@@ -99,6 +99,7 @@ UPBIT_ORDERBOOK_COUNT=15
 COINGECKO_ENABLED=true
 COINGECKO_API_BASE_URL=https://api.coingecko.com/api/v3
 PORTFOLIO_COINGECKO_ASSET_MAPPING=
+PORTFOLIO_EXCLUDED_ASSETS=
 COINGECKO_API_KEY=
 COINGECKO_REQUEST_TIMEOUT_SECONDS=5
 
@@ -415,6 +416,15 @@ CoinGecko KRW 현재가를 fallback으로 사용합니다. 예를 들어 운영�
 0원으로 추정하지 않습니다. 유효한 same-pipeline Upbit 가격이 있으면 CoinGecko보다 항상
 우선하며 해당 asset은 외부 가격 요청 대상에서도 제외됩니다.
 
+`PORTFOLIO_EXCLUDED_ASSETS`는 계좌에는 남아 있지만 운용·NAV 평가 대상이 아닌 자산을
+명시하는 별도 정책입니다. 기본값은 비어 있으며, 공백·대소문자·중복을 정규화합니다.
+제외자산의 `AccountSnapshot`과 `PortfolioPositionSnapshot`은 삭제하지 않고 position을
+`EXCLUDED`/`POLICY_EXCLUDED`로 기록합니다. 다만 NAV, unpriced count, aggregate cost basis와
+미실현손익 completeness에서는 제외하고 CoinGecko에도 요청하지 않습니다. 우선순위는
+`EXCLUDED → same-pipeline Upbit → explicit CoinGecko mapping → UNPRICED`입니다.
+`EXCLUDED`는 가격을 모르는 `UNPRICED`와 다르며, 입출금이나 투자손실로 취급하지 않습니다.
+`position_count`는 audit를 위해 제외된 양수 보유자산 position도 포함합니다.
+
 ### Portfolio Performance accounting
 
 Portfolio Performance는 계좌 전체 `COMPLETE` NAV에서 완료된 외부 입출금만 제거하는
@@ -432,6 +442,10 @@ crypto는 Upbit `done_at`으로 저장된 `completed_at` 전에 완전히 종료
 연결해 cumulative return, high-water mark, drawdown, MDD를 계산합니다. 불완전 period를
 0%로 가정하지 않고 cumulative chain을 끊습니다. 이후 처음 나타나는 `COMPLETE` NAV는
 index 100의 새 baseline이 되며, 그 다음 연속 `COMPLETE` period부터 수익률 계산을 재개합니다.
+각 Portfolio snapshot은 비어 있지 않은 exclusion 정책의 정규화된 signature를 저장합니다.
+연속 COMPLETE snapshot의 signature가 바뀌면 정책상 빠진 가치를 손실로 계산하지 않고
+`REBASELINE_AFTER_VALUATION_POLICY_CHANGE` baseline을 생성합니다. 기존 빈 정책과 과거
+snapshot의 NULL signature는 같은 정책으로 취급됩니다.
 `high_water_mark_krw`와 `drawdown_krw`도 최초 COMPLETE NAV에 performance index를
 적용한 cash-flow-neutral KRW-equivalent이며 raw NAV 최고값이 아닙니다.
 

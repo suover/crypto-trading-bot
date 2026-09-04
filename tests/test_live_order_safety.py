@@ -141,6 +141,22 @@ def test_validate_live_order_request_allows_valid_sell_request() -> None:
     )
 
 
+@pytest.mark.parametrize("action", ["BUY", "SELL"])
+def test_validate_live_order_request_blocks_portfolio_excluded_asset(
+    action: str,
+) -> None:
+    settings = build_settings(portfolio_excluded_assets="btc")
+
+    with pytest.raises(LiveOrderSafetyError, match="excluded by portfolio policy"):
+        validate_live_order_request(
+            settings=settings,
+            action=action,
+            market="KRW-BTC",
+            amount_krw=Decimal("5000"),
+            quantity=Decimal("0.0001"),
+        )
+
+
 def test_validate_live_order_request_blocks_sell_quantity_zero() -> None:
     settings = build_settings()
 

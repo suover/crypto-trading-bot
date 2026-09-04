@@ -261,6 +261,9 @@ class PortfolioSnapshot(Base):
     )
     exchange: Mapped[str] = mapped_column(String(30), nullable=False)
     quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    valuation_policy_signature: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
     cash_available_krw: Mapped[Decimal | None] = mapped_column(
         Numeric(30, 10), nullable=True
     )

@@ -194,6 +194,7 @@ class PortfolioValuationService:
         if cash_row is None or cash_total is None:
             invalid_account_data = True
 
+        excluded_assets = self.settings.portfolio_excluded_asset_set
         upbit_price_by_asset: dict[
             str, tuple[str | None, MarketSnapshot | None, Decimal | None]
         ] = {}
@@ -211,6 +212,9 @@ class PortfolioValuationService:
                 else candidate_by_asset.get(currency)
             )
             market = candidate.market if candidate is not None else None
+            if currency in excluded_assets:
+                upbit_price_by_asset[currency] = (market, None, None)
+                continue
             market_snapshot = (
                 market_snapshot_by_market.get(market) if market is not None else None
             )
@@ -248,8 +252,9 @@ class PortfolioValuationService:
             market, market_snapshot, mark_price = upbit_price_by_asset.get(
                 currency, (None, None, None)
             )
-            price_source = "MARKET_SNAPSHOT"
-            if mark_price is None:
+            excluded = currency in excluded_assets
+            price_source = "POLICY_EXCLUDED" if excluded else "MARKET_SNAPSHOT"
+            if mark_price is None and not excluded:
                 mark_price = coingecko_prices.get(currency)
                 price_source = "COINGECKO" if mark_price is not None else "UNAVAILABLE"
             market_value = (
@@ -257,7 +262,9 @@ class PortfolioValuationService:
             )
             avg_buy_price = self._positive_decimal(account_row.avg_buy_price)
             estimated_cost_basis = (
-                total_quantity * avg_buy_price if avg_buy_price is not None else None
+                total_quantity * avg_buy_price
+                if avg_buy_price is not None and not excluded
+                else None
             )
             unrealized_pnl = (
                 market_value - estimated_cost_basis
@@ -269,13 +276,13 @@ class PortfolioValuationService:
                 if unrealized_pnl is not None and estimated_cost_basis > 0
                 else None
             )
-            if market_value is None:
+            if market_value is None and not excluded:
                 unpriced_count += 1
-            else:
+            elif market_value is not None:
                 priced_positions_value += market_value
-            if estimated_cost_basis is None:
+            if estimated_cost_basis is None and not excluded:
                 missing_cost_basis_count += 1
-            else:
+            elif estimated_cost_basis is not None:
                 positions_cost_basis += estimated_cost_basis
             position_values.append(
                 {
@@ -296,7 +303,11 @@ class PortfolioValuationService:
                     "unrealized_pnl_krw": unrealized_pnl,
                     "unrealized_pnl_percentage": unrealized_percentage,
                     "valuation_status": (
-                        "PRICED" if market_value is not None else "UNPRICED"
+                        "EXCLUDED"
+                        if excluded
+                        else "PRICED"
+                        if market_value is not None
+                        else "UNPRICED"
                     ),
                     "price_source": price_source,
                 }
@@ -330,6 +341,9 @@ class PortfolioValuationService:
             user_id=user.id,
             exchange=exchange,
             quote_asset=quote_asset,
+            valuation_policy_signature=(
+                self.settings.portfolio_valuation_policy_signature
+            ),
             cash_available_krw=cash_available,
             cash_locked_krw=cash_locked,
             cash_total_krw=cash_total,
