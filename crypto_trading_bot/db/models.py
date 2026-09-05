@@ -240,6 +240,89 @@ class MarketUniverseCandidate(Base):
     )
 
 
+class StrategyReplaySnapshot(Base):
+    __tablename__ = "strategy_replay_snapshots"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    pipeline_run_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    policy_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False, index=True
+    )
+    policy_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    research_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    prefilter_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    ranked_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    final_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class StrategyReplayCandidate(Base):
+    __tablename__ = "strategy_replay_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "strategy_replay_snapshot_id",
+            "exchange",
+            "market",
+            name="uq_strategy_replay_candidates_snapshot_exchange_market",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    strategy_replay_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("strategy_replay_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    base_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    in_prefilter: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    prefilter_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    held: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    buy_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sell_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    trading_supported: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    original_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    original_score: Mapped[Decimal | None] = mapped_column(
+        Numeric(18, 9), nullable=True
+    )
+    final_selected: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    final_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    selection_source: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    quote_trade_value_24h: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 2), nullable=True
+    )
+    feature_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class PortfolioSnapshot(Base):
     __tablename__ = "portfolio_snapshots"
     __table_args__ = (

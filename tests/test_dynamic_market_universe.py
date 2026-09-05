@@ -2,11 +2,16 @@ from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
 from crypto_trading_bot.analysis.market_ranking import MarketRankingPolicy
 from crypto_trading_bot.exchange.market_data import ExchangeMarketInfo, ExchangeTicker
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
+from crypto_trading_bot.services.strategy_replay_dataset_service import (
+    StrategyReplayDatasetService,
+)
 
 
 def descriptor(
@@ -198,6 +203,99 @@ def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding(
     assert position["unrealized_pnl_percentage"] == "25.00"
 
 
+def test_replay_dataset_uses_existing_pipeline_data_without_extra_provider_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    markets = [
+        descriptor("KRW-BTC"),
+        descriptor("KRW-ETH"),
+        descriptor("KRW-XRP"),
+        descriptor("KRW-ADA"),
+        descriptor("KRW-DOGE"),
+    ]
+    tickers = [
+        ticker("KRW-BTC", "500"),
+        ticker("KRW-ETH", "400"),
+        ticker("KRW-XRP", "300"),
+        ticker("KRW-ADA", "200"),
+        ticker("KRW-DOGE", "100"),
+    ]
+    balances = {"KRW": balance("10000"), "DOGE": balance("2")}
+    captured: list[dict] = []
+
+    def capture(self, **kwargs):
+        captured.append(kwargs)
+        return None
+
+    monkeypatch.setattr(StrategyReplayDatasetService, "capture", capture)
+    disabled = build_service(
+        markets=markets,
+        tickers=tickers,
+        balances=balances,
+        market_universe_prefilter_n=4,
+        market_universe_top_n=2,
+        strategy_replay_dataset_enabled=False,
+    )
+    disabled_result = disabled.build_and_persist()
+    disabled_calls = (
+        disabled.provider.list_markets.call_count,
+        disabled.provider.get_tickers.call_count,
+        disabled.provider.get_minute_candles.call_count,
+        disabled.provider.get_day_candles.call_count,
+        disabled.provider.get_orderbooks.call_count,
+        disabled.candle_service.collect_timeframes_for_markets.call_count,
+    )
+    assert captured == []
+
+    enabled = build_service(
+        markets=markets,
+        tickers=tickers,
+        balances=balances,
+        market_universe_prefilter_n=4,
+        market_universe_top_n=2,
+        strategy_replay_dataset_enabled=True,
+    )
+    enabled_result = enabled.build_and_persist()
+    enabled_calls = (
+        enabled.provider.list_markets.call_count,
+        enabled.provider.get_tickers.call_count,
+        enabled.provider.get_minute_candles.call_count,
+        enabled.provider.get_day_candles.call_count,
+        enabled.provider.get_orderbooks.call_count,
+        enabled.candle_service.collect_timeframes_for_markets.call_count,
+    )
+    assert enabled_calls == disabled_calls
+    assert len(captured) == 1
+    assert len(captured[0]["research_candidates"]) == 5
+    assert len(captured[0]["liquidity_prefilter"]) == 4
+    assert len(captured[0]["ranked_candidates"]) == 4
+    assert len(captured[0]["final_candidates"]) == 3
+    assert [row.market for row in enabled_result.candidates] == [
+        row.market for row in disabled_result.candidates
+    ]
+    assert len(enabled_result.candidates) == 3
+
+
+def test_replay_persistence_failure_does_not_fail_existing_universe(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def fail_capture(self, **kwargs):
+        raise RuntimeError("research write failed")
+
+    monkeypatch.setattr(StrategyReplayDatasetService, "capture", fail_capture)
+    service = build_service(
+        markets=[descriptor("KRW-BTC")],
+        tickers=[ticker("KRW-BTC", "1000")],
+        balances={"KRW": balance("10000")},
+        strategy_replay_dataset_enabled=True,
+    )
+    with caplog.at_level("ERROR"):
+        result = service.build_and_persist()
+    assert [row.market for row in result.candidates] == ["KRW-BTC"]
+    assert result.analysis_run.status == "SUCCESS"
+    assert "universe remains valid" in caplog.text
+
+
 def test_portfolio_coingecko_mapping_does_not_affect_universe_ranking() -> None:
     service = build_service(
         markets=[descriptor("KRW-BTC"), descriptor("KRW-XRP")],
@@ -366,12 +464,21 @@ def test_dynamic_filters_caution_blocklist_and_minimum_quote_trade_value() -> No
     assert result.liquidity_excluded_count == 1
 
 
-def test_static_mode_uses_allowed_registry_markets_without_discovery() -> None:
+def test_static_mode_uses_allowed_registry_markets_without_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[dict] = []
+    monkeypatch.setattr(
+        StrategyReplayDatasetService,
+        "capture",
+        lambda self, **kwargs: captured.append(kwargs),
+    )
     settings = Settings(
         database_url="postgresql://test:test@localhost/test",
         market_universe_mode="STATIC",
         allowed_markets="KRW-BTC,KRW-ETH",
         analysis_timeframes="15m",
+        strategy_replay_dataset_enabled=True,
     )
     session = MagicMock()
     session.scalar.return_value = SimpleNamespace(id=1)
@@ -419,6 +526,10 @@ def test_static_mode_uses_allowed_registry_markets_without_discovery() -> None:
     provider.get_tickers.assert_called_once_with(markets=["KRW-BTC", "KRW-ETH"])
     assert [row.market for row in result.candidates] == ["KRW-BTC", "KRW-ETH"]
     assert all(row.selection_source == "STATIC" for row in result.candidates)
+    assert len(captured[0]["research_candidates"]) == 2
+    assert captured[0]["liquidity_prefilter"] == []
+    assert captured[0]["ranked_candidates"] == []
+    assert len(captured[0]["final_candidates"]) == 2
 
 
 def test_ranking_does_not_reward_missing_risk_metrics() -> None:

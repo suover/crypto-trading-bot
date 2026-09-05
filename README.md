@@ -72,6 +72,22 @@ python -m scripts.report_recommendation_outcomes
 
 첫 명령은 DB write 없는 dry-run이지만 public historical candle 조회는 수행합니다.
 
+### Strategy Replay Dataset
+
+`STRATEGY_REPLAY_DATASET_ENABLED=false`가 기본입니다. 활성화하면 DYNAMIC universe가
+이미 수집한 liquidity prefilter와 HELD data-collection 후보, timeframe/orderbook feature,
+full ranking 및 final selection provenance를 별도 research 테이블에 저장합니다. 추가 Upbit,
+CoinGecko, OpenAI 또는 Telegram 호출은 없으며 기존 `MarketUniverseCandidate`와 GPT 후보는
+변경되지 않습니다. 이는 backtest 자체가 아니라 offline replay를 위한 데이터 기반입니다.
+배포 이전 후보는 완전하게 복원할 수 없으므로 추측성 backfill하지 않고 활성화 이후부터
+정확한 dataset을 축적합니다.
+
+```bash
+python -m scripts.report_strategy_replay_dataset --limit 50
+```
+
+이 report는 DB-only이며 어떤 row도 수정하지 않습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

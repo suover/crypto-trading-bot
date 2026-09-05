@@ -42,6 +42,7 @@ SETTINGS_ENV_NAMES = (
     "RECOMMENDATION_OUTCOME_INTERVAL_SECONDS",
     "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES",
     "RECOMMENDATION_OUTCOME_BATCH_SIZE",
+    "STRATEGY_REPLAY_DATASET_ENABLED",
     "PORTFOLIO_COINGECKO_ASSET_MAPPING",
     "PORTFOLIO_EXCLUDED_ASSETS",
 )
@@ -68,6 +69,7 @@ def test_openai_trade_defaults() -> None:
     assert settings.openai_reasoning_effort == "medium"
     assert settings.market_universe_mode == "STATIC"
     assert settings.live_dynamic_market_enabled is False
+    assert settings.strategy_replay_dataset_enabled is False
     assert settings.live_order_chance_preflight_enabled is False
     assert settings.analysis_timeframe_list == ["15m", "60m", "240m", "1d"]
     assert settings.live_order_reconciliation_enabled is True

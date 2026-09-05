@@ -13,6 +13,21 @@ Rollout은 migration 및 DB backup 후 disabled 상태를 확인하고, 작은 `
 소량 `--apply`, DB/report 검증 순으로 진행합니다. 그 후 운영자가 `.env`를 백업하고 flag를
 켜 worker를 recreate한 뒤 로그, 최초 1h outcome, runtime safety를 확인합니다.
 
+## Strategy Replay Dataset
+
+`STRATEGY_REPLAY_DATASET_ENABLED=false`가 기본입니다. 활성화된 market-universe pipeline은
+이미 메모리에 수집된 prefilter/HELD 후보와 ranking 결과만 별도 research dataset에
+저장하므로 외부 API 호출량과 LIVE/GPT 후보 집합은 변하지 않습니다. Research 저장은
+SAVEPOINT로 격리되며 실패 시 오류를 기록하고 기존 universe pipeline은 계속됩니다.
+과거 prefilter 탈락 후보는 복원하지 않으며 활성화 이후 데이터만 authoritative합니다.
+
+```bash
+python -m scripts.report_strategy_replay_dataset --limit 50
+```
+
+Report는 DB-only read입니다. 이 기능은 replay/backtest engine이나 outcome 계산을 수행하지
+않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

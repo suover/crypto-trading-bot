@@ -115,6 +115,9 @@ class Settings(BaseSettings):
     recommendation_outcome_horizons_minutes: str = "60,240,1440"
     recommendation_outcome_batch_size: int = Field(default=50, ge=1, le=500)
 
+    # In-pipeline, DB-only research dataset. Disabled by default for safe rollout.
+    strategy_replay_dataset_enabled: bool = False
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

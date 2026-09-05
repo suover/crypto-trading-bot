@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+import logging
 from typing import Any
 
 from sqlalchemy import select
@@ -40,6 +41,7 @@ from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 MIN_CANDLES_FOR_ADVICE = 20
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -276,6 +278,7 @@ class MarketUniverseService:
                 for value in candidate["timeframes"].values()
             )
         if self.settings.market_universe_mode == "STATIC":
+            ranked: list[dict[str, Any]] = []
             final = []
             for rank, candidate in enumerate(data_collection_candidates, start=1):
                 final.append(
@@ -385,6 +388,40 @@ class MarketUniverseService:
                 )
             )
         self.session.flush()
+        if self.settings.strategy_replay_dataset_enabled:
+            from crypto_trading_bot.services.strategy_replay_dataset_service import (
+                StrategyReplayDatasetService,
+            )
+
+            replay_prefilter = (
+                liquidity_prefilter
+                if self.settings.market_universe_mode == "DYNAMIC"
+                else []
+            )
+            replay_ranked = (
+                ranked if self.settings.market_universe_mode == "DYNAMIC" else []
+            )
+            try:
+                with self.session.begin_nested():
+                    StrategyReplayDatasetService(self.session).capture(
+                        analysis_run=analysis_run,
+                        user=user,
+                        exchange=exchange,
+                        quote_asset=quote_asset,
+                        settings=self.settings,
+                        ranking_policy=self.ranking_policy,
+                        research_candidates=data_collection_candidates,
+                        liquidity_prefilter=replay_prefilter,
+                        ranked_candidates=replay_ranked,
+                        final_candidates=final,
+                    )
+            except Exception:
+                logger.exception(
+                    "Strategy replay dataset persistence failed; universe remains valid. "
+                    "analysis_run_id=%s pipeline_run_id=%s",
+                    analysis_run.id,
+                    pipeline_run_id,
+                )
         return MarketUniverseBuildResult(
             analysis_run=analysis_run,
             candidates=persisted,
