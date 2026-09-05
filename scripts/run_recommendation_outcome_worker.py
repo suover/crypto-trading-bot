@@ -13,30 +13,69 @@ def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-def run_cycle(session_factory, *, horizons: tuple[int, ...], batch_size: int):
+def run_cycle(
+    session_factory, *, horizons: tuple[int, ...], batch_size: int, price_resolver=None
+):
     from crypto_trading_bot.services.recommendation_outcome_service import (
         RecommendationOutcomeService,
     )
 
     with session_factory() as session:
-        result = RecommendationOutcomeService(session).evaluate_due(
-            horizons=horizons,
-            batch_size=batch_size,
-            apply=True,
-        )
-        session.commit()
-        return result
+        try:
+            result = RecommendationOutcomeService(
+                session, price_resolver=price_resolver
+            ).evaluate_due(
+                horizons=horizons,
+                batch_size=batch_size,
+                apply=True,
+            )
+            session.commit()
+            return result
+        except Exception:
+            session.rollback()
+            raise
+
+
+def run_research_cycle(
+    session_factory, *, horizons: tuple[int, ...], batch_size: int, price_resolver=None
+):
+    from crypto_trading_bot.services.research_candidate_outcome_service import (
+        ResearchCandidateOutcomeService,
+    )
+
+    with session_factory() as session:
+        try:
+            result = ResearchCandidateOutcomeService(
+                session, price_resolver=price_resolver
+            ).evaluate_due(
+                horizons=horizons,
+                batch_size=batch_size,
+                apply=True,
+            )
+            session.commit()
+            return result
+        except Exception:
+            session.rollback()
+            raise
 
 
 def run_worker(*, once: bool = False) -> None:
     from crypto_trading_bot.config.settings import get_settings
 
     settings = get_settings()
-    interval = settings.recommendation_outcome_interval_seconds
-    if not settings.recommendation_outcome_enabled:
-        print("Recommendation outcome worker inactive (disabled).", flush=True)
+    recommendation_enabled = settings.recommendation_outcome_enabled
+    research_enabled = settings.research_candidate_outcome_enabled
+    intervals = (
+        settings.recommendation_outcome_interval_seconds,
+        settings.research_candidate_outcome_interval_seconds,
+    )
+    if not recommendation_enabled and not research_enabled:
+        print(
+            "Recommendation outcome worker inactive (all analytics disabled).",
+            flush=True,
+        )
         while not once:
-            time.sleep(interval)
+            time.sleep(min(intervals))
         return
 
     from crypto_trading_bot.db.database import SessionLocal
@@ -47,23 +86,84 @@ def run_worker(*, once: bool = False) -> None:
         print("Another recommendation outcome worker is running. Worker will exit.")
         return
     try:
-        print("Recommendation outcome worker started. Public market data only.")
+        print(
+            "Recommendation outcome worker started. Public market data only. "
+            f"recommendation_enabled={recommendation_enabled} "
+            f"research_enabled={research_enabled}"
+        )
+        recommendation_next_due = time.monotonic()
+        research_next_due = time.monotonic()
         while True:
-            started = time.monotonic()
-            result = run_cycle(
-                SessionLocal,
-                horizons=settings.recommendation_outcome_horizon_list,
-                batch_size=settings.recommendation_outcome_batch_size,
+            now = time.monotonic()
+            recommendation_due = recommendation_enabled and (
+                once or now >= recommendation_next_due
             )
-            print(
-                "Recommendation outcome cycle completed. "
-                f"recommendation_count={result.recommendation_count} "
-                f"due_outcome_count={result.due_outcome_count}",
-                flush=True,
-            )
+            research_due = research_enabled and (once or now >= research_next_due)
+            price_resolver = None
+            if recommendation_due or research_due:
+                from crypto_trading_bot.services.historical_outcome_price_resolver import (
+                    HistoricalOutcomePriceResolver,
+                )
+
+                price_resolver = HistoricalOutcomePriceResolver()
+            if recommendation_due:
+                try:
+                    result = run_cycle(
+                        SessionLocal,
+                        horizons=settings.recommendation_outcome_horizon_list,
+                        batch_size=settings.recommendation_outcome_batch_size,
+                        price_resolver=price_resolver,
+                    )
+                    print(
+                        "Recommendation outcome cycle completed. "
+                        f"recommendation_count={result.recommendation_count} "
+                        f"due_outcome_count={result.due_outcome_count}",
+                        flush=True,
+                    )
+                except Exception as error:
+                    print(
+                        "Recommendation outcome cycle failed. "
+                        f"error_type={type(error).__name__}",
+                        flush=True,
+                    )
+                recommendation_next_due = (
+                    time.monotonic() + settings.recommendation_outcome_interval_seconds
+                )
+            if research_due:
+                try:
+                    research = run_research_cycle(
+                        SessionLocal,
+                        horizons=settings.research_candidate_outcome_horizon_list,
+                        batch_size=settings.research_candidate_outcome_batch_size,
+                        price_resolver=price_resolver,
+                    )
+                    print(
+                        "Research candidate outcome cycle completed. "
+                        f"candidate_count={research.candidate_count} "
+                        f"due_outcome_count={research.due_outcome_count}",
+                        flush=True,
+                    )
+                except Exception as error:
+                    print(
+                        "Research candidate outcome cycle failed. "
+                        f"error_type={type(error).__name__}",
+                        flush=True,
+                    )
+                research_next_due = (
+                    time.monotonic()
+                    + settings.research_candidate_outcome_interval_seconds
+                )
             if once:
                 return
-            time.sleep(max(0, interval - (time.monotonic() - started)))
+            next_due = min(
+                due
+                for enabled, due in (
+                    (recommendation_enabled, recommendation_next_due),
+                    (research_enabled, research_next_due),
+                )
+                if enabled
+            )
+            time.sleep(max(0, next_due - time.monotonic()))
     finally:
         lock.release()
 

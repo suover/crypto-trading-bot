@@ -57,6 +57,30 @@ outcome을 변경하거나 재구성하지 못합니다. HELD-only final augment
 비교에서 제외합니다. Batch의 각 snapshot은 자기 stored policy를 baseline으로 사용하고
 동일 CLI override를 각 historical baseline에 독립적으로 적용합니다.
 
+## Research Candidate Outcome
+
+Research Candidate Outcome은 persisted Strategy Replay ranking 후보의 1h/4h/24h 기본 horizon
+gross market movement를 계산합니다. 기준은 scheduler 시간이 아니라 snapshot
+`captured_at`이며 target은 정확히 `captured_at + horizon`입니다. Frozen candidate
+`latest_price`를 시작가로 사용하고 current ticker fallback은 하지 않습니다. 종료가는 target
+이전에 완전히 닫힌 Upbit 1분봉만 사용하므로 target minute 또는 미래 candle을 보지 않습니다.
+
+기존 `recommendation-outcome-worker`가 Recommendation Outcome과 Research Outcome을 독립된
+enabled flag, interval, session/transaction으로 실행합니다. 둘 중 하나만 활성화해도 worker는
+동작하고 `--once`는 활성화된 cycle을 각각 한 번 실행합니다. 별도 container나 private Upbit,
+OpenAI, Telegram secret/call은 추가하지 않습니다. Public historical request만 증가합니다.
+
+```bash
+python -m scripts.rebuild_research_candidate_outcomes --limit 20
+python -m scripts.rebuild_research_candidate_outcomes --snapshot-id 123 --apply
+python -m scripts.report_research_candidate_outcomes --limit 50
+```
+
+기본 rebuild는 public 조회가 가능한 DRY_RUN이며 DB를 rollback합니다. APPLY는 기존 analytics
+worker advisory lock을 획득한 경우에만 derived row를 upsert합니다. COMPLETE는 재조회하지 않고
+historical price unavailable PARTIAL만 재시도합니다. Report는 DB-only입니다. 이 데이터는
+actual trading PnL이나 아직 구현하지 않은 Strategy A/B aggregate 성과가 아닙니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

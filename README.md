@@ -128,6 +128,38 @@ stored historical value를 유지합니다. Component weights는 음수가 아�
 `effective_top_n=min(requested_top_n, rankable_candidate_count)`를 사용하고 둘 다
 report합니다.
 
+### Research Candidate Outcome
+
+Research Candidate Outcome은 `StrategyReplayCandidate` ranking pool 후보의 미래 gross
+market movement를 저장합니다. Recommendation PnL이나 실제 trading PnL이 아니며 Strategy
+A/B aggregate 성과 비교도 이 단계에서는 수행하지 않습니다. 기본 horizon은
+60/240/1440분(1h/4h/24h)이고 설정으로 변경할 수 있습니다.
+
+기준시각은 매매 scheduler 시각이나 실행 횟수가 아니라 각
+`StrategyReplaySnapshot.captured_at`이며 `target_at = captured_at + horizon`입니다. 시작가는
+frozen `feature_data.latest_price`만 사용하고 현재 ticker로 보완하지 않습니다. 종료가는
+target 시각까지 완전히 닫힌 Upbit 1분봉(`candle_at + 1 minute <= target_at`) 중 최신 종가만
+사용합니다. 시장수익률은 `(end_price / reference_price - 1) * 100`입니다.
+
+평가 대상은 `in_prefilter=true`, `buy_eligible=true`, `enough_candles=true`인 후보입니다.
+HELD-only와 다른 non-rankable 후보는 public 호출을 하지 않습니다. COMPLETE는 immutable하게
+재조회하지 않고 `HISTORICAL_PRICE_UNAVAILABLE`만 재시도합니다. Frozen reference가 없거나
+지원하지 않는 exchange는 non-retryable PARTIAL입니다.
+
+기존 `recommendation-outcome-worker`가 두 analytics를 각각 독립 설정·interval·DB transaction으로
+실행합니다. 별도 Docker service는 없습니다. OpenAI/Telegram/private Upbit 추가 호출이나 비용은
+없지만, due candidate마다 public historical candle 호출은 증가할 수 있습니다. Exact
+exchange/market/target cache, COMPLETE skip, rankable-only scope로 반복 호출을 줄입니다.
+
+```bash
+python -m scripts.rebuild_research_candidate_outcomes --limit 20
+python -m scripts.rebuild_research_candidate_outcomes --snapshot-id 123 --apply
+python -m scripts.report_research_candidate_outcomes --limit 50
+```
+
+Rebuild 기본값은 DRY_RUN으로 public candle 조회 후 rollback합니다. `--apply`만 derived outcome
+row를 upsert합니다. Report는 외부 호출 없는 DB-only 조회입니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

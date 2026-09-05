@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import and_, exists, func, or_, select
@@ -18,12 +18,14 @@ from crypto_trading_bot.exchange.market_data import ExchangeMarketDataProvider
 from crypto_trading_bot.exchange.upbit_market_data_provider import (
     UpbitMarketDataProvider,
 )
+from crypto_trading_bot.services.historical_outcome_price_resolver import (
+    HistoricalOutcomePriceResolver,
+)
 
 
 REFERENCE_PRICE_SOURCE = "MARKET_UNIVERSE_CANDIDATE"
 END_PRICE_SOURCE = "UPBIT_MINUTE_CANDLE_1M_CLOSE"
 UNAVAILABLE_SOURCE = "UNAVAILABLE"
-HISTORICAL_CANDLE_COUNT = 10
 
 
 @dataclass(frozen=True)
@@ -49,14 +51,15 @@ class RecommendationOutcomeService:
         session: Session,
         *,
         market_data_provider: ExchangeMarketDataProvider | None = None,
+        price_resolver: HistoricalOutcomePriceResolver | None = None,
         now_fn: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self.session = session
         self.provider = market_data_provider or UpbitMarketDataProvider()
+        self.price_resolver = price_resolver or HistoricalOutcomePriceResolver(
+            self.provider
+        )
         self.now_fn = now_fn
-        self._price_cache: dict[
-            tuple[str, datetime], tuple[Decimal, datetime] | None
-        ] = {}
 
     def evaluate_due(
         self,
@@ -418,29 +421,11 @@ class RecommendationOutcomeService:
     def _historical_price(
         self, market: str, target_at: datetime
     ) -> tuple[Decimal, datetime] | None:
-        key = (market, target_at)
-        if key in self._price_cache:
-            return self._price_cache[key]
-        try:
-            rows = self.provider.get_minute_candles(
-                market, unit=1, count=HISTORICAL_CANDLE_COUNT, to=target_at
-            )
-        except Exception:
-            rows = []
-        eligible: list[tuple[datetime, Decimal]] = []
-        for row in rows:
-            candle_at = self._parse_upbit_utc(row.get("candle_date_time_utc"))
-            price = self._positive_decimal(row.get("trade_price"))
-            if (
-                candle_at is not None
-                and price is not None
-                and candle_at + timedelta(minutes=1) <= target_at
-            ):
-                eligible.append((candle_at, price))
-        selected = max(eligible, default=None, key=lambda item: item[0])
-        result = (selected[1], selected[0]) if selected else None
-        self._price_cache[key] = result
-        return result
+        return self.price_resolver.resolve(
+            exchange=self.provider.exchange_code,
+            market=market,
+            target_at=target_at,
+        )
 
     @staticmethod
     def _record_counts(counts, horizon_counts, prefix, existing, values) -> None:
@@ -459,28 +444,12 @@ class RecommendationOutcomeService:
 
     @staticmethod
     def _positive_decimal(value: object) -> Decimal | None:
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            parsed = Decimal(str(value).strip())
-        except InvalidOperation, TypeError, ValueError:
-            return None
-        return parsed if parsed.is_finite() and parsed > 0 else None
+        return HistoricalOutcomePriceResolver.positive_decimal(value)
 
     @staticmethod
     def _aware_utc(value: datetime | None) -> datetime | None:
-        if value is None or value.tzinfo is None or value.utcoffset() is None:
-            return None
-        return value.astimezone(UTC)
+        return HistoricalOutcomePriceResolver.aware_utc(value)
 
     @staticmethod
     def _parse_upbit_utc(value: object) -> datetime | None:
-        if not isinstance(value, str) or not value.strip():
-            return None
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=UTC)
-        return parsed.astimezone(UTC)
+        return HistoricalOutcomePriceResolver.parse_upbit_utc(value)

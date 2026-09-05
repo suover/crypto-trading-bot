@@ -243,6 +243,10 @@ def test_recommendation_outcome_worker_is_opt_in_public_only_and_deploy_managed(
     assert deploy.count("recommendation-outcome-worker") >= 4
     safety = read_repository_file("scripts/check_server_runtime_safety.sh")
     assert "crypto-trading-recommendation-outcome-worker" in safety
+    assert "RESEARCH_CANDIDATE_OUTCOME_ENABLED" in safety
+    assert "Research Candidate Outcome analytics가 비활성화" in safety
+    assert "거래 실행에는 영향이 없습니다" in safety
+    assert "research-candidate-outcome-worker:" not in compose
 
 
 def test_operational_alert_worker_is_minimum_secret_default_runtime() -> None:

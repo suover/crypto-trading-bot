@@ -42,6 +42,10 @@ SETTINGS_ENV_NAMES = (
     "RECOMMENDATION_OUTCOME_INTERVAL_SECONDS",
     "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES",
     "RECOMMENDATION_OUTCOME_BATCH_SIZE",
+    "RESEARCH_CANDIDATE_OUTCOME_ENABLED",
+    "RESEARCH_CANDIDATE_OUTCOME_INTERVAL_SECONDS",
+    "RESEARCH_CANDIDATE_OUTCOME_HORIZONS_MINUTES",
+    "RESEARCH_CANDIDATE_OUTCOME_BATCH_SIZE",
     "STRATEGY_REPLAY_DATASET_ENABLED",
     "PORTFOLIO_COINGECKO_ASSET_MAPPING",
     "PORTFOLIO_EXCLUDED_ASSETS",
@@ -70,6 +74,10 @@ def test_openai_trade_defaults() -> None:
     assert settings.market_universe_mode == "STATIC"
     assert settings.live_dynamic_market_enabled is False
     assert settings.strategy_replay_dataset_enabled is False
+    assert settings.research_candidate_outcome_enabled is False
+    assert settings.research_candidate_outcome_interval_seconds == 300
+    assert settings.research_candidate_outcome_horizon_list == (60, 240, 1440)
+    assert settings.research_candidate_outcome_batch_size == 20
     assert settings.live_order_chance_preflight_enabled is False
     assert settings.analysis_timeframe_list == ["15m", "60m", "240m", "1d"]
     assert settings.live_order_reconciliation_enabled is True
@@ -229,6 +237,35 @@ def test_openai_trade_settings_support_environment_overrides(
 
     assert settings.openai_trade_model == "test-trade-model"
     assert settings.openai_reasoning_effort == "low"
+
+
+def test_research_candidate_outcome_horizons_are_sorted_and_deduplicated() -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        research_candidate_outcome_horizons_minutes="240,60,1440,60",
+    )
+    assert settings.research_candidate_outcome_horizon_list == (60, 240, 1440)
+
+
+@pytest.mark.parametrize("value", ["", "60,,240", "bad", "0", "-1,60"])
+def test_research_candidate_outcome_horizons_reject_invalid_values(value) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            research_candidate_outcome_horizons_minutes=value,
+        )
+
+
+@pytest.mark.parametrize("value", [0, 501])
+def test_research_candidate_outcome_batch_rejects_invalid_bounds(value) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            research_candidate_outcome_batch_size=value,
+        )
 
 
 def test_openai_reasoning_effort_can_be_disabled(

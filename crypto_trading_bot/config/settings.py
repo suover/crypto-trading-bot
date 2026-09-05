@@ -115,6 +115,14 @@ class Settings(BaseSettings):
     recommendation_outcome_horizons_minutes: str = "60,240,1440"
     recommendation_outcome_batch_size: int = Field(default=50, ge=1, le=500)
 
+    # Ranking-candidate future market movement. Shares the public-data worker.
+    research_candidate_outcome_enabled: bool = False
+    research_candidate_outcome_interval_seconds: int = Field(
+        default=300, ge=30, le=86400
+    )
+    research_candidate_outcome_horizons_minutes: str = "60,240,1440"
+    research_candidate_outcome_batch_size: int = Field(default=20, ge=1, le=500)
+
     # In-pipeline, DB-only research dataset. Disabled by default for safe rollout.
     strategy_replay_dataset_enabled: bool = False
 
@@ -247,6 +255,7 @@ class Settings(BaseSettings):
         self.operational_alert_retry_delay_list
         self.portfolio_coingecko_asset_identity_map
         self.recommendation_outcome_horizon_list
+        self.research_candidate_outcome_horizon_list
 
         return self
 
@@ -299,21 +308,29 @@ class Settings(BaseSettings):
 
     @property
     def recommendation_outcome_horizon_list(self) -> tuple[int, ...]:
-        raw_values = self.recommendation_outcome_horizons_minutes.split(",")
+        return self._positive_horizon_list(
+            self.recommendation_outcome_horizons_minutes,
+            "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES",
+        )
+
+    @property
+    def research_candidate_outcome_horizon_list(self) -> tuple[int, ...]:
+        return self._positive_horizon_list(
+            self.research_candidate_outcome_horizons_minutes,
+            "RESEARCH_CANDIDATE_OUTCOME_HORIZONS_MINUTES",
+        )
+
+    @staticmethod
+    def _positive_horizon_list(raw: str, variable_name: str) -> tuple[int, ...]:
+        raw_values = raw.split(",")
         if not raw_values or any(not value.strip() for value in raw_values):
-            raise ValueError(
-                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
-            )
+            raise ValueError(f"{variable_name} must contain positive integers")
         try:
             horizons = {int(value.strip()) for value in raw_values}
         except ValueError as exc:
-            raise ValueError(
-                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
-            ) from exc
+            raise ValueError(f"{variable_name} must contain positive integers") from exc
         if not horizons or any(value <= 0 for value in horizons):
-            raise ValueError(
-                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
-            )
+            raise ValueError(f"{variable_name} must contain positive integers")
         return tuple(sorted(horizons))
 
     @property
