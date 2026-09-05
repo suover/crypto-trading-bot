@@ -28,6 +28,35 @@ python -m scripts.report_strategy_replay_dataset --limit 50
 Report는 DB-only read입니다. 이 기능은 replay/backtest engine이나 outcome 계산을 수행하지
 않습니다.
 
+## Offline Strategy Replay v1
+
+수동 replay CLI는 `StrategyReplaySnapshot`과 연결된 persisted
+`StrategyReplayCandidate`만 읽습니다. Snapshot의 historical policy를 복원하고 원래
+persisted prefilter pool 안에서 기존 heuristic ranking policy를 호출합니다. DB write,
+외부 API, GPT, Telegram, LIVE 변경 및 profitability 평가는 없습니다. 알 수 없는
+schema/policy, invalid data, baseline rank/score mismatch는 fail-closed로 보고합니다.
+
+```bash
+python -m scripts.replay_strategy_rankings --snapshot-id 123
+
+python -m scripts.replay_strategy_rankings \
+  --snapshot-id 123 \
+  --override liquidity=0.20 \
+  --override trend_alignment=0.20 \
+  --override momentum=0.30 \
+  --override volume_confirmation=0.10 \
+  --override spread=0.08 \
+  --override volatility=0.07 \
+  --override drawdown=0.05
+
+python -m scripts.replay_strategy_rankings --latest 50 --top-n 5
+```
+
+v1은 prefilter/filter/blocklist/universe input, GPT recommendation, sizing 또는 미래
+outcome을 변경하거나 재구성하지 못합니다. HELD-only final augmentation은 ranked Top N
+비교에서 제외합니다. Batch의 각 snapshot은 자기 stored policy를 baseline으로 사용하고
+동일 CLI override를 각 historical baseline에 독립적으로 적용합니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

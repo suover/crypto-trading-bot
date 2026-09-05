@@ -88,6 +88,46 @@ python -m scripts.report_strategy_replay_dataset --limit 50
 
 이 report는 DB-only이며 어떤 row도 수정하지 않습니다.
 
+### Offline Strategy Replay v1
+
+Offline Strategy Replay v1은 수동 실행하는 DB-only/read-only ranking
+counterfactual 도구입니다. 각 snapshot에 저장된
+`HeuristicMarketRankingPolicy` weights를 복원하고, 당시 원래 persisted
+prefilter pool 안에서만 기존 ranking 구현을 다시 실행합니다. Rankable 조건은
+`in_prefilter=true`, `buy_eligible=true`,
+`feature_data.enough_candles=true`이며 HELD-only augmentation은 별도로 표시하고
+replay Top N에는 포함하지 않습니다.
+
+현재 시장·portfolio·outcome·registry 데이터를 조회하지 않으며 Upbit,
+CoinGecko, OpenAI, Fear & Greed, Telegram 호출이 없습니다. 현재 Production
+policy도 바꾸지 않고 profitability를 평가하지 않습니다. 알 수 없는 dataset
+version/policy, 손상된 입력, baseline 재현 불일치는 fail-closed합니다. v1은
+prefilter 크기, liquidity/warning/caution filter, blocklist, universe/exchange/quote/
+timeframe 설정, GPT 결정, trade ratio, sizing, 미래 수익을 replay하지 못합니다.
+
+```bash
+python -m scripts.replay_strategy_rankings --snapshot-id 123
+
+python -m scripts.replay_strategy_rankings \
+  --snapshot-id 123 \
+  --override liquidity=0.20 \
+  --override trend_alignment=0.20 \
+  --override momentum=0.30 \
+  --override volume_confirmation=0.10 \
+  --override spread=0.08 \
+  --override volatility=0.07 \
+  --override drawdown=0.05
+
+python -m scripts.replay_strategy_rankings --latest 50 --top-n 5
+```
+
+지정하지 않은 override field는 현재 코드 default가 아니라 해당 snapshot의
+stored historical value를 유지합니다. Component weights는 음수가 아니고 합이
+정확히 1이어야 하며 자동 normalize하지 않습니다. Reference parameter는 양수여야
+합니다. 요청 Top N이 rankable pool보다 크면
+`effective_top_n=min(requested_top_n, rankable_candidate_count)`를 사용하고 둘 다
+report합니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
