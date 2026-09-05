@@ -41,6 +41,7 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 | `account-activity-sync-worker` | 상시 실행 | Upbit 종료 주문·입금·출금 GET 및 source ledger 동기화 (기본 비활성) |
 | `bot-trading-pnl-worker` | 상시 실행 | 실제 bot LIVE 체결의 DB-only FIFO 회계 (기본 비활성) |
 | `portfolio-performance-worker` | 상시 실행 | 외부 입출금 영향을 제거한 계좌 성과 계산 (기본 비활성) |
+| `recommendation-outcome-worker` | 상시 실행 | 추천 이후 1h/4h/24h 시장 결과 평가 (기본 비활성) |
 | `ai-trade-analysis`       | 수동 실행      | 시장/계좌/캔들 수집, AI 추천 생성, Telegram 알림 발송 |
 
 기본 서버/프로덕션 유사 런타임에는 `account-activity-sync-worker`도 포함되지만 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false` 기본값에서는 DB/API 접근 없이 대기합니다. 배포만으로 authenticated polling이 시작되지 않습니다. `ai-trade-scheduler`는 기본 런타임에 포함되지 않으며, `scheduler` profile을 명시할 때만 실행됩니다.
@@ -48,6 +49,28 @@ Docker Compose 기준으로 다음 서비스가 실행됩니다.
 `ai-trade-analysis`는 `manual` profile에 포함된 수동 실행 서비스입니다. 즉시 1회 분석을 테스트할 때 사용합니다.
 
 Production scheduled LIVE에서는 기본 런타임에 더해 `scheduler` profile의 `ai-trade-scheduler`를 명시적으로 실행합니다. 배포와 운영 점검 절차는 [Production LIVE 운영 문서](docs/PRODUCTION_LIVE.md)를 따릅니다.
+
+### AI 추천 사후성과 평가
+
+`recommendation-outcome-worker`는 최종 저장된 추천 신호를 실제 주문·체결 여부와
+분리해 평가합니다. 시작가는 동일 pipeline의 exact `MarketUniverseCandidate`에 저장된
+가격만 사용하고, 종료가는 target 시각까지 완전히 닫힌 Upbit 1분봉 종가만 사용합니다.
+BUY는 시장 수익률, SELL은 그 부호를 반전한 action-aligned gross return을 기록합니다.
+HOLD는 이후 시장 수익률만 기록하며 WIN/LOSS 적중률로 해석하지 않습니다. 수수료,
+스프레드, 슬리피지와 실제 손익은 포함하지 않습니다.
+
+기본 horizon은 60/240/1440분이며 exact universe 후보도 함께 평가합니다. confidence는
+모델의 self-report일 뿐 성공 확률이 아닙니다. worker는
+`RECOMMENDATION_OUTCOME_ENABLED=false`가 기본이고 DB password와 public Upbit market
+data만 사용합니다.
+
+```bash
+python -m scripts.rebuild_recommendation_outcomes --limit 10
+python -m scripts.rebuild_recommendation_outcomes --limit 10 --apply
+python -m scripts.report_recommendation_outcomes
+```
+
+첫 명령은 DB write 없는 dry-run이지만 public historical candle 조회는 수행합니다.
 
 ## 사전 준비
 

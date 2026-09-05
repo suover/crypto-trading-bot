@@ -402,6 +402,132 @@ class TradeRecommendation(Base):
     )
 
 
+class TradeRecommendationOutcome(Base):
+    __tablename__ = "trade_recommendation_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id",
+            "horizon_minutes",
+            name="uq_recommendation_outcomes_recommendation_horizon",
+        ),
+        Index("ix_recommendation_outcomes_user_target", "user_id", "target_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("trade_recommendations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+    horizon_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    recommendation_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    target_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reference_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    reference_price_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    end_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    end_price_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    end_price_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    market_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 12), nullable=True
+    )
+    action_aligned_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 12), nullable=True
+    )
+    directional_result: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    evaluation_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )
+    safe_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class TradeRecommendationCandidateOutcome(Base):
+    __tablename__ = "trade_recommendation_candidate_outcomes"
+    __table_args__ = (
+        UniqueConstraint(
+            "recommendation_id",
+            "universe_candidate_id",
+            "horizon_minutes",
+            name="uq_candidate_outcomes_recommendation_candidate_horizon",
+        ),
+        Index("ix_candidate_outcomes_user_target", "user_id", "target_at"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("trade_recommendations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    universe_candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("market_universe_candidates.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    market: Mapped[str] = mapped_column(String(30), nullable=False)
+    horizon_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    recommendation_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    target_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score: Mapped[Decimal | None] = mapped_column(Numeric(18, 9), nullable=True)
+    selection_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    buy_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sell_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    held: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_selected: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reference_price: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 10), nullable=True
+    )
+    end_price: Mapped[Decimal | None] = mapped_column(Numeric(30, 10), nullable=True)
+    end_price_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    end_price_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    market_return_percentage: Mapped[Decimal | None] = mapped_column(
+        Numeric(30, 12), nullable=True
+    )
+    evaluation_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, index=True
+    )
+    safe_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class ApprovalRequest(Base):
     __tablename__ = "approval_requests"
 

@@ -1,5 +1,13 @@
 # Production scheduled LIVE 운영 및 배포
 
+## Recommendation outcome rollout
+
+Recommendation outcome은 signal quality 사후평가이며 OrderFill/Bot PnL/PortfolioPerformance와
+분리됩니다. 배포만으로 polling되지 않도록 기본값은 disabled입니다. 배포와 migration 후
+DB backup → disabled 확인 → recent `--limit` dry-run → 소량 `--apply` → DB-only report →
+`.env` backup → flag 활성화 및 worker recreate → 로그/1h 결과/runtime safety 순으로
+운영자가 진행합니다. worker에는 OpenAI, Telegram, Upbit private key를 mount하지 않습니다.
+
 이 문서는 `/home/ubuntu/apps/crypto-trading-bot`에서 실행되는 현재 Production 운영 절차를 설명합니다. 첫 제한적 LIVE 주문 검증은 [LIVE_RUNBOOK.md](LIVE_RUNBOOK.md)를 사용합니다.
 
 ## 주문 흐름과 안전 경계

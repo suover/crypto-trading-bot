@@ -109,6 +109,12 @@ class Settings(BaseSettings):
     portfolio_performance_enabled: bool = False
     portfolio_performance_interval_seconds: int = Field(default=300, ge=30, le=86400)
 
+    # Public-market, derived recommendation analytics. Rollout is opt-in.
+    recommendation_outcome_enabled: bool = False
+    recommendation_outcome_interval_seconds: int = Field(default=300, ge=30, le=86400)
+    recommendation_outcome_horizons_minutes: str = "60,240,1440"
+    recommendation_outcome_batch_size: int = Field(default=50, ge=1, le=500)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
@@ -237,6 +243,7 @@ class Settings(BaseSettings):
         # than waiting for the background worker to start.
         self.operational_alert_retry_delay_list
         self.portfolio_coingecko_asset_identity_map
+        self.recommendation_outcome_horizon_list
 
         return self
 
@@ -286,6 +293,25 @@ class Settings(BaseSettings):
             for asset in self.portfolio_excluded_assets.split(",")
             if asset.strip()
         }
+
+    @property
+    def recommendation_outcome_horizon_list(self) -> tuple[int, ...]:
+        raw_values = self.recommendation_outcome_horizons_minutes.split(",")
+        if not raw_values or any(not value.strip() for value in raw_values):
+            raise ValueError(
+                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
+            )
+        try:
+            horizons = {int(value.strip()) for value in raw_values}
+        except ValueError as exc:
+            raise ValueError(
+                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
+            ) from exc
+        if not horizons or any(value <= 0 for value in horizons):
+            raise ValueError(
+                "RECOMMENDATION_OUTCOME_HORIZONS_MINUTES must contain positive integers"
+            )
+        return tuple(sorted(horizons))
 
     @property
     def portfolio_valuation_policy_signature(self) -> str | None:

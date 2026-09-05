@@ -1,5 +1,18 @@
 # 운영 가이드
 
+## Recommendation outcome worker
+
+이 worker는 AI 추천을 수정하거나 주문을 실행하지 않고, persisted recommendation 및
+동일 pipeline universe 후보의 1h/4h/24h forward market outcome만 derived table에
+기록합니다. `target_at` 당시 완전히 닫힌 Upbit 1분봉만 선택하므로 target minute의
+미완성 candle이나 현재 ticker를 과거 가격으로 사용하지 않습니다. COMPLETE는 재사용하고
+PARTIAL은 다음 cycle에서 재평가합니다. `RECOMMENDATION_OUTCOME_ENABLED=false`가 안전한
+기본값입니다. report CLI는 DB-only이고 rebuild dry-run은 public Upbit 조회를 수행합니다.
+
+Rollout은 migration 및 DB backup 후 disabled 상태를 확인하고, 작은 `--limit` dry-run,
+소량 `--apply`, DB/report 검증 순으로 진행합니다. 그 후 운영자가 `.env`를 백업하고 flag를
+켜 worker를 recreate한 뒤 로그, 최초 1h outcome, runtime safety를 확인합니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

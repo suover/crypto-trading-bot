@@ -219,6 +219,32 @@ def test_portfolio_performance_worker_is_opt_in_and_minimum_secret() -> None:
     assert "거래 실행에는 영향이 없습니다" in safety
 
 
+def test_recommendation_outcome_worker_is_opt_in_public_only_and_deploy_managed() -> (
+    None
+):
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  recommendation-outcome-worker:", 1)[1].split(
+        "\nsecrets:", 1
+    )[0]
+    assert "scripts.run_recommendation_outcome_worker" in service
+    assert "postgres_password" in service
+    for forbidden in (
+        "openai_api_key",
+        "telegram_bot_token\n",
+        "upbit_access_key\n",
+        "upbit_secret_key\n",
+    ):
+        assert f"- {forbidden}" not in service
+    worker = read_repository_file("scripts/run_recommendation_outcome_worker.py")
+    assert "recommendation_outcome_enabled" in worker
+    for forbidden in ("create_order", "OpenAI", "Telegram", "ApprovalRequest"):
+        assert forbidden not in worker
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    assert deploy.count("recommendation-outcome-worker") >= 4
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    assert "crypto-trading-recommendation-outcome-worker" in safety
+
+
 def test_operational_alert_worker_is_minimum_secret_default_runtime() -> None:
     compose = read_repository_file("docker-compose.yml")
     service = compose.split("  operational-alert-worker:", 1)[1].split("\nsecrets:", 1)[
