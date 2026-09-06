@@ -160,6 +160,33 @@ python -m scripts.report_research_candidate_outcomes --limit 50
 Rebuild 기본값은 DRY_RUN으로 public candle 조회 후 rollback합니다. `--apply`만 derived outcome
 row를 upsert합니다. Report는 외부 호출 없는 DB-only 조회입니다.
 
+### Strategy A/B Performance Evaluation v1
+
+Strategy A/B Performance Evaluation은 동일한 persisted Strategy Replay snapshot에서 기존
+baseline ranking과 weight override scenario가 선택한 동일 TopN을
+`StrategyReplayCandidateOutcome`의 COMPLETE 미래수익률로 비교합니다. Ranking 계산은 기존
+Offline Strategy Replay를 그대로 재사용하며 결과를 저장하지 않는 DB-only/read-only manual
+analysis입니다. 외부 API, worker, runtime 설정 또는 migration은 추가하지 않습니다.
+
+각 TopN 내부 성과는 candidate별 gross market return의 equal-weight arithmetic mean입니다.
+수수료, slippage, 실제 주문, GPT 선택, confidence와 sizing은 반영하지 않으므로 실제 trading
+PnL이나 account performance가 아닙니다. Mean/median/positive rate와 scenario-baseline delta만
+기술 통계로 제공합니다.
+
+Baseline ranking이 정확히 재현되지 않거나, 양쪽 selected TopN 중 하나라도 requested horizon의
+COMPLETE outcome이 없으면 성과를 계산하지 않습니다. 일부 candidate만 평균내지 않습니다.
+Batch 집계에도 SUCCESS snapshot만 포함합니다. 적은 snapshot 표본만으로 LIVE ranking 변경 결론을
+내려서는 안 됩니다.
+
+```bash
+python -m scripts.evaluate_strategy_ab_performance --snapshot-id 2 --horizon 240
+python -m scripts.evaluate_strategy_ab_performance --latest 100 --horizon 240 \
+  --override liquidity=0.20 --override trend_alignment=0.20 \
+  --override momentum=0.30 --override volume_confirmation=0.10 \
+  --override spread=0.08 --override volatility=0.07 \
+  --override drawdown=0.05
+```
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

@@ -81,6 +81,51 @@ worker advisory lock을 획득한 경우에만 derived row를 upsert합니다. C
 historical price unavailable PARTIAL만 재시도합니다. Report는 DB-only입니다. 이 데이터는
 actual trading PnL이나 아직 구현하지 않은 Strategy A/B aggregate 성과가 아닙니다.
 
+## Strategy A/B Performance Evaluation v1
+
+이 manual CLI는 Offline Strategy Replay의 baseline/scenario TopN과 저장된 Research Candidate
+Outcome을 연결하는 DB-only/read-only 분석입니다. 동일 snapshot, candidate pool, stored TopN을
+유지하고 ranking weights만 변경합니다. 결과 유형은
+`RANKING_SELECTION_GROSS_MARKET_PERFORMANCE`이며 수수료, slippage, 실제 주문, GPT selection,
+sizing이 없는 equal-weight hypothetical gross return입니다.
+
+```bash
+python -m scripts.evaluate_strategy_ab_performance \
+  --snapshot-id 2 \
+  --horizon 240 \
+  --override liquidity=0.20 \
+  --override trend_alignment=0.20 \
+  --override momentum=0.30 \
+  --override volume_confirmation=0.10 \
+  --override spread=0.08 \
+  --override volatility=0.07 \
+  --override drawdown=0.05
+
+python -m scripts.evaluate_strategy_ab_performance \
+  --latest 100 \
+  --horizon 240 \
+  --override liquidity=0.20 \
+  --override trend_alignment=0.20 \
+  --override momentum=0.30 \
+  --override volume_confirmation=0.10 \
+  --override spread=0.08 \
+  --override volatility=0.07 \
+  --override drawdown=0.05
+```
+
+Status 의미:
+
+- `SUCCESS`: baseline integrity와 양쪽 TopN COMPLETE coverage가 모두 확인되어 계산됨
+- `BASELINE_INTEGRITY_FAILED`: stored baseline ranking을 정확히 재현하지 못함
+- `REPLAY_INCOMPATIBLE`: schema/policy/source replay가 호환되지 않음
+- `OUTCOME_INCOMPLETE`: requested horizon의 selected outcome이 없거나 PARTIAL
+- `INVALID_OUTCOME_DATA`: COMPLETE row의 return/lineage/중복이 비정상
+
+Partial TopN 평균은 계산하지 않고 batch aggregate는 SUCCESS snapshot만 사용합니다. 출력은
+descriptive analytics일 뿐 통계적 유의성이나 LIVE 정책 우월성을 의미하지 않습니다. 표본이 적을
+때 LIVE ranking 변경의 근거로 사용하지 않습니다. CLI는 DB write/commit이나 Upbit/OpenAI/
+Telegram/CoinGecko/Fear & Greed 호출을 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash
