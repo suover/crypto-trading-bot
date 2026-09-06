@@ -227,6 +227,49 @@ out-of-sample/holdout 검증을 사용해야 합니다. 출력은 ranking select
 movement 기술 통계이며 실제 trading PnL, 통계적 검증, 미래 수익 보장 또는 자동 LIVE 정책
 추천이 아닙니다.
 
+### Temporal Ranking Holdout Validation v1
+
+Temporal Ranking Holdout Validation은 Sweep의 명시적 scenario를 동일한 common comparable
+snapshot 표본에서 평가한 뒤 시간순 Research 구간과 Holdout 구간으로 나눕니다. Random split이나
+shuffle은 사용하지 않습니다. 먼저 horizon 및
+`(baseline_policy_signature, effective_top_n)`별 cohort를 유지하고, 모든 scenario가 동시에
+`SUCCESS`인 snapshot 교집합만 `captured_at ASC, snapshot_id ASC`로 정렬해 split합니다.
+Metadata, baseline metric 또는 scenario result set integrity가 어긋나면 fail-closed합니다.
+
+기본 ratio mode는 최신 30%를 Holdout으로 사용합니다. 정확한 규칙은
+`holdout_count = ceil(common_count * ratio)`이며 common snapshot이 2개 이상이면 Research와
+Holdout에 각각 최소 1개가 남도록 1부터 `common_count - 1` 사이로 제한합니다. Fixed cutoff는
+timezone-aware ISO-8601만 허용하며 `captured_at <= cutoff`는 Research,
+`captured_at > cutoff`는 Holdout입니다.
+
+```bash
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --holdout-ratio 0.25
+
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --research-cutoff-at 2026-09-01T00:00:00+09:00
+```
+
+Ratio split은 이미 관찰한 전체 history를 나누는 retrospective validation일 수 있으며 strict
+unseen holdout이 아닙니다. Fixed cutoff도 scenario 정의 과정에서 미래 데이터가 노출되지
+않았음을 CLI가 증명하지는 않습니다. 이를 위해서는 사용자의 연구 절차와 별도의 out-of-sample
+통제가 필요합니다. 이 도구는 DB-only/read-only이며 외부 API, DB write, LIVE weight 변경,
+winner/recommendation/promotion을 수행하지 않습니다. 결과는 실제 trading PnL이 아닌
+ranking-selection gross market movement 기술 통계이고, 작은 표본으로 정책 결정을 내려서는 안
+됩니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

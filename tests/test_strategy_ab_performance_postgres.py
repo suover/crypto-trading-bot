@@ -19,6 +19,9 @@ from crypto_trading_bot.services.strategy_ab_performance_service import (
     SUCCESS,
     StrategyABPerformanceService,
 )
+from crypto_trading_bot.services.ranking_holdout_validation_service import (
+    RankingHoldoutValidationService,
+)
 from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     RankingScenarioSweepService,
     parse_scenario_document,
@@ -318,6 +321,75 @@ def test_postgresql_sweep_aligns_common_sets_splits_cohorts_and_stays_read_only(
             comparison.raw_outcome_incomplete_count == 1
             for comparison in partial_cohort.scenario_results
         )
+
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in before
+        }
+        assert after == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_holdout_runs_replay_common_split_and_summaries_read_only() -> None:
+    definitions = parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "research_holdout_scenario",
+                    "component_weights": {
+                        "liquidity": "0.20",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.30",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                }
+            ],
+        }
+    )
+    with SessionLocal() as session:
+        user = User(name=f"ranking-holdout-{uuid4()}")
+        session.add(user)
+        session.flush()
+        for hour in range(4):
+            create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2030, 1, 1, hour, tzinfo=UTC),
+                with_outcomes=True,
+            )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in (
+                StrategyReplaySnapshot,
+                StrategyReplayCandidate,
+                StrategyReplayCandidateOutcome,
+            )
+        }
+
+        result = RankingHoldoutValidationService(session).evaluate(
+            scenarios=definitions,
+            horizons=(60,),
+            latest=4,
+            holdout_ratio=Decimal("0.5"),
+        )
+
+        assert result.evaluated_snapshot_count == 4
+        assert result.cohort_count == 1
+        cohort = result.cohorts[0]
+        assert cohort.status == SUCCESS
+        assert cohort.common_comparable_snapshot_count == 4
+        assert (cohort.research_snapshot_count, cohort.holdout_snapshot_count) == (2, 2)
+        assert cohort.research_end_at < cohort.holdout_start_at
+        comparison = cohort.scenario_results[0]
+        assert comparison.research.snapshot_count == 2
+        assert comparison.holdout.snapshot_count == 2
 
         after = {
             model: session.scalar(select(func.count()).select_from(model))

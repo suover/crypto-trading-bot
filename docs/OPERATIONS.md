@@ -172,6 +172,59 @@ out-of-sample/holdout 검증을 거쳐야 합니다. 이 결과는 ranking-selec
 기술 통계이지 실제 trading PnL, 통계적 유의성, 미래 수익 보장 또는 자동 LIVE recommendation이
 아닙니다.
 
+## Temporal Ranking Holdout Validation v1
+
+이 manual CLI는 Ranking Scenario Sweep과 동일한 scenario execution, cohort integrity 및 common
+SUCCESS intersection을 사용한 뒤 common snapshot만 시간순으로 나눕니다. Horizon,
+`baseline_policy_signature`, `effective_top_n`이 다른 데이터는 서로 섞지 않습니다. 정렬은 항상
+`captured_at ASC, snapshot_id ASC`이고 random split은 지원하지 않습니다. Research와 Holdout
+성과는 각각 기존 Strategy A/B `summarize_results()`로 계산합니다.
+
+기본 ratio split:
+
+```bash
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+```
+
+명시적 ratio와 fixed cutoff:
+
+```bash
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --holdout-ratio 0.25
+
+python -m scripts.evaluate_ranking_holdout_validation \
+  --latest 100 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --research-cutoff-at 2026-09-01T00:00:00+09:00
+```
+
+Ratio 기본값은 `0.30`이고 `0 < ratio < 1`이어야 합니다.
+`holdout_count = ceil(common_count * ratio)` 후, common snapshot이 최소 2개이면 양쪽에 최소 1개가
+남도록 제한합니다. Cutoff는 timezone offset을 포함해야 하며 UTC로 canonicalize합니다.
+`captured_at <= cutoff`는 Research, 그보다 늦으면 Holdout입니다. Ratio와 cutoff는 동시에 사용할
+수 없습니다.
+
+Report의 `TEMPORAL_RATIO`는 retrospective split이고 `strict_unseen_holdout=false`입니다.
+`FIXED_TEMPORAL_CUTOFF`도 future-data non-disclosure를 기술적으로 증명하지 않으므로
+`strict_unseen_holdout=not_verified`입니다. Common snapshot이 없거나 양쪽 split이 불가능하면
+각각 `NO_COMMON_COMPARABLE_SNAPSHOTS`, `INSUFFICIENT_TEMPORAL_SPLIT_DATA`로 exit 0 safe report를
+생성하며 성과 metric은 비웁니다. Sweep integrity 위반은 `INVALID_HOLDOUT_DATA`와 exit 1입니다.
+입력 오류는 exit 2입니다.
+
+이 CLI는 DB-only/read-only이며 external call, worker, schedule, DB write 또는 LIVE policy 변경이
+없습니다. `policy_decision_performed=false`이고 자동 winner/recommendation/promotion을 출력하지
+않습니다. 실제 trading PnL이나 통계적 검증이 아니며, 작은 표본만으로 정책 결정을 내려서는 안
+됩니다. Ratio와 fixed cutoff 모두 unseen 보장은 사용자의 scenario 설계 및 연구 프로세스까지
+통제해야 합니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

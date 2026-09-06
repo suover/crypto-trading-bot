@@ -96,6 +96,37 @@ class RankingScenarioSweepResult:
     cohorts: tuple[RankingScenarioCohortResult, ...]
 
 
+@dataclass(frozen=True)
+class RankingScenarioComparableCohort:
+    """Validated per-snapshot scenario results shared by research consumers."""
+
+    horizon_minutes: int
+    baseline_policy_signature: str | None
+    effective_top_n: int
+    candidate_snapshot_ids: tuple[int | None, ...]
+    common_snapshot_ids: tuple[int | None, ...]
+    common_coverage_rate: Decimal
+    status: str
+    safe_reason: str | None
+    scenario_results: tuple[
+        tuple[str, tuple[StrategyABSnapshotPerformanceResult, ...]], ...
+    ]
+
+    def results_for(
+        self, scenario_name: str
+    ) -> tuple[StrategyABSnapshotPerformanceResult, ...]:
+        return dict(self.scenario_results)[scenario_name]
+
+
+@dataclass(frozen=True)
+class RankingScenarioEvaluationMatrix:
+    requested_snapshot_count: int
+    evaluated_snapshot_count: int
+    scenarios: tuple[RankingScenarioDefinition, ...]
+    horizons: tuple[int, ...]
+    cohorts: tuple[RankingScenarioComparableCohort, ...]
+
+
 def _canonical_decimal(value: Decimal) -> str:
     normalized = value.normalize()
     return "0" if normalized == 0 else format(normalized, "f")
@@ -217,6 +248,34 @@ class RankingScenarioSweepService:
         snapshot_id: int | None = None,
         latest: int | None = None,
     ) -> RankingScenarioSweepResult:
+        matrix = self.evaluate_matrix(
+            scenarios=scenarios,
+            horizons=horizons,
+            snapshot_id=snapshot_id,
+            latest=latest,
+        )
+        cohorts = tuple(
+            self._render_cohort(cohort, matrix.scenarios) for cohort in matrix.cohorts
+        )
+        return RankingScenarioSweepResult(
+            requested_snapshot_count=matrix.requested_snapshot_count,
+            evaluated_snapshot_count=matrix.evaluated_snapshot_count,
+            scenario_count=len(matrix.scenarios),
+            horizon_count=len(matrix.horizons),
+            cohort_count=len(cohorts),
+            scenarios=matrix.scenarios,
+            cohorts=cohorts,
+        )
+
+    def evaluate_matrix(
+        self,
+        *,
+        scenarios: Iterable[RankingScenarioDefinition],
+        horizons: Iterable[int],
+        snapshot_id: int | None = None,
+        latest: int | None = None,
+    ) -> RankingScenarioEvaluationMatrix:
+        """Evaluate and align scenarios once without calculating consumer summaries."""
         definitions = self._validate_definitions(tuple(scenarios))
         normalized_horizons = self._validate_horizons(horizons)
         if snapshot_id is not None and latest is not None:
@@ -255,7 +314,7 @@ class RankingScenarioSweepService:
                     scenario_results[scenario.name] = batch.results
             results_by_horizon[horizon] = scenario_results
 
-        cohorts: list[RankingScenarioCohortResult] = []
+        cohorts: list[RankingScenarioComparableCohort] = []
         evaluated_ids: set[int] = set()
         for horizon in normalized_horizons:
             horizon_cohorts, horizon_ids = self._build_horizon_cohorts(
@@ -263,13 +322,11 @@ class RankingScenarioSweepService:
             )
             cohorts.extend(horizon_cohorts)
             evaluated_ids.update(horizon_ids)
-        return RankingScenarioSweepResult(
+        return RankingScenarioEvaluationMatrix(
             requested_snapshot_count=requested_count,
             evaluated_snapshot_count=len(evaluated_ids),
-            scenario_count=len(definitions),
-            horizon_count=len(normalized_horizons),
-            cohort_count=len(cohorts),
             scenarios=definitions,
+            horizons=normalized_horizons,
             cohorts=tuple(cohorts),
         )
 
@@ -337,7 +394,7 @@ class RankingScenarioSweepService:
         horizon: int,
         scenarios: tuple[RankingScenarioDefinition, ...],
         scenario_results: dict[str, tuple[StrategyABSnapshotPerformanceResult, ...]],
-    ) -> tuple[list[RankingScenarioCohortResult], set[int]]:
+    ) -> tuple[list[RankingScenarioComparableCohort], set[int]]:
         indexed = {
             name: self._index_results(results)
             for name, results in scenario_results.items()
@@ -391,7 +448,7 @@ class RankingScenarioSweepService:
         snapshot_ids: tuple[int | None, ...],
         scenarios: tuple[RankingScenarioDefinition, ...],
         indexed: dict[str, dict[int | None, StrategyABSnapshotPerformanceResult]],
-    ) -> RankingScenarioCohortResult:
+    ) -> RankingScenarioComparableCohort:
         invalid_reasons: list[str] = []
         expected_ids = set(indexed[scenarios[0].name])
         for scenario in scenarios[1:]:
@@ -451,22 +508,13 @@ class RankingScenarioSweepService:
             safe_reason = None
             comparable_ids = common_ids
 
-        comparisons = tuple(
-            self._comparison(
-                scenario,
-                snapshot_ids,
-                comparable_ids,
-                indexed[scenario.name],
-            )
-            for scenario in scenarios
-        )
         candidate_count = len(snapshot_ids)
-        return RankingScenarioCohortResult(
+        return RankingScenarioComparableCohort(
             horizon_minutes=horizon,
             baseline_policy_signature=key[0],
             effective_top_n=key[1],
-            candidate_snapshot_count=candidate_count,
-            common_comparable_snapshot_count=len(comparable_ids),
+            candidate_snapshot_ids=snapshot_ids,
+            common_snapshot_ids=comparable_ids,
             common_coverage_rate=(
                 Decimal(len(comparable_ids)) / Decimal(candidate_count)
                 if candidate_count
@@ -474,7 +522,46 @@ class RankingScenarioSweepService:
             ),
             status=status,
             safe_reason=safe_reason,
-            performance_compared=status == SUCCESS,
+            scenario_results=tuple(
+                (
+                    scenario.name,
+                    tuple(
+                        indexed[scenario.name][snapshot_id]
+                        for snapshot_id in snapshot_ids
+                        if snapshot_id in indexed[scenario.name]
+                    ),
+                )
+                for scenario in scenarios
+            ),
+        )
+
+    def _render_cohort(
+        self,
+        cohort: RankingScenarioComparableCohort,
+        scenarios: tuple[RankingScenarioDefinition, ...],
+    ) -> RankingScenarioCohortResult:
+        comparisons = tuple(
+            self._comparison(
+                scenario,
+                cohort.candidate_snapshot_ids,
+                cohort.common_snapshot_ids,
+                {
+                    result.snapshot_id: result
+                    for result in cohort.results_for(scenario.name)
+                },
+            )
+            for scenario in scenarios
+        )
+        return RankingScenarioCohortResult(
+            horizon_minutes=cohort.horizon_minutes,
+            baseline_policy_signature=cohort.baseline_policy_signature,
+            effective_top_n=cohort.effective_top_n,
+            candidate_snapshot_count=len(cohort.candidate_snapshot_ids),
+            common_comparable_snapshot_count=len(cohort.common_snapshot_ids),
+            common_coverage_rate=cohort.common_coverage_rate,
+            status=cohort.status,
+            safe_reason=cohort.safe_reason,
+            performance_compared=cohort.status == SUCCESS,
             scenario_results=comparisons,
         )
 
