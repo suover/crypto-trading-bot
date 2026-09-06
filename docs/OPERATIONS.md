@@ -309,6 +309,34 @@ SELECT only이며 migration, worker, scheduler, external API, DB write 또는 LI
 없습니다. 결과는 counterfactual TopN selection proxy이고 monetary rebalance, 비용, 실제 거래나
 성과를 뜻하지 않으며 자동 winner/promotion도 수행하지 않습니다.
 
+## Cost-adjusted Ranking Counterfactual Evaluation v1
+
+Temporal TopN transition과 horizon별 Strategy A/B gross outcome을 같은 current snapshot lineage로
+정렬하는 manual, DB SELECT-only research CLI입니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_ranking \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+비용률은 traded notional의 fraction이며 모두 명시적으로 입력합니다. Normalized NAV=1,
+equal-weight, selection-change-only 모델이므로 retained asset drift나 실제 KRW notional을 사용하지
+않습니다. Cost ratio는 100을 곱해 percentage-point 단위로 변환한 뒤 Baseline과 Scenario gross
+return 양쪽에서 차감합니다. 저장된 spread는 execution cost로 사용하지 않습니다.
+
+`NO_TURNOVER_TRANSITIONS`, `NO_COMMON_COMPARABLE_SNAPSHOTS`,
+`NO_COST_ADJUSTABLE_SNAPSHOTS`는 안전한 연구 결과로 exit 0,
+`INVALID_COST_ADJUSTED_DATA`는 integrity failure로 exit 1, 입력 오류는 exit 2입니다. 별도 env,
+migration, worker, scheduler 또는 Compose service가 없으며 외부 API와 LIVE side effect도 없습니다.
+결과는 실제 PnL이나 실제 주문 simulation이 아니고 자동 winner/promotion을 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

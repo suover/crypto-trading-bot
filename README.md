@@ -356,6 +356,36 @@ Replacement rate는 `entered_count / TopN`, retention rate는 `retained_count / 
 winner, recommendation, promotion도 없습니다. 명령은 DB SELECT만 수행하고 외부 API, DB write,
 worker/scheduler 또는 LIVE policy에 영향을 주지 않습니다.
 
+### Cost-adjusted Ranking Counterfactual Evaluation v1
+
+Temporal Turnover의 valid transition과 기존 Strategy A/B gross outcome을
+`turnover.current_snapshot_id == A/B snapshot_id`로 정렬해, normalized NAV=1인 equal-weight
+selection-change-only 비용 가정을 적용하는 manual research 도구입니다. Previous transition이
+없는 첫 snapshot은 비용을 0으로 간주하지 않고 평가에서 제외하며, replay 실패나 policy/TopN
+경계로 끊긴 구간을 우회하지 않습니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_ranking \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+각 비용률은 percentage point가 아니라 traded notional의 Decimal fraction입니다. Target weight는
+`1/TopN`, sell/buy notional ratio는 각각 replacement rate, gross traded notional ratio는 그 합이며
+비용 ratio에 100을 곱해 기존 percentage return에서 차감합니다. Baseline과 Scenario 양쪽에 같은
+공식을 적용합니다. Retained asset의 가격 drift에 따른 full rebalance는 계산하지 않습니다.
+
+Fee/spread/slippage는 명시적인 symmetric research assumptions이며 실제 현재 Upbit execution
+cost를 뜻하지 않습니다. 저장된 orderbook spread도 자동 사용하지 않습니다. 결과는 실제 PnL,
+실제 portfolio/NAV, KRW notional 또는 주문 simulation이 아닙니다. DB SELECT-only이고 외부 API,
+LIVE 변경, 자동 winner/recommendation/promotion이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
