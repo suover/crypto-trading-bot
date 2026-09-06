@@ -267,31 +267,45 @@ def _evaluate(turnover, matrix, definitions):
 
 
 @pytest.mark.parametrize(
-    ("replaced", "sell", "buy", "gross"),
+    ("top_n", "replaced"),
     [
-        (0, Decimal("0"), Decimal("0"), Decimal("0")),
-        (
-            1,
-            Decimal(1) / Decimal(7),
-            Decimal(1) / Decimal(7),
-            Decimal(2) * (Decimal(1) / Decimal(7)),
-        ),
-        (7, Decimal("1"), Decimal("1"), Decimal("2")),
+        *((7, replaced) for replaced in range(8)),
+        *((3, replaced) for replaced in range(4)),
+        *((5, replaced) for replaced in range(6)),
     ],
 )
-def test_selection_change_notional_is_exact(replaced, sell, buy, gross) -> None:
-    transition = _selection_transition(top_n=7, replaced=replaced)
+def test_selection_change_notional_is_exact_for_every_replacement_count(
+    top_n, replaced
+) -> None:
+    transition = _selection_transition(top_n=top_n, replaced=replaced)
     assumptions = build_cost_assumptions(
         fee_rate="0", spread_cost_rate="0", slippage_rate="0"
     )
     result = CostAdjustedRankingEvaluationService._selection_cost(
         transition, assumptions
     )
-    assert result.sell_notional_ratio == sell
-    assert result.buy_notional_ratio == buy
-    assert result.gross_traded_notional_ratio == gross
-    assert result.sell_notional_ratio == result.replacement_rate
-    assert result.gross_traded_notional_ratio == 2 * result.replacement_rate
+    expected_replacement = Decimal(replaced) / Decimal(top_n)
+    assert result.replacement_rate == expected_replacement
+    assert result.sell_notional_ratio == expected_replacement
+    assert result.buy_notional_ratio == expected_replacement
+    assert result.gross_traded_notional_ratio == Decimal("2") * expected_replacement
+
+
+def test_top_seven_two_replacements_uses_canonical_decimal_path() -> None:
+    transition = _selection_transition(top_n=7, replaced=2)
+    result = CostAdjustedRankingEvaluationService._selection_cost(
+        transition,
+        build_cost_assumptions(
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        ),
+    )
+    expected = Decimal("2") / Decimal("7")
+    assert result.replacement_rate == expected
+    assert result.sell_notional_ratio == expected
+    assert result.buy_notional_ratio == expected
+    assert result.gross_traded_notional_ratio == Decimal("2") * expected
 
 
 def test_cost_ratio_converts_to_return_percentage_points() -> None:

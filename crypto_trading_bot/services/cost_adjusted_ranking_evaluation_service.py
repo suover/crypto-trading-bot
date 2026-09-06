@@ -626,20 +626,15 @@ class CostAdjustedRankingEvaluationService:
         ):
             raise _InvalidCostAdjustedData("turnover transition counts are invalid")
         target_weight = Decimal("1") / Decimal(top_n)
-        sell = Decimal(transition.exited_count) * target_weight
-        buy = Decimal(transition.entered_count) * target_weight
         replacement = _decimal(
             transition.replacement_rate, field_name="replacement_rate"
         )
-        gross = sell + buy
-        if (
-            replacement < 0
-            or replacement > 1
-            or sell != buy
-            or sell != replacement
-            or gross != Decimal("2") * replacement
-        ):
+        expected_replacement = Decimal(transition.entered_count) / Decimal(top_n)
+        if replacement < 0 or replacement > 1 or replacement != expected_replacement:
             raise _InvalidCostAdjustedData("turnover notional identity is invalid")
+        sell = replacement
+        buy = replacement
+        gross = Decimal("2") * replacement
         cost_ratio = gross * assumptions.total_cost_rate
         cost_percentage = cost_ratio * Decimal("100")
         return SelectionChangeCost(

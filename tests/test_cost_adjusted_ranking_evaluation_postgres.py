@@ -88,6 +88,8 @@ def _create_snapshot(
     captured_at: datetime,
     sequence: int,
     invalid: bool = False,
+    top_n: int = 2,
+    features: tuple[dict, ...] | None = None,
 ):
     run = AnalysisRun(
         user_id=user.id,
@@ -102,8 +104,8 @@ def _create_snapshot(
         _env_file=None,
         database_url="postgresql://test:test@localhost/test",
         market_universe_mode="DYNAMIC",
-        market_universe_top_n=2,
-        market_universe_prefilter_n=3,
+        market_universe_top_n=top_n,
+        market_universe_prefilter_n=len(features) if features is not None else 3,
     )
     policy = HeuristicMarketRankingPolicy()
     policy_data = build_policy_data(settings, policy)
@@ -116,30 +118,38 @@ def _create_snapshot(
         dataset_schema_version=("unsupported" if invalid else DATASET_SCHEMA_VERSION),
         policy_signature=policy_signature(policy_data),
         policy_data=policy_data,
-        research_candidate_count=3,
-        prefilter_candidate_count=3,
-        ranked_candidate_count=3,
-        final_candidate_count=2,
+        research_candidate_count=len(features) if features is not None else 3,
+        prefilter_candidate_count=len(features) if features is not None else 3,
+        ranked_candidate_count=len(features) if features is not None else 3,
+        final_candidate_count=top_n,
         captured_at=captured_at,
     )
     session.add(snapshot)
     session.flush()
-    features = (
-        _feature("KRW-A", str(1100 - sequence * 150), str(-12 + sequence * 5)),
-        _feature("KRW-B", "800", "0"),
-        _feature("KRW-C", str(500 + sequence * 150), str(12 - sequence * 5)),
-    )
-    ranked = policy.rank(list(features))
+    if features is None:
+        selected_features = (
+            _feature("KRW-A", str(1100 - sequence * 150), str(-12 + sequence * 5)),
+            _feature("KRW-B", "800", "0"),
+            _feature("KRW-C", str(500 + sequence * 150), str(12 - sequence * 5)),
+        )
+        returns = {
+            "KRW-A": Decimal("1.5") + Decimal(sequence) / Decimal("10"),
+            "KRW-B": Decimal("0.5"),
+            "KRW-C": Decimal("-0.5") + Decimal(sequence) / Decimal("10"),
+        }
+    else:
+        selected_features = features
+        returns = {
+            item["market"]: Decimal(index + 1) / Decimal("10")
+            + Decimal(sequence) / Decimal("100")
+            for index, item in enumerate(selected_features)
+        }
+    ranked = policy.rank(list(selected_features))
     ranks = {
         item["market"]: (rank, item["score"].quantize(Decimal("0.000000001")))
         for rank, item in enumerate(ranked, start=1)
     }
-    returns = {
-        "KRW-A": Decimal("1.5") + Decimal(sequence) / Decimal("10"),
-        "KRW-B": Decimal("0.5"),
-        "KRW-C": Decimal("-0.5") + Decimal(sequence) / Decimal("10"),
-    }
-    for prefilter_rank, item in enumerate(features, start=1):
+    for prefilter_rank, item in enumerate(selected_features, start=1):
         original_rank, original_score = ranks[item["market"]]
         candidate = StrategyReplayCandidate(
             strategy_replay_snapshot_id=snapshot.id,
@@ -157,9 +167,9 @@ def _create_snapshot(
             trading_supported=True,
             original_rank=original_rank,
             original_score=original_score,
-            final_selected=original_rank <= 2,
-            final_rank=original_rank if original_rank <= 2 else None,
-            selection_source="RANKED" if original_rank <= 2 else None,
+            final_selected=original_rank <= top_n,
+            final_rank=original_rank if original_rank <= top_n else None,
+            selection_source="RANKED" if original_rank <= top_n else None,
             quote_trade_value_24h=Decimal(item["quote_trade_value_24h"]),
             feature_data=item,
         )
@@ -293,6 +303,75 @@ def test_postgresql_cost_adjustment_does_not_bridge_incompatible_middle_snapshot
         assert snapshots[3].id not in evaluated_ids
         assert cohort.turnover_transition_count == 2
         assert cohort.cost_adjustable_snapshot_count == 2
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_top_seven_two_replacements_succeeds_end_to_end():
+    with SessionLocal() as session:
+        user = User(name=f"cost-adjusted-top-seven-{uuid4()}")
+        session.add(user)
+        session.flush()
+        markets = tuple(f"KRW-{symbol}" for symbol in "ABCDEFGHI")
+        first_features = tuple(
+            _feature(market, str(900 - index * 50), "0")
+            for index, market in enumerate(markets)
+        )
+        second_order = (*markets[2:], *markets[:2])
+        second_liquidity = {
+            market: str(900 - index * 50) for index, market in enumerate(second_order)
+        }
+        second_features = tuple(
+            _feature(market, second_liquidity[market], "0") for market in markets
+        )
+        _create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2052, 1, 1, 0, tzinfo=UTC),
+            sequence=0,
+            top_n=7,
+            features=first_features,
+        )
+        _create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2052, 1, 1, 1, tzinfo=UTC),
+            sequence=1,
+            top_n=7,
+            features=second_features,
+        )
+        before = _counts(session)
+
+        result = CostAdjustedRankingEvaluationService(session).evaluate(
+            scenarios=_definitions(),
+            horizons=(60,),
+            latest=2,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        assert result.status == SUCCESS
+        cohort = next(cohort for cohort in result.cohorts if cohort.status == SUCCESS)
+        assert cohort.effective_top_n == 7
+        assert cohort.cost_adjustable_snapshot_count == 1
+        for scenario in cohort.scenario_results:
+            snapshot = scenario.snapshots[0]
+            assert snapshot.baseline_replacement_rate == Decimal("2") / Decimal("7")
+            assert (
+                snapshot.baseline_sell_notional_ratio
+                == snapshot.baseline_replacement_rate
+            )
+            assert (
+                snapshot.baseline_buy_notional_ratio
+                == snapshot.baseline_replacement_rate
+            )
+            assert snapshot.baseline_gross_traded_notional_ratio == (
+                Decimal("2") * snapshot.baseline_replacement_rate
+            )
         assert _counts(session) == before
         assert not session.new
         assert not session.dirty
