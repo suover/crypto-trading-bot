@@ -257,6 +257,35 @@ PnL이나 통계적 유의성이 아니고 자동 winner/recommendation/promotio
 또한 scenario 작성자가 미래 데이터를 보지 않았음을 증명하지 못하므로
 `strict_unseen_validation=not_verified`입니다. 작은 표본으로 운영 정책을 결정하지 마십시오.
 
+## Ranking Validation Robustness Statistics v1
+
+Walk-Forward 결과의 Validation fold와 개별 Validation snapshot만 분석하는 manual research
+CLI입니다. 같은 scenario evaluation matrix를 한 번만 만들고 기존 Walk-Forward fold를
+재사용하므로 Research snapshot, unused tail, non-common 또는 non-SUCCESS 결과는 통계에
+포함하지 않습니다.
+
+```bash
+python -m scripts.evaluate_ranking_validation_robustness \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Fold/snapshot별 count, positive rate, mean/median, min/max/range, worst/best 및 Decimal population
+standard deviation을 출력합니다. 이는 observed 값의 deterministic descriptive statistics이며
+통계적 유의성이나 독립표본 inference가 아닙니다. p-value, confidence interval, bootstrap,
+threshold, 자동 winner 또는 promotion은 없습니다.
+
+Common set이 없으면 `NO_COMMON_COMPARABLE_SNAPSHOTS`, full fold가 없으면
+`INSUFFICIENT_WALK_FORWARD_DATA`로 exit 0입니다. 중복 Validation ID, 누락·non-SUCCESS result,
+잘못된 metadata/delta 또는 upstream invalid 상태는 `INVALID_ROBUSTNESS_DATA`로 exit 1이며 입력
+오류는 exit 2입니다. 이 명령은 DB SELECT만 사용하고 worker, scheduler, migration, external API,
+DB write, LIVE policy 변경을 수행하지 않습니다. `strict_unseen_validation=not_verified`이며 작은
+표본으로 운영 결론을 내려서는 안 됩니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

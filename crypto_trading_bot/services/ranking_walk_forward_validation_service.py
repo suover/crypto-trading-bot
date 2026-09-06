@@ -18,6 +18,7 @@ from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     SUCCESS,
     RankingScenarioComparableCohort,
     RankingScenarioDefinition,
+    RankingScenarioEvaluationMatrix,
     RankingScenarioSweepService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
@@ -136,15 +137,29 @@ class RankingWalkForwardValidationService:
         initial_research_size: int,
         validation_size: int,
     ) -> RankingWalkForwardValidationResult:
-        initial = self._positive_size(
-            initial_research_size, field_name="initial research size"
-        )
-        validation = self._positive_size(validation_size, field_name="validation size")
         matrix = self.sweep_service.evaluate_matrix(
             scenarios=scenarios,
             horizons=horizons,
             latest=latest,
         )
+        return self.evaluate_from_matrix(
+            matrix,
+            initial_research_size=initial_research_size,
+            validation_size=validation_size,
+        )
+
+    def evaluate_from_matrix(
+        self,
+        matrix: RankingScenarioEvaluationMatrix,
+        *,
+        initial_research_size: int,
+        validation_size: int,
+    ) -> RankingWalkForwardValidationResult:
+        """Build folds from one already evaluated shared scenario matrix."""
+        initial = self._positive_size(
+            initial_research_size, field_name="initial research size"
+        )
+        validation = self._positive_size(validation_size, field_name="validation size")
         cohorts = tuple(
             self._evaluate_cohort(
                 cohort,

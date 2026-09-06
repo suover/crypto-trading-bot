@@ -303,6 +303,35 @@ LIVE 변경이 아닙니다. 시간순 fold를 만들더라도 scenario 정의 �
 않았음을 CLI 자체가 증명하지 않으므로 `strict_unseen_validation=not_verified`입니다. 작은
 표본이나 반복 탐색 결과만으로 정책 결정을 내려서는 안 됩니다.
 
+### Ranking Validation Robustness Statistics v1
+
+Walk-Forward의 동일 evaluation matrix와 이미 생성된 Validation folds를 소비해 fixed explicit
+scenario의 결과 분포를 설명하는 manual research CLI입니다. Research 구간과 full fold 뒤의
+unused tail은 제외하고, non-overlapping Validation fold의 mean delta와 그 fold에 속한 개별
+common/SUCCESS snapshot delta만 사용합니다. 동일 scenario evaluation이나 fold generation을
+다시 실행하지 않습니다.
+
+Fold와 snapshot 각각에 대해 positive/negative/tie 수와 positive rate, mean/median,
+min/max/range, population standard deviation, deterministic worst/best 위치를 출력합니다.
+표준편차는 report에 관찰된 전체 값의 descriptive population standard deviation이며 통계적
+추론이 아닙니다. 값이 하나면 0, 없으면 `None`입니다.
+
+```bash
+python -m scripts.evaluate_ranking_validation_robustness \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+이 기능은 DB-only/read-only descriptive robustness statistics입니다. 실제 trading PnL이나
+통계적 유의성·독립표본 inference를 계산하지 않으며 p-value, confidence interval, bootstrap,
+자동 winner/score/promotion 또는 LIVE 변경이 없습니다. 시간순 Validation도 scenario 정의 중
+future data가 노출되지 않았음을 증명하지 않습니다. 결과는 ranking selection candidate의 gross
+future market movement 기술 통계이므로 작은 표본만으로 운영 결론을 내려서는 안 됩니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
