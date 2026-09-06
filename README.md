@@ -187,6 +187,46 @@ python -m scripts.evaluate_strategy_ab_performance --latest 100 --horizon 240 \
   --override drawdown=0.05
 ```
 
+### Ranking Scenario Sweep / Research Runner v1
+
+Ranking Scenario Sweep는 사용자가 JSON 파일에 직접 적은 소수의 component-weight
+scenario를 기존 Strategy A/B evaluator에 반복 적용하는 수동 연구 도구입니다. 기존
+Offline Strategy Replay를 간접 재사용하므로 ranking reconstruction과 성과 공식은 복제하지
+않습니다. DB에 저장된 snapshot/candidate/outcome만 SELECT하며 결과를 저장하지 않고, 외부 API,
+worker, 설정, LIVE ranking 또는 주문 경로를 변경하지 않습니다.
+
+Scenario 파일은 `ranking-scenario-sweep-v1` schema와 현재 component weight의 exact field set을
+요구합니다. 값은 문자열 Decimal을 권장하며 JSON number도 `Decimal(str(value))`로 즉시
+변환합니다. 값은 finite/nonnegative이고 합이 정확히 1이어야 합니다. 이름, 정의 signature,
+weight vector 중복과 unknown field는 전체 파일을 fail-closed합니다. Reference parameter와 TopN은
+scenario 대상이 아니며 각 historical snapshot 값을 그대로 상속합니다.
+
+각 horizon은 독립적으로 평가합니다. `(baseline_policy_signature, effective_top_n)`가 같은
+snapshot끼리만 cohort를 만들고, 모든 scenario가 동시에 `SUCCESS`인 snapshot 교집합에서만
+비교 metric을 다시 집계합니다. Scenario별 raw success/failure coverage와 cohort의 common
+coverage를 함께 출력하며, common set이 비면 성과 metric을 만들지 않습니다. Cohort 또는
+horizon을 합친 composite나 자동 순위, best/winner/recommended policy는 출력하지 않습니다.
+
+```bash
+python -m scripts.evaluate_ranking_scenario_sweep \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+
+python -m scripts.evaluate_ranking_scenario_sweep \
+  --snapshot-id 2 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+```
+
+예제 파일의 `research_example_*` 값은 입력 형식을 보여주는 과거 연구 예시일 뿐 추천 정책이
+아닙니다. Scenario를 많이 반복할수록 같은 historical data에서 우연히 좋아 보이는 결과를 찾을
+가능성이 커집니다. Sweep 결과만으로 LIVE weight를 바꾸지 말고 충분한 snapshot과 별도의
+out-of-sample/holdout 검증을 사용해야 합니다. 출력은 ranking selection의 gross market
+movement 기술 통계이며 실제 trading PnL, 통계적 검증, 미래 수익 보장 또는 자동 LIVE 정책
+추천이 아닙니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

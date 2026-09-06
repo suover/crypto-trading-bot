@@ -126,6 +126,52 @@ descriptive analytics일 뿐 통계적 유의성이나 LIVE 정책 우월성을 
 때 LIVE ranking 변경의 근거로 사용하지 않습니다. CLI는 DB write/commit이나 Upbit/OpenAI/
 Telegram/CoinGecko/Fear & Greed 호출을 수행하지 않습니다.
 
+## Ranking Scenario Sweep / Research Runner v1
+
+이 manual runner는 명시적 JSON scenario의 component weights만 기존 Strategy A/B evaluator에
+전달합니다. Reference parameter와 stored TopN은 각 historical snapshot 값을 상속합니다.
+Grid/range/random 조합, optimizer, 자동 scenario 생성, 자동 winner 또는 LIVE policy 적용은
+지원하지 않습니다. DB에 저장된 replay dataset과 candidate outcome만 읽으며 write/commit과
+Upbit/OpenAI/Telegram/CoinGecko/Fear & Greed 호출은 없습니다.
+
+```bash
+python -m scripts.evaluate_ranking_scenario_sweep \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+
+python -m scripts.evaluate_ranking_scenario_sweep \
+  --snapshot-id 2 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json
+```
+
+둘 다 생략하면 `--latest 1`이며 `--snapshot-id`와 `--latest`는 동시에 사용할 수 없습니다.
+`--horizon`은 하나 이상 반복할 수 있는 양의 정수이고 중복은 거부합니다. Scenario 파일의
+schema version은 `ranking-scenario-sweep-v1`입니다. Component field는 현재 ranking component
+exact set, 값은 finite/nonnegative Decimal, 합은 정확히 1이어야 하며 reference field나 unknown
+field는 거부합니다. 이름과 weight vector도 중복될 수 없습니다.
+
+출력은 먼저 scenario 정의/signature를 파일 순서대로 표시한 뒤 horizon/cohort 결과를 표시합니다.
+각 cohort는 같은 `baseline_policy_signature`와 `effective_top_n`만 포함합니다.
+`candidate_snapshot_count`는 raw 대상 수,
+`common_comparable_snapshot_count`는 모든 scenario가 동시에 SUCCESS인 교집합 크기,
+`common_coverage_rate`는 둘의 비율입니다. Scenario별 `raw_*_count`는 common set에서 제외된
+원인을 보여주고, win/loss/tie, win rate, baseline/scenario mean, mean delta, snapshot delta
+median, positive rate는 common set에서만 재계산됩니다. `NO_COMMON_COMPARABLE_SNAPSHOTS`이면
+`performance_compared=false`이고 metric은 비어 있습니다. Snapshot metadata나 baseline metric
+alignment가 깨지면 `INVALID_SWEEP_DATA`와 exit code 1로 fail-closed합니다. 정상 report는 일부
+incomplete가 있어도 exit code 0이며 입력 오류는 2, fatal 오류는 1입니다.
+
+Horizon마다 common set과 cohort가 독립적이며 이를 하나의 cross-horizon composite로 합치지
+않습니다. 예제 `research_example_*` scenario는 입력 형식을 위한 연구 예시이며 추천값이
+아닙니다. 많은 scenario를 같은 historical data에서 반복하면 우연한 성과를 선택하는
+overfitting 위험이 커집니다. 결과만으로 LIVE weight를 변경하지 말고 충분한 snapshot과 별도
+out-of-sample/holdout 검증을 거쳐야 합니다. 이 결과는 ranking-selection gross market movement의
+기술 통계이지 실제 trading PnL, 통계적 유의성, 미래 수익 보장 또는 자동 LIVE recommendation이
+아닙니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

@@ -19,6 +19,10 @@ from crypto_trading_bot.services.strategy_ab_performance_service import (
     SUCCESS,
     StrategyABPerformanceService,
 )
+from crypto_trading_bot.services.ranking_scenario_sweep_service import (
+    RankingScenarioSweepService,
+    parse_scenario_document,
+)
 from crypto_trading_bot.services.strategy_replay_dataset_service import (
     DATASET_SCHEMA_VERSION,
     build_policy_data,
@@ -45,7 +49,15 @@ def feature(market: str, liquidity: str, momentum: str) -> dict:
     }
 
 
-def create_snapshot(session, user, *, captured_at, with_outcomes):
+def create_snapshot(
+    session,
+    user,
+    *,
+    captured_at,
+    with_outcomes,
+    top_n=2,
+    exclude_cautions=True,
+):
     run = AnalysisRun(
         user_id=user.id,
         pipeline_run_id=str(uuid4()),
@@ -59,8 +71,9 @@ def create_snapshot(session, user, *, captured_at, with_outcomes):
         _env_file=None,
         database_url="postgresql://test:test@localhost/test",
         market_universe_mode="DYNAMIC",
-        market_universe_top_n=2,
+        market_universe_top_n=top_n,
         market_universe_prefilter_n=3,
+        market_universe_exclude_cautions=exclude_cautions,
     )
     policy = HeuristicMarketRankingPolicy()
     policy_data = build_policy_data(settings, policy)
@@ -76,7 +89,7 @@ def create_snapshot(session, user, *, captured_at, with_outcomes):
         research_candidate_count=3,
         prefilter_candidate_count=3,
         ranked_candidate_count=3,
-        final_candidate_count=2,
+        final_candidate_count=top_n,
         captured_at=captured_at,
     )
     session.add(snapshot)
@@ -113,9 +126,9 @@ def create_snapshot(session, user, *, captured_at, with_outcomes):
             trading_supported=True,
             original_rank=original_rank,
             original_score=original_score,
-            final_selected=original_rank <= 2,
-            final_rank=original_rank if original_rank <= 2 else None,
-            selection_source="RANKED" if original_rank <= 2 else None,
+            final_selected=original_rank <= top_n,
+            final_rank=original_rank if original_rank <= top_n else None,
+            selection_source="RANKED" if original_rank <= top_n else None,
             quote_trade_value_24h=Decimal(item["quote_trade_value_24h"]),
             feature_data=item,
         )
@@ -195,6 +208,116 @@ def test_postgresql_single_and_batch_are_read_only_and_use_stored_outcomes() -> 
         assert batch.outcome_incomplete_count == 1
         assert batch.tie_count == 1
         assert batch.scenario_win_rate == 0
+
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in before
+        }
+        assert after == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_sweep_aligns_common_sets_splits_cohorts_and_stays_read_only() -> (
+    None
+):
+    definitions = parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "baseline_clone",
+                    "component_weights": {
+                        "liquidity": "0.35",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.15",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                },
+                {
+                    "name": "research_scenario",
+                    "component_weights": {
+                        "liquidity": "0.20",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.30",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                },
+            ],
+        }
+    )
+    with SessionLocal() as session:
+        user = User(name=f"ranking-sweep-{uuid4()}")
+        session.add(user)
+        session.flush()
+        create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2026, 9, 2, 10, 0, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2026, 9, 2, 11, 0, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2026, 9, 2, 12, 0, tzinfo=UTC),
+            with_outcomes=True,
+            top_n=1,
+        )
+        create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2026, 9, 2, 13, 0, tzinfo=UTC),
+            with_outcomes=True,
+            exclude_cautions=False,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in (
+                StrategyReplaySnapshot,
+                StrategyReplayCandidate,
+                StrategyReplayCandidateOutcome,
+            )
+        }
+
+        result = RankingScenarioSweepService(session).evaluate(
+            scenarios=definitions,
+            horizons=(60,),
+            latest=4,
+        )
+
+        assert result.evaluated_snapshot_count == 4
+        assert result.cohort_count == 3
+        top_two = [cohort for cohort in result.cohorts if cohort.effective_top_n == 2]
+        top_one = [cohort for cohort in result.cohorts if cohort.effective_top_n == 1]
+        assert sorted(cohort.candidate_snapshot_count for cohort in top_two) == [1, 2]
+        partial_cohort = next(
+            cohort for cohort in top_two if cohort.candidate_snapshot_count == 2
+        )
+        assert partial_cohort.common_comparable_snapshot_count == 1
+        assert partial_cohort.common_coverage_rate == Decimal("0.5")
+        assert partial_cohort.scenario_results[0].tie_count == 1
+        assert partial_cohort.scenario_results[0].mean_return_delta == 0
+        assert len({cohort.baseline_policy_signature for cohort in top_two}) == 2
+        assert top_one[0].candidate_snapshot_count == 1
+        assert top_one[0].common_comparable_snapshot_count == 1
+        assert all(
+            comparison.raw_outcome_incomplete_count == 1
+            for comparison in partial_cohort.scenario_results
+        )
 
         after = {
             model: session.scalar(select(func.count()).select_from(model))

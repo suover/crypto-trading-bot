@@ -171,6 +171,20 @@ class StrategyABPerformanceService:
         )
         return self._summarize(limit, results)
 
+    def summarize_results(
+        self,
+        requested_count: int,
+        results: Iterable[StrategyABSnapshotPerformanceResult],
+    ) -> StrategyABBatchPerformanceResult:
+        """Apply the existing batch semantics to an explicit result subset."""
+        if (
+            isinstance(requested_count, bool)
+            or not isinstance(requested_count, int)
+            or requested_count < 0
+        ):
+            raise ReplayInputError("requested snapshot count must be >= 0")
+        return self._summarize(requested_count, tuple(results))
+
     @staticmethod
     def _validate_horizon(horizon_minutes: int) -> None:
         if (

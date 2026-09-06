@@ -342,6 +342,17 @@ def test_batch_reports_each_excluded_status_without_adding_it_to_aggregates() ->
     assert summary.mean_return_delta == success.mean_return_delta
 
 
+def test_public_summary_helper_preserves_existing_batch_semantics() -> None:
+    success = evaluate(
+        outcomes=outcome_map({"KRW-A": "10", "KRW-B": "-10", "KRW-C": "20"})
+    )
+    service = StrategyABPerformanceService(MagicMock())
+    assert service.summarize_results(1, (success,)) == service._summarize(1, (success,))
+    for invalid in (-1, True, Decimal("1")):
+        with pytest.raises(Exception, match="requested snapshot count must be >= 0"):
+            service.summarize_results(invalid, ())
+
+
 def test_evaluate_snapshot_reuses_replay_and_performs_one_read_query() -> None:
     replay = replay_result()
     replay_service = MagicMock()

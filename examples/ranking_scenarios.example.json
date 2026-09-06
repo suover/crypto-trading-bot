@@ -1,0 +1,29 @@
+{
+  "schema_version": "ranking-scenario-sweep-v1",
+  "scenarios": [
+    {
+      "name": "research_example_momentum_heavy",
+      "component_weights": {
+        "liquidity": "0.20",
+        "trend_alignment": "0.20",
+        "momentum": "0.30",
+        "volume_confirmation": "0.10",
+        "spread": "0.08",
+        "volatility": "0.07",
+        "drawdown": "0.05"
+      }
+    },
+    {
+      "name": "research_example_liquidity_heavy",
+      "component_weights": {
+        "liquidity": "0.30",
+        "trend_alignment": "0.20",
+        "momentum": "0.20",
+        "volume_confirmation": "0.10",
+        "spread": "0.08",
+        "volatility": "0.07",
+        "drawdown": "0.05"
+      }
+    }
+  ]
+}
