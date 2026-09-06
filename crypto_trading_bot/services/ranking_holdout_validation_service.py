@@ -95,6 +95,64 @@ class RankingHoldoutValidationResult:
     cohorts: tuple[RankingHoldoutCohortResult, ...]
 
 
+def ordered_common_results(
+    cohort: RankingScenarioComparableCohort,
+    scenarios: tuple[RankingScenarioDefinition, ...],
+) -> tuple[tuple[StrategyABSnapshotPerformanceResult, ...], str | None]:
+    """Return the shared common set in canonical temporal order."""
+    first = {
+        result.snapshot_id: result for result in cohort.results_for(scenarios[0].name)
+    }
+    rows: list[StrategyABSnapshotPerformanceResult] = []
+    for snapshot_id in cohort.common_snapshot_ids:
+        result = first.get(snapshot_id)
+        if (
+            result is None
+            or not isinstance(result.snapshot_id, int)
+            or isinstance(result.snapshot_id, bool)
+            or not isinstance(result.captured_at, datetime)
+            or result.captured_at.tzinfo is None
+            or result.captured_at.utcoffset() is None
+        ):
+            return (), f"invalid temporal metadata: snapshot={snapshot_id}"
+        rows.append(result)
+    return (
+        tuple(
+            sorted(
+                rows,
+                key=lambda result: (
+                    result.captured_at.astimezone(UTC),
+                    result.snapshot_id,
+                ),
+            )
+        ),
+        None,
+    )
+
+
+def summarize_period_results(
+    performance_service: StrategyABPerformanceService,
+    results: tuple[StrategyABSnapshotPerformanceResult, ...],
+) -> RankingHoldoutPeriodAggregate:
+    """Map the existing A/B summary semantics into the shared period model."""
+    summary: StrategyABBatchPerformanceResult = performance_service.summarize_results(
+        len(results), results
+    )
+    return RankingHoldoutPeriodAggregate(
+        snapshot_count=summary.successful_snapshot_count,
+        scenario_win_count=summary.scenario_win_count,
+        scenario_loss_count=summary.scenario_loss_count,
+        tie_count=summary.tie_count,
+        scenario_win_rate=summary.scenario_win_rate,
+        mean_baseline_return=summary.mean_baseline_return,
+        mean_scenario_return=summary.mean_scenario_return,
+        mean_return_delta=summary.mean_return_delta,
+        median_snapshot_return_delta=summary.median_snapshot_return_delta,
+        mean_baseline_positive_rate=summary.mean_baseline_positive_rate,
+        mean_scenario_positive_rate=summary.mean_scenario_positive_rate,
+    )
+
+
 class RankingHoldoutValidationService:
     """Temporally split shared comparable scenario results without DB writes."""
 
@@ -214,7 +272,7 @@ class RankingHoldoutValidationService:
         safe_reason = cohort.safe_reason
         research_ids: tuple[int | None, ...] = ()
         holdout_ids: tuple[int | None, ...] = ()
-        ordered, chronology_error = self._ordered_common_results(cohort, scenarios)
+        ordered, chronology_error = ordered_common_results(cohort, scenarios)
         if status == INVALID_SWEEP_DATA:
             status = INVALID_HOLDOUT_DATA
         elif chronology_error is not None:
@@ -303,41 +361,6 @@ class RankingHoldoutValidationService:
             scenario_results=scenario_results,
         )
 
-    @staticmethod
-    def _ordered_common_results(
-        cohort: RankingScenarioComparableCohort,
-        scenarios: tuple[RankingScenarioDefinition, ...],
-    ) -> tuple[tuple[StrategyABSnapshotPerformanceResult, ...], str | None]:
-        first = {
-            result.snapshot_id: result
-            for result in cohort.results_for(scenarios[0].name)
-        }
-        rows: list[StrategyABSnapshotPerformanceResult] = []
-        for snapshot_id in cohort.common_snapshot_ids:
-            result = first.get(snapshot_id)
-            if (
-                result is None
-                or not isinstance(result.snapshot_id, int)
-                or isinstance(result.snapshot_id, bool)
-                or not isinstance(result.captured_at, datetime)
-                or result.captured_at.tzinfo is None
-                or result.captured_at.utcoffset() is None
-            ):
-                return (), f"invalid temporal metadata: snapshot={snapshot_id}"
-            rows.append(result)
-        return (
-            tuple(
-                sorted(
-                    rows,
-                    key=lambda result: (
-                        result.captured_at.astimezone(UTC),
-                        result.snapshot_id,
-                    ),
-                )
-            ),
-            None,
-        )
-
     def _scenario_result(
         self,
         scenario: RankingScenarioDefinition,
@@ -352,30 +375,6 @@ class RankingHoldoutValidationService:
             scenario_name=scenario.name,
             scenario_definition_signature=scenario.definition_signature,
             component_weights=scenario.component_weights,
-            research=self._period_aggregate(research),
-            holdout=self._period_aggregate(holdout),
-        )
-
-    def _period_aggregate(
-        self, results: tuple[StrategyABSnapshotPerformanceResult, ...]
-    ) -> RankingHoldoutPeriodAggregate:
-        summary = self.performance_service.summarize_results(len(results), results)
-        return self._from_summary(summary)
-
-    @staticmethod
-    def _from_summary(
-        summary: StrategyABBatchPerformanceResult,
-    ) -> RankingHoldoutPeriodAggregate:
-        return RankingHoldoutPeriodAggregate(
-            snapshot_count=summary.successful_snapshot_count,
-            scenario_win_count=summary.scenario_win_count,
-            scenario_loss_count=summary.scenario_loss_count,
-            tie_count=summary.tie_count,
-            scenario_win_rate=summary.scenario_win_rate,
-            mean_baseline_return=summary.mean_baseline_return,
-            mean_scenario_return=summary.mean_scenario_return,
-            mean_return_delta=summary.mean_return_delta,
-            median_snapshot_return_delta=summary.median_snapshot_return_delta,
-            mean_baseline_positive_rate=summary.mean_baseline_positive_rate,
-            mean_scenario_positive_rate=summary.mean_scenario_positive_rate,
+            research=summarize_period_results(self.performance_service, research),
+            holdout=summarize_period_results(self.performance_service, holdout),
         )

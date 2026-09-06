@@ -225,6 +225,38 @@ Report의 `TEMPORAL_RATIO`는 retrospective split이고 `strict_unseen_holdout=f
 됩니다. Ratio와 fixed cutoff 모두 unseen 보장은 사용자의 scenario 설계 및 연구 프로세스까지
 통제해야 합니다.
 
+## Ranking Walk-Forward Validation v1
+
+하나의 Holdout 대신 여러 non-overlapping Validation fold에서 고정 explicit scenarios를
+반복 평가합니다. 이는 scenario 재학습이나 nested model selection이 아니라 expanding-window
+repeated temporal validation입니다. 공통 matrix가 horizon과
+`(baseline_policy_signature, effective_top_n)`별 cohort 및 모든 scenario의 `SUCCESS`
+교집합을 만들고, Walk-Forward는 이를 `captured_at ASC, snapshot_id ASC`로만 정렬합니다.
+
+```bash
+python -m scripts.evaluate_ranking_walk_forward \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Fold `k`의 Research 끝은 `initial_research_size + k * validation_size`이고, 바로 다음
+`validation_size`개 snapshot이 Validation입니다. Step도 Validation 크기로 고정되어 Validation
+구간이 겹치지 않으며 이전 Validation은 다음 expanding Research에 포함됩니다. 불완전한 마지막
+구간은 평가하지 않고 `unused_tail_snapshot_count`로 보고합니다. 최소 한 full fold가 없으면
+`INSUFFICIENT_WALK_FORWARD_DATA`, common set이 비면
+`NO_COMMON_COMPARABLE_SNAPSHOTS`로 exit 0입니다. Matrix/chronology/subset integrity 위반은
+`INVALID_WALK_FORWARD_DATA`로 exit 1, 입력 오류는 exit 2입니다.
+
+각 subset은 기존 Strategy A/B `summarize_results()`만 사용합니다. 이 명령은 DB SELECT만
+수행하고 외부 API, DB write, worker, LIVE policy를 건드리지 않습니다. 결과는 실제 trading
+PnL이나 통계적 유의성이 아니고 자동 winner/recommendation/promotion도 생성하지 않습니다.
+또한 scenario 작성자가 미래 데이터를 보지 않았음을 증명하지 못하므로
+`strict_unseen_validation=not_verified`입니다. 작은 표본으로 운영 정책을 결정하지 마십시오.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

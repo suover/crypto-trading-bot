@@ -270,6 +270,39 @@ winner/recommendation/promotion을 수행하지 않습니다. 결과는 실제 t
 ranking-selection gross market movement 기술 통계이고, 작은 표본으로 정책 결정을 내려서는 안
 됩니다.
 
+### Ranking Walk-Forward Validation v1
+
+단일 Holdout 구간의 우연에 덜 의존하도록, 고정된 explicit ranking scenarios를 여러
+시간순 Validation 구간에서 반복 관찰하는 expanding-window 연구 도구입니다. 각 cohort는
+`horizon_minutes`, `baseline_policy_signature`, `effective_top_n`을 그대로 격리하고 모든
+scenario가 동시에 `SUCCESS`인 common comparable snapshot만
+`captured_at ASC, snapshot_id ASC`로 정렬합니다. Scenario는 fold마다 재탐색하거나 선택하지
+않습니다.
+
+Fold `k`(0부터 시작)는 `research_end = initial_research_size + k * validation_size`,
+`research = ordered[:research_end]`,
+`validation = ordered[research_end:research_end + validation_size]`입니다. Step은 항상
+Validation 크기와 같으므로 Validation fold끼리는 겹치지 않고, 이전 Validation은 다음
+Research에 포함됩니다. 정확히 `validation_size`개인 full fold만 평가하며 남은 partial tail은
+fold로 만들지 않고 `unused_tail_snapshot_count`로 보고합니다.
+
+```bash
+python -m scripts.evaluate_ranking_walk_forward \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+각 Research/Validation aggregate는 기존 Strategy A/B summarizer의
+`RANKING_SELECTION_GROSS_MARKET_PERFORMANCE` 의미를 재사용합니다. 출력은 DB-only/read-only
+기술 통계이며 실제 trading PnL, 비용 반영 성과, 통계적 유의성, 자동 winner/정책 선택/승격,
+LIVE 변경이 아닙니다. 시간순 fold를 만들더라도 scenario 정의 과정에서 future data가 노출되지
+않았음을 CLI 자체가 증명하지 않으므로 `strict_unseen_validation=not_verified`입니다. 작은
+표본이나 반복 탐색 결과만으로 정책 결정을 내려서는 안 됩니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

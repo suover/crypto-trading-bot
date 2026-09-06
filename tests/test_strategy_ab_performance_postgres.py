@@ -26,6 +26,9 @@ from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     RankingScenarioSweepService,
     parse_scenario_document,
 )
+from crypto_trading_bot.services.ranking_walk_forward_validation_service import (
+    RankingWalkForwardValidationService,
+)
 from crypto_trading_bot.services.strategy_replay_dataset_service import (
     DATASET_SCHEMA_VERSION,
     build_policy_data,
@@ -390,6 +393,99 @@ def test_postgresql_holdout_runs_replay_common_split_and_summaries_read_only() -
         comparison = cohort.scenario_results[0]
         assert comparison.research.snapshot_count == 2
         assert comparison.holdout.snapshot_count == 2
+
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in before
+        }
+        assert after == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_walk_forward_builds_expanding_folds_and_stays_read_only() -> None:
+    definitions = parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "baseline_clone",
+                    "component_weights": {
+                        "liquidity": "0.35",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.15",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                },
+                {
+                    "name": "walk_forward_research",
+                    "component_weights": {
+                        "liquidity": "0.20",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.30",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                },
+            ],
+        }
+    )
+    with SessionLocal() as session:
+        user = User(name=f"ranking-walk-forward-{uuid4()}")
+        session.add(user)
+        session.flush()
+        for hour in range(6):
+            create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2031, 1, 1, hour, tzinfo=UTC),
+                with_outcomes=True,
+            )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in (
+                StrategyReplaySnapshot,
+                StrategyReplayCandidate,
+                StrategyReplayCandidateOutcome,
+            )
+        }
+
+        result = RankingWalkForwardValidationService(session).evaluate(
+            scenarios=definitions,
+            horizons=(60,),
+            latest=6,
+            initial_research_size=2,
+            validation_size=2,
+        )
+
+        assert result.evaluated_snapshot_count == 6
+        assert result.cohort_count == 1
+        cohort = result.cohorts[0]
+        assert cohort.status == SUCCESS
+        assert cohort.common_comparable_snapshot_count == 6
+        assert cohort.fold_count == 2
+        first, second = cohort.folds
+        assert first.research_snapshot_count == 2
+        assert first.validation_snapshot_count == 2
+        assert second.research_snapshot_count == 4
+        assert second.validation_snapshot_count == 2
+        assert set(first.validation_snapshot_ids).isdisjoint(
+            second.validation_snapshot_ids
+        )
+        assert set(first.validation_snapshot_ids) <= set(second.research_snapshot_ids)
+        assert all(
+            item.research.snapshot_count == fold.research_snapshot_count
+            and item.validation.snapshot_count == fold.validation_snapshot_count
+            for fold in cohort.folds
+            for item in fold.scenario_results
+        )
 
         after = {
             model: session.scalar(select(func.count()).select_from(model))
