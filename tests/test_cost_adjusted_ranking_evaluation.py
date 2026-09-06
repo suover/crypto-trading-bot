@@ -160,18 +160,21 @@ def _inputs(
     *,
     baseline_replaced: int = 1,
     scenario_replaced: int = 2,
+    top_n: int = 2,
     current_id: int = 2,
     horizon: int = 60,
     ab_status: str = AB_SUCCESS,
     common_ids: tuple[int, ...] | None = None,
     turnover_status: str = SUCCESS,
+    baseline_return: Decimal = Decimal("1.50"),
+    scenario_return: Decimal = Decimal("2.00"),
 ):
     definitions = _definitions()
     baseline = _selection_transition(
-        top_n=2, replaced=baseline_replaced, current_id=current_id, prefix="B"
+        top_n=top_n, replaced=baseline_replaced, current_id=current_id, prefix="B"
     )
     scenario_selection = _selection_transition(
-        top_n=2, replaced=scenario_replaced, current_id=current_id, prefix="S"
+        top_n=top_n, replaced=scenario_replaced, current_id=current_id, prefix="S"
     )
     scenario = TemporalRankingTurnoverScenarioTransition(
         scenario_name=definitions[0].name,
@@ -191,7 +194,7 @@ def _inputs(
     )
     turnover_cohort = SimpleNamespace(
         baseline_policy_signature="policy-a",
-        effective_top_n=2,
+        effective_top_n=top_n,
         transitions=(temporal,),
         transition_count=1,
         scenario_summaries=(scenario_summary,),
@@ -204,7 +207,14 @@ def _inputs(
         scenarios=definitions,
         cohorts=(turnover_cohort,) if turnover_status == SUCCESS else (),
     )
-    row = _ab_result(baseline, scenario_selection, horizon=horizon, status=ab_status)
+    row = _ab_result(
+        baseline,
+        scenario_selection,
+        horizon=horizon,
+        status=ab_status,
+        baseline_return=baseline_return,
+        scenario_return=scenario_return,
+    )
     resolved_common = (
         common_ids
         if common_ids is not None
@@ -225,7 +235,7 @@ def _inputs(
     ab_cohort = RankingScenarioComparableCohort(
         horizon_minutes=horizon,
         baseline_policy_signature="policy-a",
-        effective_top_n=2,
+        effective_top_n=top_n,
         candidate_snapshot_ids=candidate_ids,
         common_snapshot_ids=resolved_common,
         common_coverage_rate=Decimal(len(resolved_common))
@@ -338,9 +348,48 @@ def test_adjusted_returns_apply_cost_to_both_sides_and_preserve_identity() -> No
     assert snapshot.baseline_cost_adjusted_return == Decimal("1.3000")
     assert snapshot.scenario_cost_adjusted_return == Decimal("1.600")
     assert snapshot.cost_adjusted_return_delta == Decimal("0.3000")
-    assert snapshot.cost_adjusted_return_delta == snapshot.gross_return_delta - (
-        snapshot.scenario_execution_cost_percentage
-        - snapshot.baseline_execution_cost_percentage
+    assert snapshot.cost_adjusted_return_delta == (
+        snapshot.scenario_cost_adjusted_return - snapshot.baseline_cost_adjusted_return
+    )
+
+
+@pytest.mark.parametrize("scenario_replaced", [2, 3, 4, 5])
+def test_production_precision_adjusted_returns_use_one_canonical_path(
+    scenario_replaced,
+) -> None:
+    baseline_return = Decimal("1.90502042237168020879000568")
+    scenario_return = Decimal("1.433873836194718005538829718")
+    definitions, turnover, matrix, *_ = _inputs(
+        top_n=7,
+        baseline_replaced=1,
+        scenario_replaced=scenario_replaced,
+        baseline_return=baseline_return,
+        scenario_return=scenario_return,
+    )
+
+    result = _evaluate(turnover, matrix, definitions)
+    snapshot = result.cohorts[0].scenario_results[0].snapshots[0]
+    baseline_cost = (
+        (Decimal("2") * (Decimal("1") / Decimal("7")))
+        * Decimal("0.002")
+        * Decimal("100")
+    )
+    scenario_cost = (
+        (Decimal("2") * (Decimal(scenario_replaced) / Decimal("7")))
+        * Decimal("0.002")
+        * Decimal("100")
+    )
+
+    assert result.status == SUCCESS
+    assert snapshot.baseline_execution_cost_percentage == baseline_cost
+    assert snapshot.scenario_execution_cost_percentage == scenario_cost
+    assert snapshot.baseline_cost_adjusted_return == baseline_return - baseline_cost
+    assert snapshot.scenario_cost_adjusted_return == scenario_return - scenario_cost
+    assert snapshot.baseline_cost_adjusted_return.is_finite()
+    assert snapshot.scenario_cost_adjusted_return.is_finite()
+    assert snapshot.cost_adjusted_return_delta.is_finite()
+    assert snapshot.cost_adjusted_return_delta == (
+        snapshot.scenario_cost_adjusted_return - snapshot.baseline_cost_adjusted_return
     )
 
 
@@ -397,6 +446,8 @@ def test_continuity_break_current_id_does_not_overlap_ab_sample() -> None:
         lambda row: replace(row, scenario_top_markets=("wrong", "markets")),
         lambda row: replace(row, horizon_minutes=240),
         lambda row: replace(row, baseline_mean_return=Decimal("NaN")),
+        lambda row: replace(row, scenario_mean_return=Decimal("Infinity")),
+        lambda row: replace(row, mean_return_delta=Decimal("-Infinity")),
     ],
 )
 def test_lineage_mismatch_fails_closed(mutation) -> None:

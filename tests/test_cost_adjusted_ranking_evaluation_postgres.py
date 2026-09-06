@@ -140,7 +140,8 @@ def _create_snapshot(
     else:
         selected_features = features
         returns = {
-            item["market"]: Decimal(index + 1) / Decimal("10")
+            item["market"]: Decimal("0.2888610489553571428571428575")
+            + Decimal(index + 1) / Decimal("10")
             + Decimal(sequence) / Decimal("100")
             for index, item in enumerate(selected_features)
         }
@@ -317,7 +318,11 @@ def test_postgresql_top_seven_two_replacements_succeeds_end_to_end():
         session.flush()
         markets = tuple(f"KRW-{symbol}" for symbol in "ABCDEFGHI")
         first_features = tuple(
-            _feature(market, str(900 - index * 50), "0")
+            _feature(
+                market,
+                str(900 - index * 50),
+                "0" if market in {"KRW-A", "KRW-B"} else "-2",
+            )
             for index, market in enumerate(markets)
         )
         second_order = (*markets[2:], *markets[:2])
@@ -325,7 +330,12 @@ def test_postgresql_top_seven_two_replacements_succeeds_end_to_end():
             market: str(900 - index * 50) for index, market in enumerate(second_order)
         }
         second_features = tuple(
-            _feature(market, second_liquidity[market], "0") for market in markets
+            _feature(
+                market,
+                second_liquidity[market],
+                "0" if market in {"KRW-A", "KRW-B"} else "-2",
+            )
+            for market in markets
         )
         _create_snapshot(
             session,
@@ -372,6 +382,28 @@ def test_postgresql_top_seven_two_replacements_succeeds_end_to_end():
             assert snapshot.baseline_gross_traded_notional_ratio == (
                 Decimal("2") * snapshot.baseline_replacement_rate
             )
+            assert snapshot.baseline_cost_adjusted_return == (
+                snapshot.baseline_gross_return
+                - snapshot.baseline_execution_cost_percentage
+            )
+            assert snapshot.scenario_cost_adjusted_return == (
+                snapshot.scenario_gross_return
+                - snapshot.scenario_execution_cost_percentage
+            )
+            assert snapshot.cost_adjusted_return_delta == (
+                snapshot.scenario_cost_adjusted_return
+                - snapshot.baseline_cost_adjusted_return
+            )
+        momentum = next(
+            scenario
+            for scenario in cohort.scenario_results
+            if scenario.scenario_name == "momentum_heavy"
+        ).snapshots[0]
+        assert momentum.scenario_replacement_rate == Decimal("1") / Decimal("7")
+        assert momentum.baseline_gross_return == Decimal("0.958861048955")
+        assert momentum.scenario_gross_return == Decimal(
+            "0.8445753346692857142857142857"
+        )
         assert _counts(session) == before
         assert not session.new
         assert not session.dirty

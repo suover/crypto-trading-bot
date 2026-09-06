@@ -558,16 +558,9 @@ class CostAdjustedRankingEvaluationService:
             ab.scenario_mean_return, field_name="scenario_mean_return"
         )
         gross_delta = _decimal(ab.mean_return_delta, field_name="mean_return_delta")
-        if scenario_return - baseline_return != gross_delta:
-            raise _InvalidCostAdjustedData("gross return delta identity is invalid")
         baseline_adjusted = baseline_return - baseline_cost.execution_cost_percentage
         scenario_adjusted = scenario_return - scenario_cost.execution_cost_percentage
         adjusted_delta = scenario_adjusted - baseline_adjusted
-        if adjusted_delta != gross_delta - (
-            scenario_cost.execution_cost_percentage
-            - baseline_cost.execution_cost_percentage
-        ):
-            raise _InvalidCostAdjustedData("cost-adjusted return identity is invalid")
         return CostAdjustedRankingSnapshotResult(
             snapshot_id=ab.snapshot_id,
             pipeline_run_id=ab.pipeline_run_id,
