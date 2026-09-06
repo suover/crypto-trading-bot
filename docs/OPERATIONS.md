@@ -286,6 +286,29 @@ Common set이 없으면 `NO_COMMON_COMPARABLE_SNAPSHOTS`, full fold가 없으면
 DB write, LIVE policy 변경을 수행하지 않습니다. `strict_unseen_validation=not_verified`이며 작은
 표본으로 운영 결론을 내려서는 안 됩니다.
 
+## Temporal Ranking Turnover / Rebalance Research v1
+
+Offline Strategy Replay 결과만 이용해 시간에 따른 TopN selection replacement/retention을
+확인하는 manual CLI입니다. Candidate outcome과 horizon은 필요하지 않습니다.
+
+```bash
+python -m scripts.evaluate_temporal_ranking_turnover \
+  --latest 100 \
+  --scenario-file examples/ranking_scenarios.example.json
+```
+
+시간 순서는 `captured_at UTC ASC, snapshot_id ASC`이며 원래 sequence의 인접 위치만 비교합니다.
+모든 scenario가 replay와 baseline integrity를 통과하지 못한 위치, baseline policy signature 변경,
+effective TopN 변경은 continuity break입니다. 실패 위치를 제거한 뒤 앞뒤 snapshot을 연결하지
+않습니다.
+
+`NO_REPLAY_SNAPSHOTS`, `NO_COMMON_REPLAYABLE_SNAPSHOTS`,
+`INSUFFICIENT_TEMPORAL_TRANSITIONS`는 안전한 연구 결과로 exit 0이고,
+`INVALID_TURNOVER_DATA`는 integrity failure로 exit 1, 입력 오류는 exit 2입니다. 이 명령은 DB
+SELECT only이며 migration, worker, scheduler, external API, DB write 또는 LIVE side effect가
+없습니다. 결과는 counterfactual TopN selection proxy이고 monetary rebalance, 비용, 실제 거래나
+성과를 뜻하지 않으며 자동 winner/promotion도 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

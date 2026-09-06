@@ -332,6 +332,30 @@ python -m scripts.evaluate_ranking_validation_robustness \
 future data가 노출되지 않았음을 증명하지 않습니다. 결과는 ranking selection candidate의 gross
 future market movement 기술 통계이므로 작은 표본만으로 운영 결론을 내려서는 안 됩니다.
 
+### Temporal Ranking Turnover / Rebalance Research v1
+
+Persisted Strategy Replay Dataset을 Offline Replay해 연속 snapshot의 counterfactual TopN
+selection replacement와 retention을 비교하는 manual research 도구입니다. Outcome과 horizon은
+사용하지 않으며, 같은 시점의 Baseline-vs-Scenario overlap이 아니라
+`Baseline(t-1) → Baseline(t)` 및 `Scenario(t-1) → Scenario(t)`를 계산합니다.
+
+```bash
+python -m scripts.evaluate_temporal_ranking_turnover \
+  --latest 100 \
+  --scenario-file examples/ranking_scenarios.example.json
+```
+
+Snapshot은 `captured_at UTC ASC, snapshot_id ASC`로 정렬하고 원래 시간축에서 실제로 인접한
+두 위치만 비교합니다. 모든 explicit scenario가 `SUCCESS`이고 baseline integrity를 통과해야
+common replayable snapshot이 되며, 실패한 중간 snapshot의 앞뒤를 연결하지 않습니다.
+Baseline policy signature 또는 effective TopN이 바뀌는 경계도 continuity를 끊습니다.
+Replacement rate는 `entered_count / TopN`, retention rate는 `retained_count / TopN`입니다.
+
+이 수치는 selection turnover proxy일 뿐 monetary turnover, rebalance notional, 실제 거래량이나
+거래 PnL이 아닙니다. 수수료·spread·slippage·market impact를 계산하지 않으며 자동 score,
+winner, recommendation, promotion도 없습니다. 명령은 DB SELECT만 수행하고 외부 API, DB write,
+worker/scheduler 또는 LIVE policy에 영향을 주지 않습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
