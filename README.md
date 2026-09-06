@@ -386,6 +386,37 @@ cost를 뜻하지 않습니다. 저장된 orderbook spread도 자동 사용하�
 실제 portfolio/NAV, KRW notional 또는 주문 simulation이 아닙니다. DB SELECT-only이고 외부 API,
 LIVE 변경, 자동 winner/recommendation/promotion이 없습니다.
 
+### Cost-adjusted Walk-Forward Validation v1
+
+기존 Cost-adjusted Ranking evaluator를 한 번 실행한 결과 중 실제 cost-adjustable snapshot만
+시간순 expanding window로 검증하는 manual research 도구입니다. Gross A/B common set을 다시
+사용하지 않으므로 previous transition이 없는 첫 snapshot은 fold에 재포함되지 않습니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_walk_forward \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001 \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Research 구간은 누적 확장되고 Validation 구간은 `validation_size` 단위로 겹치지 않습니다.
+완전하지 않은 마지막 구간은 제외해 `unused_tail_snapshot_count`로 보고합니다. Validation 첫
+snapshot에는 직전 Research snapshot에서 넘어온 selection-change 비용이 이미 반영되어 있으므로
+fold 경계에서 비용을 0으로 초기화하지 않습니다. 각 fold는 동일 표본의 gross delta와
+cost-adjusted delta를 함께 표시하며 기존 snapshot 값을 재계산하지 않습니다.
+
+Scenario는 고정된 explicit 정의만 사용하며 자동 winner, promotion 또는 정책 적용을 하지
+않습니다. 시간순 fold만으로 scenario 설계의 미래 정보 비노출을 증명할 수 없으므로
+`strict_unseen_validation=not_verified`입니다. 이 기능은 DB SELECT-only이고 모든 fold 계산은
+메모리에서 수행됩니다. 외부 API, worker, scheduler, migration 또는 LIVE 동작에 영향이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

@@ -18,6 +18,11 @@ from crypto_trading_bot.services.cost_adjusted_ranking_evaluation_service import
     SUCCESS,
     CostAdjustedRankingEvaluationService,
 )
+from crypto_trading_bot.services.cost_adjusted_walk_forward_validation_service import (
+    INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA,
+    SUCCESS as WALK_FORWARD_SUCCESS,
+    CostAdjustedWalkForwardValidationService,
+)
 from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     parse_scenario_document,
 )
@@ -404,6 +409,123 @@ def test_postgresql_top_seven_two_replacements_succeeds_end_to_end():
         assert momentum.scenario_gross_return == Decimal(
             "0.8445753346692857142857142857"
         )
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_cost_adjusted_walk_forward_preserves_boundary_cost_and_is_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"cost-adjusted-walk-forward-{uuid4()}")
+        session.add(user)
+        session.flush()
+        snapshots = [
+            _create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2053, 1, 1, hour, tzinfo=UTC),
+                sequence=hour,
+                features=tuple(
+                    _feature(
+                        f"KRW-{symbol}",
+                        str({0: 900, 1: 800, 2: 100}[(index - hour) % 3]),
+                        "0",
+                    )
+                    for index, symbol in enumerate("ABC")
+                ),
+            )
+            for hour in range(8)
+        ]
+        before = _counts(session)
+        source = CostAdjustedRankingEvaluationService(session).evaluate(
+            scenarios=_definitions(),
+            horizons=(60, 240),
+            latest=8,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        result = CostAdjustedWalkForwardValidationService(session).evaluate_from_result(
+            source,
+            initial_research_size=2,
+            validation_size=1,
+        )
+
+        assert result.status == WALK_FORWARD_SUCCESS
+        assert result.horizon_count == 2
+        assert len(result.cohorts) == 2
+        assert all(cohort.fold_count == 5 for cohort in result.cohorts)
+        for cohort in result.cohorts:
+            first_fold = cohort.folds[0]
+            assert first_fold.research_snapshot_ids == (
+                snapshots[1].id,
+                snapshots[2].id,
+            )
+            assert first_fold.validation_snapshot_ids == (snapshots[3].id,)
+            for scenario_index, scenario in enumerate(first_fold.scenario_results):
+                source_snapshot = (
+                    source.cohorts[
+                        next(
+                            index
+                            for index, item in enumerate(source.cohorts)
+                            if item.horizon_minutes == cohort.horizon_minutes
+                        )
+                    ]
+                    .scenario_results[scenario_index]
+                    .snapshots[2]
+                )
+                assert source_snapshot.snapshot_id == snapshots[3].id
+                assert source_snapshot.baseline_execution_cost_percentage > 0
+                assert (
+                    scenario.validation.mean_cost_adjusted_return_delta
+                    == source_snapshot.cost_adjusted_return_delta
+                )
+                assert (
+                    scenario.validation.mean_gross_return_delta
+                    == source_snapshot.gross_return_delta
+                )
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_cost_adjusted_walk_forward_insufficient_is_safe():
+    with SessionLocal() as session:
+        user = User(name=f"cost-adjusted-walk-forward-short-{uuid4()}")
+        session.add(user)
+        session.flush()
+        for hour in range(4):
+            _create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2054, 1, 1, hour, tzinfo=UTC),
+                sequence=hour,
+            )
+        before = _counts(session)
+        source = CostAdjustedRankingEvaluationService(session).evaluate(
+            scenarios=_definitions(),
+            horizons=(60,),
+            latest=4,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        result = CostAdjustedWalkForwardValidationService(session).evaluate_from_result(
+            source,
+            initial_research_size=3,
+            validation_size=1,
+        )
+
+        assert result.status == INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA
+        assert result.cohorts[0].cost_adjustable_snapshot_count == 3
+        assert result.cohorts[0].fold_count == 0
+        assert result.cohorts[0].performance_compared is False
         assert _counts(session) == before
         assert not session.new
         assert not session.dirty

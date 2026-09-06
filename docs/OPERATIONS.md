@@ -337,6 +337,39 @@ return 양쪽에서 차감합니다. 저장된 spread는 execution cost로 사�
 migration, worker, scheduler 또는 Compose service가 없으며 외부 API와 LIVE side effect도 없습니다.
 결과는 실제 PnL이나 실제 주문 simulation이 아니고 자동 winner/promotion을 수행하지 않습니다.
 
+## Cost-adjusted Walk-Forward Validation v1
+
+Cost-adjusted evaluator를 command당 한 번 실행한 뒤, 그 결과의 cost-adjustable snapshot만 메모리에서
+expanding-window Research/Validation fold로 나눕니다. Gross common snapshot이나 비용 계산을 다시
+구성하지 않으며 Validation 첫 snapshot의 기존 transition 비용도 초기화하지 않습니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_walk_forward \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001 \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Validation fold는 서로 겹치지 않고 partial tail은 제외합니다. 같은 fold의 gross delta와
+cost-adjusted delta를 함께 출력하지만 automatic winner, promotion 또는 policy decision은
+수행하지 않으며 `strict_unseen_validation=not_verified`입니다.
+
+`SUCCESS`는 full Validation fold가 하나 이상인 경우입니다.
+`NO_COST_ADJUSTABLE_SNAPSHOTS`와
+`INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA`는 exit 0의 안전한 연구 결과이고,
+`INVALID_COST_ADJUSTED_WALK_FORWARD_DATA`는 exit 1, 잘못된 CLI 입력은 exit 2입니다.
+
+이 명령은 manual CLI이며 DB SELECT-only입니다. Cost-adjusted evaluation은 한 번만 수행되고 fold
+검증은 in-memory입니다. 별도 worker, scheduler, migration, 설정, 외부 API 또는 LIVE side effect가
+없습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash
