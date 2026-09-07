@@ -417,6 +417,39 @@ Scenario는 고정된 explicit 정의만 사용하며 자동 winner, promotion �
 `strict_unseen_validation=not_verified`입니다. 이 기능은 DB SELECT-only이고 모든 fold 계산은
 메모리에서 수행됩니다. 외부 API, worker, scheduler, migration 또는 LIVE 동작에 영향이 없습니다.
 
+### Cost-adjusted Validation Robustness Statistics v1
+
+Cost-adjusted evaluator를 command당 한 번만 실행하고, 같은 immutable 결과로 만든 Walk-Forward의
+Validation-only 분포를 설명하는 manual research 도구입니다. Fold-level primary value는 각
+Validation fold의 mean cost-adjusted return delta이고, snapshot-level primary value는 upstream에
+저장된 canonical cost-adjusted return delta입니다. Research snapshot과 partial tail은 제외하며
+Validation 표본은 겹치지 않습니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_validation_robustness \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001 \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Fold와 snapshot 각각에 대해 count, positive/negative/tie, positive rate, mean/median,
+min/max/range, population standard deviation 및 deterministic worst/best를 출력합니다. 값이
+하나인 표본도 유효한 descriptive 결과이며 표준편차는 0입니다. 이는 표본 충분성 판단이나
+통계적 추론이 아니고 winner, promotion, threshold 또는 정책 선택을 수행하지 않습니다.
+
+`NO_COST_ADJUSTABLE_SNAPSHOTS`와
+`INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA`는 exit 0의 안전 상태이고,
+lineage/chronology/identity 위반은 `INVALID_COST_ADJUSTED_ROBUSTNESS_DATA`로 exit 1입니다.
+잘못된 입력은 exit 2입니다. DB-only/read-only이며 외부 호출, worker, scheduler, migration,
+설정 또는 LIVE 동작에 영향이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

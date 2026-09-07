@@ -370,6 +370,40 @@ cost-adjusted delta를 함께 출력하지만 automatic winner, promotion 또는
 검증은 in-memory입니다. 별도 worker, scheduler, migration, 설정, 외부 API 또는 LIVE side effect가
 없습니다.
 
+## Cost-adjusted Validation Robustness Statistics v1
+
+Cost-adjusted Walk-Forward의 Validation fold와 해당 fold에 실제 포함된 snapshot만 대상으로
+deterministic descriptive statistics를 생성합니다. 한 command 안에서 Cost-adjusted evaluation을
+정확히 한 번 실행한 뒤, 동일한 immutable result를 Walk-Forward에 전달하고, 다시 그 source result와
+Walk-Forward result를 robustness evaluator에 함께 전달합니다. 비용·turnover·ranking·gross return은
+재계산하지 않습니다.
+
+```bash
+python -m scripts.evaluate_cost_adjusted_validation_robustness \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001 \
+  --initial-research-size 40 \
+  --validation-size 10
+```
+
+Fold 분포에는 `validation.mean_cost_adjusted_return_delta`, snapshot 분포에는 source의
+`cost_adjusted_return_delta`를 사용합니다. 순서는 `captured_at UTC ASC, snapshot_id ASC`이며
+Research snapshot, incomplete tail, 중복 Validation ID는 포함하지 않습니다. 표준편차는 관찰값의
+population standard deviation입니다. count 1도 정상이며 표본 충분성이나 통계적 유의성을 판단하지
+않습니다.
+
+`SUCCESS`, `NO_COST_ADJUSTABLE_SNAPSHOTS`,
+`INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA`는 exit 0이고,
+`INVALID_COST_ADJUSTED_ROBUSTNESS_DATA`는 exit 1, 입력 오류는 exit 2입니다. 실행은 DB SELECT-only,
+in-memory report이며 DB write, worker, scheduler, migration, external API 또는 LIVE side effect가
+없습니다. 자동 winner, promotion, policy decision도 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

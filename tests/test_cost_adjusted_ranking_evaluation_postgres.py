@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from statistics import median, pstdev
 from uuid import uuid4
 
 from sqlalchemy import func, select
@@ -22,6 +23,11 @@ from crypto_trading_bot.services.cost_adjusted_walk_forward_validation_service i
     INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA,
     SUCCESS as WALK_FORWARD_SUCCESS,
     CostAdjustedWalkForwardValidationService,
+)
+from crypto_trading_bot.services.cost_adjusted_validation_robustness_service import (
+    INSUFFICIENT_COST_ADJUSTED_WALK_FORWARD_DATA as ROBUSTNESS_INSUFFICIENT,
+    SUCCESS as ROBUSTNESS_SUCCESS,
+    CostAdjustedValidationRobustnessService,
 )
 from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     parse_scenario_document,
@@ -526,6 +532,160 @@ def test_postgresql_cost_adjusted_walk_forward_insufficient_is_safe():
         assert result.cohorts[0].cost_adjustable_snapshot_count == 3
         assert result.cohorts[0].fold_count == 0
         assert result.cohorts[0].performance_compared is False
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_cost_adjusted_robustness_matches_canonical_validation_data():
+    with SessionLocal() as session:
+        user = User(name=f"cost-adjusted-robustness-{uuid4()}")
+        session.add(user)
+        session.flush()
+        for hour in range(8):
+            _create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2055, 1, 1, hour, tzinfo=UTC),
+                sequence=hour,
+            )
+        before = _counts(session)
+        source = CostAdjustedRankingEvaluationService(session).evaluate(
+            scenarios=_definitions(),
+            horizons=(60, 240),
+            latest=8,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+        walk = CostAdjustedWalkForwardValidationService(session).evaluate_from_result(
+            source, initial_research_size=2, validation_size=1
+        )
+
+        result = CostAdjustedValidationRobustnessService(session).evaluate_from_results(
+            source, walk
+        )
+
+        assert result.status == ROBUSTNESS_SUCCESS
+        assert len(result.cohorts) == 2
+        for cohort in result.cohorts:
+            assert cohort.fold_count == 5
+            assert cohort.validation_snapshot_count == 5
+            source_cohort = next(
+                item
+                for item in source.cohorts
+                if (
+                    item.horizon_minutes,
+                    item.baseline_policy_signature,
+                    item.effective_top_n,
+                )
+                == (
+                    cohort.horizon_minutes,
+                    cohort.baseline_policy_signature,
+                    cohort.effective_top_n,
+                )
+            )
+            walk_cohort = next(
+                item
+                for item in walk.cohorts
+                if item.horizon_minutes == cohort.horizon_minutes
+            )
+            validation_ids = tuple(
+                snapshot_id
+                for fold in walk_cohort.folds
+                for snapshot_id in fold.validation_snapshot_ids
+            )
+            for scenario in cohort.scenario_results:
+                source_scenario = next(
+                    item
+                    for item in source_cohort.scenario_results
+                    if item.scenario_name == scenario.scenario_name
+                )
+                source_by_id = {
+                    item.snapshot_id: item for item in source_scenario.snapshots
+                }
+                snapshot_values = tuple(
+                    source_by_id[snapshot_id].cost_adjusted_return_delta
+                    for snapshot_id in validation_ids
+                )
+                fold_values = tuple(
+                    next(
+                        item
+                        for item in fold.scenario_results
+                        if item.scenario_name == scenario.scenario_name
+                    ).validation.mean_cost_adjusted_return_delta
+                    for fold in walk_cohort.folds
+                )
+                snapshot_stats = scenario.snapshot_statistics.statistics
+                fold_stats = scenario.fold_statistics.statistics
+                assert snapshot_stats.count == len(snapshot_values)
+                assert snapshot_stats.mean_delta == sum(snapshot_values) / Decimal(
+                    len(snapshot_values)
+                )
+                assert snapshot_stats.median_delta == median(snapshot_values)
+                assert snapshot_stats.min_delta == min(snapshot_values)
+                assert snapshot_stats.max_delta == max(snapshot_values)
+                assert snapshot_stats.delta_range == max(snapshot_values) - min(
+                    snapshot_values
+                )
+                assert snapshot_stats.delta_stddev == pstdev(snapshot_values)
+                assert fold_stats.count == len(fold_values)
+                assert fold_stats.mean_delta == sum(fold_values) / Decimal(
+                    len(fold_values)
+                )
+                assert fold_stats.median_delta == median(fold_values)
+                assert fold_stats.min_delta == min(fold_values)
+                assert fold_stats.max_delta == max(fold_values)
+                assert fold_stats.delta_stddev == pstdev(fold_values)
+                assert (
+                    scenario.snapshot_statistics.worst_snapshot_id
+                    == validation_ids[snapshot_values.index(min(snapshot_values))]
+                )
+                assert (
+                    scenario.snapshot_statistics.best_snapshot_id
+                    == validation_ids[snapshot_values.index(max(snapshot_values))]
+                )
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_cost_adjusted_robustness_insufficient_is_safe_and_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"cost-adjusted-robustness-short-{uuid4()}")
+        session.add(user)
+        session.flush()
+        for hour in range(4):
+            _create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2056, 1, 1, hour, tzinfo=UTC),
+                sequence=hour,
+            )
+        before = _counts(session)
+        source = CostAdjustedRankingEvaluationService(session).evaluate(
+            scenarios=_definitions(),
+            horizons=(60,),
+            latest=4,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+        walk = CostAdjustedWalkForwardValidationService(session).evaluate_from_result(
+            source, initial_research_size=3, validation_size=1
+        )
+
+        result = CostAdjustedValidationRobustnessService(session).evaluate_from_results(
+            source, walk
+        )
+
+        assert result.status == ROBUSTNESS_INSUFFICIENT
+        assert result.cohorts[0].status == ROBUSTNESS_INSUFFICIENT
+        assert result.cohorts[0].robustness_computed is False
         assert _counts(session) == before
         assert not session.new
         assert not session.dirty
