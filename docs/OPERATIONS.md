@@ -404,6 +404,50 @@ population standard deviation입니다. count 1도 정상이며 표본 충분성
 in-memory report이며 DB write, worker, scheduler, migration, external API 또는 LIVE side effect가
 없습니다. 자동 winner, promotion, policy decision도 수행하지 않습니다.
 
+## Research Policy Candidate Registry v1
+
+Forward-only 연구를 시작할 explicit Ranking Scenario 하나를 reference Replay Snapshot context에
+수동 등록합니다. Scenario parser와 baseline replay policy parser를 그대로 사용하며 raw weight,
+user, exchange, quote asset, TopN 또는 등록시각을 CLI에서 덮어쓸 수 없습니다.
+
+먼저 dry-run으로 validation과 watermark 계획을 확인합니다. 이 단계는 rollback되며 candidate ID나
+영구 registered time을 생성하지 않습니다.
+
+```bash
+python -m scripts.register_research_policy_candidate \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --scenario-name research_example_momentum_heavy \
+  --reference-snapshot-id 8
+```
+
+명시적으로 `--apply`한 경우에만 `research_policy_candidates`에 insert하고 commit합니다.
+
+```bash
+python -m scripts.register_research_policy_candidate \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --scenario-name research_example_momentum_heavy \
+  --reference-snapshot-id 8 \
+  --apply
+```
+
+`CREATED`는 새 immutable anchor가 저장됐다는 뜻입니다. `ALREADY_REGISTERED`는 같은 research
+context와 definition의 최초 row를 그대로 반환한 것으로, 이후 Replay Snapshot이 추가됐더라도
+registered time과 두 watermark를 갱신하지 않습니다. 이름/definition alias conflict와 reference
+snapshot integrity failure는 exit 1, scenario/CLI 입력 오류는 exit 2입니다.
+
+등록 anchor는 trusted UTC `registered_at`, matching context의 최대 snapshot ID, 최대 captured-at을
+각각 고정합니다. 향후 별도 Forward Validation은 다음 조건을 모두 적용해야 합니다.
+
+```text
+snapshot.id > registration_snapshot_id_watermark
+AND snapshot.captured_at > registered_at
+AND snapshot.captured_at > registration_captured_at_watermark
+```
+
+현재 command는 anchor 등록만 수행합니다. Forward evidence 생성, promotion, shadow/LIVE policy
+적용은 없으며 Upbit/OpenAI/Telegram 등 외부 호출도 없습니다. Worker, scheduler, Compose service,
+env flag를 추가하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

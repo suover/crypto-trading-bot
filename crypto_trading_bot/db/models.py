@@ -272,6 +272,73 @@ class StrategyReplaySnapshot(Base):
     )
 
 
+class ResearchPolicyCandidate(Base):
+    __tablename__ = "research_policy_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "baseline_policy_signature",
+            "effective_top_n",
+            "scenario_name",
+            name="uq_rpc_context_scenario_name",
+        ),
+        UniqueConstraint(
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "baseline_policy_signature",
+            "effective_top_n",
+            "scenario_definition_signature",
+            name="uq_rpc_context_definition_signature",
+        ),
+        CheckConstraint("effective_top_n > 0", name="ck_rpc_effective_top_n_positive"),
+        CheckConstraint(
+            "registration_snapshot_id_watermark > 0",
+            name="ck_rpc_snapshot_watermark_positive",
+        ),
+        Index(
+            "ix_rpc_context_registered_at",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "registered_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), nullable=False, index=True
+    )
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    component_weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    reference_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("strategy_replay_snapshots.id"), nullable=False, index=True
+    )
+    reference_snapshot_captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    registration_snapshot_id_watermark: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    registration_captured_at_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class StrategyReplayCandidate(Base):
     __tablename__ = "strategy_replay_candidates"
     __table_args__ = (

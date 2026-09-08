@@ -450,6 +450,51 @@ lineage/chronology/identity 위반은 `INVALID_COST_ADJUSTED_ROBUSTNESS_DATA`로
 잘못된 입력은 exit 2입니다. DB-only/read-only이며 외부 호출, worker, scheduler, migration,
 설정 또는 LIVE 동작에 영향이 없습니다.
 
+### Research Policy Candidate Registry v1
+
+사람이 scenario 파일에서 명시적으로 선택한 Ranking Scenario 하나를 immutable research
+candidate로 등록하는 manual 도구입니다. Reference Strategy Replay Snapshot에서 user, exchange,
+quote asset, dataset schema, baseline policy signature와 stored TopN을 가져오며, baseline policy
+signature와 policy data를 등록 전에 다시 검증합니다. 자동 winner 선택이나 weight 생성은 하지
+않습니다.
+
+먼저 DB write가 없는 dry-run으로 계획을 확인합니다.
+
+```bash
+python -m scripts.register_research_policy_candidate \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --scenario-name research_example_momentum_heavy \
+  --reference-snapshot-id 8
+```
+
+확인 후에만 명시적으로 등록합니다.
+
+```bash
+python -m scripts.register_research_policy_candidate \
+  --scenario-file examples/ranking_scenarios.example.json \
+  --scenario-name research_example_momentum_heavy \
+  --reference-snapshot-id 8 \
+  --apply
+```
+
+등록 row에는 trusted UTC `registered_at`과 등록 당시 동일 baseline context에 존재하는 Replay
+Snapshot의 최대 ID 및 최대 `captured_at` watermark가 함께 저장됩니다. 동일 context의 동일
+definition 재시도는 최초 row를 `ALREADY_REGISTERED`로 반환하며 registered time과 watermark를
+갱신하지 않습니다. 같은 이름의 다른 definition 또는 같은 definition의 alias는 거부합니다.
+
+향후 Forward-only Validation은 다음 세 조건을 모두 만족하는 snapshot만 evidence로 사용할
+예정입니다.
+
+```text
+snapshot.id > registration_snapshot_id_watermark
+AND snapshot.captured_at > registered_at
+AND snapshot.captured_at > registration_captured_at_watermark
+```
+
+이번 버전은 future-only anchor만 만들며 Forward Validation 자체, promotion, shadow policy,
+candidate 수정/삭제/retirement 또는 LIVE policy 변경은 구현하지 않습니다. 등록은 DB-only이고
+외부 API, worker, scheduler, 신규 env 설정이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.
