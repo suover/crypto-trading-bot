@@ -495,6 +495,37 @@ AND snapshot.captured_at > registration_captured_at_watermark
 candidate 수정/삭제/retirement 또는 LIVE policy 변경은 구현하지 않습니다. 등록은 DB-only이고
 외부 API, worker, scheduler, 신규 env 설정이 없습니다.
 
+### Forward-only Candidate Gross Evidence v1
+
+Registry에 이미 등록된 candidate 하나를 source of truth로 사용해 등록 이후의 gross 성과만
+평가하는 manual research 도구입니다. Scenario file을 다시 읽지 않으며 저장된 component weights와
+definition signature, reference snapshot lineage를 재검증합니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_gross_evidence \
+  --candidate-id 1 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440
+```
+
+Forward cohort에는 candidate와 동일한 user, exchange, quote asset, dataset schema, baseline policy
+signature 및 TopN context만 포함됩니다. 또한 다음 세 조건을 모두 strict `>`로 만족해야 합니다.
+
+```text
+snapshot.id > registration_snapshot_id_watermark
+AND snapshot.captured_at > registered_at
+AND snapshot.captured_at > registration_captured_at_watermark
+```
+
+따라서 pre-registration snapshot, historical backfill 및 baseline policy가 변경된 snapshot은
+제외됩니다. 1h/4h/24h outcome maturity는 독립적이며 최근 24h outcome이 아직 없다면
+`FORWARD_OUTCOMES_PENDING`은 정상 상태입니다. 계산은 기존 Offline Replay와 Strategy A/B gross
+semantics를 그대로 재사용하고 successful comparable subset만 집계합니다.
+
+이 명령은 DB SELECT-only/in-memory report이며 외부 API, worker, scheduler, env flag, migration 및
+LIVE 영향이 없습니다. Cost-adjusted forward evidence와 policy promotion은 별도 후속 단계입니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

@@ -328,6 +328,61 @@ class OfflineStrategyReplayService:
         )
         return self._summarize(limit, results)
 
+    def replay_snapshots(
+        self,
+        snapshot_ids: Iterable[int],
+        *,
+        overrides: dict[str, Decimal] | None = None,
+        top_n: int | None = None,
+    ) -> BatchReplayResult:
+        """Replay an explicit ordered snapshot subset with batched DB reads."""
+        ids = tuple(snapshot_ids)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in ids
+        ):
+            raise ReplayInputError("snapshot IDs must be positive integers")
+        if len(ids) != len(set(ids)):
+            raise ReplayInputError("snapshot IDs must be unique")
+        if not ids:
+            return self._summarize(0, ())
+        snapshots_by_id = {
+            snapshot.id: snapshot
+            for snapshot in self.session.scalars(
+                select(StrategyReplaySnapshot)
+                .where(StrategyReplaySnapshot.id.in_(ids))
+                .execution_options(autoflush=False)
+            )
+        }
+        candidates_by_snapshot: dict[int, list[StrategyReplayCandidate]] = {
+            snapshot_id: [] for snapshot_id in snapshots_by_id
+        }
+        for candidate in self.session.scalars(
+            select(StrategyReplayCandidate)
+            .where(StrategyReplayCandidate.strategy_replay_snapshot_id.in_(ids))
+            .order_by(
+                StrategyReplayCandidate.strategy_replay_snapshot_id,
+                StrategyReplayCandidate.prefilter_rank.asc().nulls_last(),
+                StrategyReplayCandidate.market,
+            )
+            .execution_options(autoflush=False)
+        ):
+            candidates_by_snapshot.setdefault(
+                candidate.strategy_replay_snapshot_id, []
+            ).append(candidate)
+        results = tuple(
+            self._missing_snapshot(snapshot_id)
+            if (snapshot := snapshots_by_id.get(snapshot_id)) is None
+            else self._replay_loaded(
+                snapshot,
+                candidates_by_snapshot[snapshot_id],
+                overrides=overrides,
+                top_n=top_n,
+            )
+            for snapshot_id in ids
+        )
+        return self._summarize(len(ids), results)
+
     def summarize_results(
         self, requested_count: int, results: Iterable[SnapshotReplayResult]
     ) -> BatchReplayResult:

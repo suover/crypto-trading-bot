@@ -171,6 +171,31 @@ class StrategyABPerformanceService:
         )
         return self._summarize(limit, results)
 
+    def evaluate_snapshots(
+        self,
+        snapshot_ids: Iterable[int],
+        *,
+        horizon_minutes: int,
+        overrides: dict[str, Decimal] | None = None,
+    ) -> tuple[StrategyABSnapshotPerformanceResult, ...]:
+        """Evaluate an explicit ordered snapshot subset with batched DB reads."""
+        self._validate_horizon(horizon_minutes)
+        replay_batch = self.replay_service.replay_snapshots(
+            snapshot_ids, overrides=overrides, top_n=None
+        )
+        evaluable_ids = tuple(
+            replay.snapshot_id
+            for replay in replay_batch.results
+            if self._replay_is_evaluable(replay) and replay.snapshot_id is not None
+        )
+        outcome_map = self._load_outcome_map(
+            evaluable_ids, horizon_minutes=horizon_minutes
+        )
+        return tuple(
+            self._evaluate_replay(replay, horizon_minutes, outcome_map)
+            for replay in replay_batch.results
+        )
+
     def summarize_results(
         self,
         requested_count: int,

@@ -9,10 +9,19 @@ from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.db.database import SessionLocal
 from crypto_trading_bot.db.models import (
     AnalysisRun,
+    ResearchPolicyCandidate,
     StrategyReplayCandidate,
     StrategyReplayCandidateOutcome,
     StrategyReplaySnapshot,
     User,
+)
+from crypto_trading_bot.services.forward_candidate_gross_evidence_service import (
+    FORWARD_OUTCOMES_PENDING,
+    SUCCESS as FORWARD_SUCCESS,
+    ForwardCandidateGrossEvidenceService,
+)
+from crypto_trading_bot.services.research_policy_candidate_registry_service import (
+    ResearchPolicyCandidateRegistryService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -592,6 +601,172 @@ def test_postgresql_robustness_uses_walk_forward_validation_and_stays_read_only(
         after = {
             model: session.scalar(select(func.count()).select_from(model))
             for model in before
+        }
+        assert after == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_forward_candidate_gross_evidence_enforces_anchor_and_is_read_only():
+    scenario = parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "registered-forward-candidate",
+                    "component_weights": {
+                        "liquidity": "0.20",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.30",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                }
+            ],
+        }
+    )[0]
+    with SessionLocal() as session:
+        user = User(name=f"forward-candidate-{uuid4()}")
+        session.add(user)
+        session.flush()
+        reference = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 1, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        pre_registration_future_timestamp = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 4, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        registered_at = datetime(2060, 1, 2, tzinfo=UTC)
+        registration = ResearchPolicyCandidateRegistryService(
+            session, now_fn=lambda: registered_at
+        ).register(reference_snapshot_id=reference.id, scenario=scenario)
+        candidate = registration.candidate
+        assert candidate.registration_snapshot_id_watermark == (
+            pre_registration_future_timestamp.id
+        )
+        assert candidate.registration_captured_at_watermark == (
+            pre_registration_future_timestamp.captured_at
+        )
+
+        historical_backfill = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 1, 12, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        captured_watermark_backfill = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 3, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        first_forward = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 5, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        second_forward = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 6, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        changed_baseline = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2060, 1, 7, tzinfo=UTC),
+            with_outcomes=True,
+            exclude_cautions=False,
+        )
+
+        for snapshot in (first_forward, second_forward):
+            for replay_candidate in session.scalars(
+                select(StrategyReplayCandidate).where(
+                    StrategyReplayCandidate.strategy_replay_snapshot_id == snapshot.id
+                )
+            ):
+                source = session.scalar(
+                    select(StrategyReplayCandidateOutcome).where(
+                        StrategyReplayCandidateOutcome.strategy_replay_candidate_id
+                        == replay_candidate.id,
+                        StrategyReplayCandidateOutcome.horizon_minutes == 60,
+                    )
+                )
+                session.add(
+                    StrategyReplayCandidateOutcome(
+                        strategy_replay_candidate_id=replay_candidate.id,
+                        strategy_replay_snapshot_id=snapshot.id,
+                        user_id=user.id,
+                        exchange="UPBIT",
+                        market=replay_candidate.market,
+                        horizon_minutes=240,
+                        snapshot_at=snapshot.captured_at,
+                        reference_at=snapshot.captured_at,
+                        target_at=snapshot.captured_at + timedelta(minutes=240),
+                        evaluated_at=snapshot.captured_at + timedelta(minutes=241),
+                        reference_price=source.reference_price,
+                        reference_price_source=source.reference_price_source,
+                        end_price=source.end_price,
+                        end_price_at=snapshot.captured_at + timedelta(minutes=239),
+                        end_price_source=source.end_price_source,
+                        market_return_percentage=source.market_return_percentage,
+                        evaluation_status="COMPLETE",
+                        safe_reason=None,
+                    )
+                )
+        session.flush()
+        tracked_models = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked_models
+        }
+
+        result = ForwardCandidateGrossEvidenceService(session).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60, 240, 1440),
+        )
+
+        assert result.status == FORWARD_SUCCESS
+        assert result.eligible_forward_snapshot_ids == (
+            first_forward.id,
+            second_forward.id,
+        )
+        assert reference.id not in result.eligible_forward_snapshot_ids
+        assert historical_backfill.id not in result.eligible_forward_snapshot_ids
+        assert (
+            captured_watermark_backfill.id not in result.eligible_forward_snapshot_ids
+        )
+        assert changed_baseline.id not in result.eligible_forward_snapshot_ids
+        sixty, two_forty, daily = result.horizons
+        assert sixty.status == two_forty.status == FORWARD_SUCCESS
+        assert sixty.successful_comparable_snapshot_count == 2
+        assert two_forty.successful_comparable_snapshot_count == 2
+        assert daily.status == FORWARD_OUTCOMES_PENDING
+        assert daily.outcome_incomplete_count == 2
+        assert all(
+            item.performance_evaluated
+            for horizon in (sixty, two_forty)
+            for item in horizon.snapshots
+        )
+
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked_models
         }
         assert after == before
         assert not session.new

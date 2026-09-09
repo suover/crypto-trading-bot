@@ -448,6 +448,37 @@ AND snapshot.captured_at > registration_captured_at_watermark
 적용은 없으며 Upbit/OpenAI/Telegram 등 외부 호출도 없습니다. Worker, scheduler, Compose service,
 env flag를 추가하지 않습니다.
 
+## Forward-only Candidate Gross Evidence v1
+
+등록된 candidate의 frozen DB definition을 사용해 registration anchor 이후 snapshot만 수동
+평가합니다. Scenario file이나 weight override를 받지 않습니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_gross_evidence \
+  --candidate-id 1 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440
+```
+
+실행 전 candidate schema, stored component weights와 definition signature, reference snapshot의
+user/exchange/quote/dataset/baseline signature/TopN lineage를 다시 검증합니다. Forward snapshot은
+동일 baseline context이면서 다음 triple-cutoff를 모두 만족해야 합니다.
+
+```text
+snapshot.id > registration_snapshot_id_watermark
+AND snapshot.captured_at > registered_at
+AND snapshot.captured_at > registration_captured_at_watermark
+```
+
+Candidate 등록 직후에는 `NO_FORWARD_SNAPSHOTS`가 정상입니다. Eligible snapshot은 있지만 해당
+horizon outcome이 아직 완성되지 않았다면 `FORWARD_OUTCOMES_PENDING`도 정상입니다. 한 horizon의
+pending은 다른 horizon의 `SUCCESS` 결과를 제거하지 않습니다.
+
+기존 Offline Replay 및 Strategy A/B gross 결과를 사용하며 pending/incompatible/invalid snapshot을
+0 수익률로 평균에 넣지 않습니다. 명령은 DB SELECT-only이고 외부 API, write, worker, scheduler,
+migration 또는 LIVE policy 변경이 없습니다. Cost-adjusted evidence와 promotion은 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash
