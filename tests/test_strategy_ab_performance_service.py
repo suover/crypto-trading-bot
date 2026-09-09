@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from crypto_trading_bot.services.offline_strategy_replay_service import (
+    ReplayInputError,
     SnapshotReplayResult,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
@@ -102,6 +103,34 @@ def evaluate(replay=None, outcomes=None, *, horizon=60):
     return StrategyABPerformanceService(MagicMock())._evaluate_replay(
         replay or replay_result(), horizon, outcomes or {}
     )
+
+
+def test_outcome_as_of_is_timezone_aware_and_kept_in_outer_join_on_clause() -> None:
+    session = MagicMock()
+    session.execute.return_value = ()
+    service = StrategyABPerformanceService(session)
+    as_of = datetime(2026, 9, 2, tzinfo=UTC)
+
+    assert (
+        service._load_outcome_map((7,), horizon_minutes=60, outcome_as_of=as_of) == {}
+    )
+    statement = session.execute.call_args.args[0]
+    sql = str(statement)
+    join_sql, where_sql = sql.split("\nWHERE ", maxsplit=1)
+    for field in ("target_at", "evaluated_at", "created_at", "updated_at"):
+        assert f"strategy_replay_candidate_outcomes.{field} <=" in join_sql
+        assert f"strategy_replay_candidate_outcomes.{field} <=" not in where_sql
+
+    with pytest.raises(ReplayInputError, match="timezone-aware"):
+        service._validate_outcome_as_of(datetime(2026, 9, 2))
+
+
+def test_outcome_as_of_none_preserves_original_join_contract() -> None:
+    session = MagicMock()
+    session.execute.return_value = ()
+    StrategyABPerformanceService(session)._load_outcome_map((7,), horizon_minutes=60)
+    sql = str(session.execute.call_args.args[0])
+    assert "strategy_replay_candidate_outcomes.target_at <=" not in sql
 
 
 def test_equal_weight_metrics_overlap_and_scenario_win_are_decimal_exact() -> None:

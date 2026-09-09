@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
+from unittest.mock import MagicMock
 
 from sqlalchemy import func, select
 
@@ -19,6 +20,10 @@ from crypto_trading_bot.services.forward_candidate_gross_evidence_service import
     FORWARD_OUTCOMES_PENDING,
     SUCCESS as FORWARD_SUCCESS,
     ForwardCandidateGrossEvidenceService,
+)
+from crypto_trading_bot.services.candidate_registration_bounded_historical_evidence_service import (
+    SUCCESS as BOUNDED_HISTORICAL_SUCCESS,
+    CandidateRegistrationBoundedHistoricalEvidenceService,
 )
 from crypto_trading_bot.services.forward_candidate_cost_adjusted_evidence_service import (
     FORWARD_OUTCOMES_PENDING as FORWARD_COST_OUTCOMES_PENDING,
@@ -995,7 +1000,16 @@ def test_postgresql_forward_turnover_middle_replay_failure_is_not_bridged():
         session.rollback()
 
 
-def _copy_forward_outcomes(session, snapshot, *, horizon_minutes):
+def _copy_forward_outcomes(
+    session,
+    snapshot,
+    *,
+    horizon_minutes,
+    persisted_at=None,
+    target_at=None,
+    evaluated_at=None,
+    updated_at=None,
+):
     for replay_candidate in session.scalars(
         select(StrategyReplayCandidate).where(
             StrategyReplayCandidate.strategy_replay_snapshot_id == snapshot.id
@@ -1008,31 +1022,275 @@ def _copy_forward_outcomes(session, snapshot, *, horizon_minutes):
                 StrategyReplayCandidateOutcome.horizon_minutes == 60,
             )
         )
-        session.add(
-            StrategyReplayCandidateOutcome(
-                strategy_replay_candidate_id=replay_candidate.id,
-                strategy_replay_snapshot_id=snapshot.id,
-                user_id=snapshot.user_id,
-                exchange=snapshot.exchange,
-                market=replay_candidate.market,
-                horizon_minutes=horizon_minutes,
-                snapshot_at=snapshot.captured_at,
-                reference_at=snapshot.captured_at,
-                target_at=snapshot.captured_at + timedelta(minutes=horizon_minutes),
-                evaluated_at=snapshot.captured_at
-                + timedelta(minutes=horizon_minutes + 1),
-                reference_price=source.reference_price,
-                reference_price_source=source.reference_price_source,
-                end_price=source.end_price,
-                end_price_at=snapshot.captured_at
-                + timedelta(minutes=horizon_minutes - 1),
-                end_price_source=source.end_price_source,
-                market_return_percentage=source.market_return_percentage,
-                evaluation_status="COMPLETE",
-                safe_reason=None,
+        copied = StrategyReplayCandidateOutcome(
+            strategy_replay_candidate_id=replay_candidate.id,
+            strategy_replay_snapshot_id=snapshot.id,
+            user_id=snapshot.user_id,
+            exchange=snapshot.exchange,
+            market=replay_candidate.market,
+            horizon_minutes=horizon_minutes,
+            snapshot_at=snapshot.captured_at,
+            reference_at=snapshot.captured_at,
+            target_at=target_at
+            or snapshot.captured_at + timedelta(minutes=horizon_minutes),
+            evaluated_at=evaluated_at
+            or snapshot.captured_at + timedelta(minutes=horizon_minutes + 1),
+            reference_price=source.reference_price,
+            reference_price_source=source.reference_price_source,
+            end_price=source.end_price,
+            end_price_at=snapshot.captured_at + timedelta(minutes=horizon_minutes - 1),
+            end_price_source=source.end_price_source,
+            market_return_percentage=source.market_return_percentage,
+            evaluation_status="COMPLETE",
+            safe_reason=None,
+        )
+        if persisted_at is not None:
+            copied.created_at = persisted_at
+            copied.updated_at = persisted_at
+        if updated_at is not None:
+            copied.updated_at = updated_at
+        session.add(copied)
+    session.flush()
+
+
+def test_postgresql_registration_bounded_historical_is_stable_and_disjoint():
+    with SessionLocal() as session:
+        user = User(name=f"bounded-historical-{uuid4()}")
+        session.add(user)
+        session.flush()
+        scenario = _forward_turnover_scenario()
+        reference = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 1, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        second = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 1, 6, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        policy_break = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 1, 12, tzinfo=UTC),
+            with_outcomes=True,
+            exclude_cautions=False,
+        )
+        third = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 1, 18, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        registered_at = datetime(2075, 1, 2, tzinfo=UTC)
+        for snapshot in (reference, second, third):
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=240,
+                persisted_at=registered_at - timedelta(minutes=1),
+                target_at=registered_at - timedelta(minutes=1),
+                evaluated_at=registered_at - timedelta(minutes=1),
+            )
+        partial_outcomes = tuple(
+            session.scalars(
+                select(StrategyReplayCandidateOutcome).where(
+                    StrategyReplayCandidateOutcome.strategy_replay_snapshot_id.in_(
+                        (reference.id, second.id, third.id)
+                    ),
+                    StrategyReplayCandidateOutcome.horizon_minutes == 240,
+                )
             )
         )
-    session.flush()
+        for outcome in partial_outcomes:
+            outcome.evaluation_status = "PARTIAL"
+            outcome.market_return_percentage = None
+        session.flush()
+        candidate = (
+            ResearchPolicyCandidateRegistryService(
+                session, now_fn=lambda: registered_at
+            )
+            .register(reference_snapshot_id=reference.id, scenario=scenario)
+            .candidate
+        )
+        forward_one = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 3, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        forward_two = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2075, 1, 4, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        for snapshot in (reference, second, third):
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=120,
+                persisted_at=registered_at,
+                target_at=registered_at,
+                evaluated_at=registered_at,
+            )
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=180,
+                persisted_at=registered_at - timedelta(minutes=1),
+                target_at=registered_at - timedelta(minutes=1),
+                evaluated_at=registered_at + timedelta(minutes=1),
+            )
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=300,
+                persisted_at=registered_at - timedelta(minutes=1),
+                target_at=registered_at - timedelta(minutes=1),
+                evaluated_at=registered_at - timedelta(minutes=1),
+                updated_at=registered_at + timedelta(minutes=1),
+            )
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=480,
+                persisted_at=registered_at - timedelta(minutes=1),
+                target_at=registered_at + timedelta(minutes=1),
+                evaluated_at=registered_at - timedelta(minutes=1),
+            )
+        tracked = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+
+        service = CandidateRegistrationBoundedHistoricalEvidenceService(session)
+        observed_methods = (
+            (service.sweep_service, "evaluate_matrix_snapshots"),
+            (service.gross_robustness_service, "evaluate_from_matrix"),
+            (service.turnover_service, "evaluate_snapshots"),
+            (service.cost_service, "evaluate_from_results"),
+            (service.cost_walk_forward_service, "evaluate_from_result"),
+            (service.cost_robustness_service, "evaluate_from_results"),
+        )
+        for owner, name in observed_methods:
+            setattr(owner, name, MagicMock(wraps=getattr(owner, name)))
+        initial = service.evaluate(
+            candidate_id=candidate.id,
+            horizons=(60, 120, 180, 240, 300, 480, 600),
+            initial_research_size=1,
+            validation_size=1,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        assert initial.status == BOUNDED_HISTORICAL_SUCCESS
+        assert all(
+            getattr(owner, name).call_count == 1 for owner, name in observed_methods
+        )
+        assert initial.historical_timeline_snapshot_ids == (
+            reference.id,
+            second.id,
+            policy_break.id,
+            third.id,
+        )
+        assert initial.historical_candidate_snapshot_ids == (
+            reference.id,
+            second.id,
+            third.id,
+        )
+        assert initial.target_turnover_cohort.transition_count == 1
+        assert initial.target_turnover_cohort.continuity_break_count == 2
+        gross_by_horizon = {
+            cohort.horizon_minutes: cohort for cohort in initial.gross_matrix.cohorts
+        }
+        assert len(gross_by_horizon[60].common_snapshot_ids) == 3
+        assert len(gross_by_horizon[120].common_snapshot_ids) == 3
+        assert len(gross_by_horizon[180].common_snapshot_ids) == 0
+        assert len(gross_by_horizon[240].common_snapshot_ids) == 0
+        assert len(gross_by_horizon[300].common_snapshot_ids) == 0
+        assert len(gross_by_horizon[480].common_snapshot_ids) == 0
+        assert len(gross_by_horizon[600].common_snapshot_ids) == 0
+        assert initial.cost_adjusted.cohorts[0].scenario_results[0].snapshots
+        assert {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        } == before
+        assert not session.new and not session.dirty and not session.deleted
+
+        for outcome in partial_outcomes:
+            source = session.scalar(
+                select(StrategyReplayCandidateOutcome)
+                .join(
+                    StrategyReplayCandidate,
+                    StrategyReplayCandidate.id
+                    == StrategyReplayCandidateOutcome.strategy_replay_candidate_id,
+                )
+                .where(
+                    StrategyReplayCandidate.strategy_replay_snapshot_id
+                    == outcome.strategy_replay_snapshot_id,
+                    StrategyReplayCandidate.market == outcome.market,
+                    StrategyReplayCandidateOutcome.horizon_minutes == 60,
+                )
+            )
+            outcome.evaluation_status = "COMPLETE"
+            outcome.market_return_percentage = source.market_return_percentage
+            outcome.evaluated_at = datetime(2075, 1, 3, tzinfo=UTC)
+            outcome.updated_at = datetime(2075, 1, 3, tzinfo=UTC)
+        for snapshot in (reference, second, third):
+            _copy_forward_outcomes(
+                session,
+                snapshot,
+                horizon_minutes=600,
+                persisted_at=datetime(2075, 1, 3, tzinfo=UTC),
+            )
+        before_rerun = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        after_post_registration_writes = service.evaluate(
+            candidate_id=candidate.id,
+            horizons=(60, 120, 180, 240, 300, 480, 600),
+            initial_research_size=1,
+            validation_size=1,
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+        assert after_post_registration_writes.historical_candidate_snapshot_ids == (
+            initial.historical_candidate_snapshot_ids
+        )
+        rerun_by_horizon = {
+            cohort.horizon_minutes: cohort
+            for cohort in after_post_registration_writes.gross_matrix.cohorts
+        }
+        assert len(rerun_by_horizon[240].common_snapshot_ids) == 0
+        assert len(rerun_by_horizon[600].common_snapshot_ids) == 0
+
+        forward = ForwardCandidateGrossEvidenceService(session).evaluate(
+            candidate_id=candidate.id, horizons=(60,)
+        )
+        assert forward.eligible_forward_snapshot_ids == (forward_one.id, forward_two.id)
+        assert not (
+            set(initial.historical_candidate_snapshot_ids)
+            & set(forward.eligible_forward_snapshot_ids)
+        )
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        assert after == before_rerun
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
 
 
 def test_postgresql_forward_cost_adjusted_full_pipeline_is_read_only():

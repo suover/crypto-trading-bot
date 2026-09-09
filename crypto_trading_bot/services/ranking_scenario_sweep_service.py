@@ -1,5 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 import json
@@ -324,6 +325,61 @@ class RankingScenarioSweepService:
             evaluated_ids.update(horizon_ids)
         return RankingScenarioEvaluationMatrix(
             requested_snapshot_count=requested_count,
+            evaluated_snapshot_count=len(evaluated_ids),
+            scenarios=definitions,
+            horizons=normalized_horizons,
+            cohorts=tuple(cohorts),
+        )
+
+    def evaluate_matrix_snapshots(
+        self,
+        *,
+        scenarios: Iterable[RankingScenarioDefinition],
+        horizons: Iterable[int],
+        snapshot_ids: Iterable[int],
+        outcome_as_of: datetime | None = None,
+    ) -> RankingScenarioEvaluationMatrix:
+        """Evaluate one explicit ordered snapshot set with an optional outcome cutoff."""
+        definitions = self._validate_definitions(tuple(scenarios))
+        normalized_horizons = self._validate_horizons(horizons)
+        ids = tuple(snapshot_ids)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in ids
+        ):
+            raise ReplayInputError("snapshot IDs must be positive integers")
+        if len(ids) != len(set(ids)):
+            raise ReplayInputError("snapshot IDs must be unique")
+
+        results_by_horizon = {}
+        for horizon in normalized_horizons:
+            scenario_results = {}
+            for scenario in definitions:
+                results = self.performance_service.evaluate_snapshots(
+                    ids,
+                    horizon_minutes=horizon,
+                    overrides=dict(scenario.component_weights),
+                    outcome_as_of=outcome_as_of,
+                )
+                if tuple(result.snapshot_id for result in results) != ids:
+                    raise ReplayInputError(
+                        "explicit scenario result snapshot order does not match input"
+                    )
+                scenario_results[scenario.name] = results
+            results_by_horizon[horizon] = scenario_results
+
+        cohorts = []
+        evaluated_ids = set()
+        for horizon in normalized_horizons:
+            horizon_cohorts, horizon_ids = self._build_horizon_cohorts(
+                horizon, definitions, results_by_horizon[horizon]
+            )
+            cohorts.extend(horizon_cohorts)
+            evaluated_ids.update(horizon_ids)
+        if evaluated_ids != set(ids):
+            raise ReplayInputError("explicit matrix snapshot set does not match input")
+        return RankingScenarioEvaluationMatrix(
+            requested_snapshot_count=len(ids),
             evaluated_snapshot_count=len(evaluated_ids),
             scenarios=definitions,
             horizons=normalized_horizons,

@@ -573,6 +573,24 @@ Fee, spread, slippage는 모두 명시적인 Decimal fraction 입력이며 Histo
 sample sufficiency, statistical significance 또는 promotion을 판정하지 않습니다. DB SELECT-only이고 외부
 API, worker, scheduler, migration, env flag 및 LIVE 영향이 없습니다.
 
+### Candidate Registration-Bounded Historical Evidence v1
+
+Candidate DB row의 trusted `registered_at`과 registration watermarks를 기준으로, 등록 당시 실제로
+존재했고 알 수 있었던 Historical evidence만 deterministic하게 재구성합니다. Snapshot에는 ID,
+`captured_at`, `created_at` 상한을 모두 적용하고, outcome에는 `target_at`, `evaluated_at`, `created_at`,
+`updated_at <= registered_at`을 outer-join 조건으로 적용합니다. 따라서 등록 전 snapshot이라도 해당
+horizon outcome이 등록 후에 생성되거나 COMPLETE로 갱신됐다면 Historical success evidence에는
+포함되지 않습니다.
+
+Candidate row가 scenario와 anchor의 유일한 source of truth이며 `latest`, 사용자 지정 as-of, scenario
+file을 사용하지 않습니다. Bounded Gross matrix, Gross Walk-Forward/Robustness, broad chronology 기반
+Turnover, Cost-adjusted Evaluation/Walk-Forward/Robustness는 기존 canonical 서비스를 재사용합니다.
+Historical과 Forward snapshot 집합은 registration boundary에서 분리됩니다.
+
+이 Historical evidence는 Candidate 설계에 사용되었을 가능성이 있으므로 strict unseen evidence가
+아닙니다. 실제 unseen 검증 계층은 Forward evidence이며, 다음 별도 단계는 `Policy Promotion Gate v1`입니다.
+이번 기능은 DB SELECT-only이고 외부 API, migration, worker, promotion 또는 LIVE 영향이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

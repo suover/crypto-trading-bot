@@ -1,6 +1,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from statistics import median
 from typing import Iterable
@@ -132,15 +132,19 @@ class StrategyABPerformanceService:
         *,
         horizon_minutes: int,
         overrides: dict[str, Decimal] | None = None,
+        outcome_as_of: datetime | None = None,
     ) -> StrategyABSnapshotPerformanceResult:
         self._validate_horizon(horizon_minutes)
+        as_of = self._validate_outcome_as_of(outcome_as_of)
         replay = self.replay_service.replay_snapshot(
             snapshot_id, overrides=overrides, top_n=None
         )
         outcome_map: _OutcomeMap = {}
         if self._replay_is_evaluable(replay) and replay.snapshot_id is not None:
             outcome_map = self._load_outcome_map(
-                (replay.snapshot_id,), horizon_minutes=horizon_minutes
+                (replay.snapshot_id,),
+                horizon_minutes=horizon_minutes,
+                outcome_as_of=as_of,
             )
         return self._evaluate_replay(replay, horizon_minutes, outcome_map)
 
@@ -150,10 +154,12 @@ class StrategyABPerformanceService:
         *,
         horizon_minutes: int,
         overrides: dict[str, Decimal] | None = None,
+        outcome_as_of: datetime | None = None,
     ) -> StrategyABBatchPerformanceResult:
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise ReplayInputError("latest snapshot count must be >= 1")
         self._validate_horizon(horizon_minutes)
+        as_of = self._validate_outcome_as_of(outcome_as_of)
         replay_batch = self.replay_service.replay_latest(
             limit, overrides=overrides, top_n=None
         )
@@ -163,7 +169,9 @@ class StrategyABPerformanceService:
             if self._replay_is_evaluable(replay) and replay.snapshot_id is not None
         )
         outcome_map = self._load_outcome_map(
-            evaluable_ids, horizon_minutes=horizon_minutes
+            evaluable_ids,
+            horizon_minutes=horizon_minutes,
+            outcome_as_of=as_of,
         )
         results = tuple(
             self._evaluate_replay(replay, horizon_minutes, outcome_map)
@@ -177,9 +185,11 @@ class StrategyABPerformanceService:
         *,
         horizon_minutes: int,
         overrides: dict[str, Decimal] | None = None,
+        outcome_as_of: datetime | None = None,
     ) -> tuple[StrategyABSnapshotPerformanceResult, ...]:
         """Evaluate an explicit ordered snapshot subset with batched DB reads."""
         self._validate_horizon(horizon_minutes)
+        as_of = self._validate_outcome_as_of(outcome_as_of)
         replay_batch = self.replay_service.replay_snapshots(
             snapshot_ids, overrides=overrides, top_n=None
         )
@@ -189,7 +199,9 @@ class StrategyABPerformanceService:
             if self._replay_is_evaluable(replay) and replay.snapshot_id is not None
         )
         outcome_map = self._load_outcome_map(
-            evaluable_ids, horizon_minutes=horizon_minutes
+            evaluable_ids,
+            horizon_minutes=horizon_minutes,
+            outcome_as_of=as_of,
         )
         return tuple(
             self._evaluate_replay(replay, horizon_minutes, outcome_map)
@@ -224,11 +236,29 @@ class StrategyABPerformanceService:
         return replay.status == SUCCESS and replay.baseline_matches_stored is True
 
     def _load_outcome_map(
-        self, snapshot_ids: Iterable[int], *, horizon_minutes: int
+        self,
+        snapshot_ids: Iterable[int],
+        *,
+        horizon_minutes: int,
+        outcome_as_of: datetime | None = None,
     ) -> _OutcomeMap:
         ids = tuple(snapshot_ids)
         if not ids:
             return {}
+        outcome_join = [
+            StrategyReplayCandidateOutcome.strategy_replay_candidate_id
+            == StrategyReplayCandidate.id,
+            StrategyReplayCandidateOutcome.horizon_minutes == horizon_minutes,
+        ]
+        if outcome_as_of is not None:
+            outcome_join.extend(
+                (
+                    StrategyReplayCandidateOutcome.target_at <= outcome_as_of,
+                    StrategyReplayCandidateOutcome.evaluated_at <= outcome_as_of,
+                    StrategyReplayCandidateOutcome.created_at <= outcome_as_of,
+                    StrategyReplayCandidateOutcome.updated_at <= outcome_as_of,
+                )
+            )
         query = (
             select(
                 StrategyReplayCandidate,
@@ -242,11 +272,7 @@ class StrategyABPerformanceService:
             )
             .outerjoin(
                 StrategyReplayCandidateOutcome,
-                and_(
-                    StrategyReplayCandidateOutcome.strategy_replay_candidate_id
-                    == StrategyReplayCandidate.id,
-                    StrategyReplayCandidateOutcome.horizon_minutes == horizon_minutes,
-                ),
+                and_(*outcome_join),
             )
             .where(StrategyReplayCandidate.strategy_replay_snapshot_id.in_(ids))
             .execution_options(autoflush=False)
@@ -257,6 +283,18 @@ class StrategyABPerformanceService:
                 (candidate, outcome, snapshot)
             )
         return dict(mapped)
+
+    @staticmethod
+    def _validate_outcome_as_of(value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() is None
+        ):
+            raise ReplayInputError("outcome_as_of must be timezone-aware")
+        return value.astimezone(UTC)
 
     def _evaluate_replay(
         self,

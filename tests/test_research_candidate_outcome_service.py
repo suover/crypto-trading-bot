@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -128,3 +129,22 @@ def test_held_candidate_is_valid_when_also_in_prefilter() -> None:
     row = candidate(held=True, in_prefilter=True)
     assert row.held is True
     assert row.in_prefilter is True
+
+
+def test_existing_complete_outcome_is_immutable_and_never_repriced() -> None:
+    session = MagicMock()
+    session.execute.return_value = ((candidate(), snapshot()),)
+    session.scalar.return_value = SimpleNamespace(evaluation_status="COMPLETE")
+    provider = FakeProvider()
+    service = ResearchCandidateOutcomeService(
+        session,
+        price_resolver=HistoricalOutcomePriceResolver(provider),
+        now_fn=lambda: NOW,
+    )
+
+    result = service.evaluate_due(horizons=(60,), batch_size=1, apply=True)
+
+    assert result.skipped_complete_count == 1
+    assert result.due_outcome_count == 0
+    assert provider.calls == 0
+    session.flush.assert_called_once_with()

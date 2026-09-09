@@ -20,6 +20,7 @@ from crypto_trading_bot.services.strategy_ab_performance_service import (
     REPLAY_INCOMPATIBLE,
     StrategyABPerformanceService,
 )
+from crypto_trading_bot.services.offline_strategy_replay_service import ReplayInputError
 
 
 def scenarios(count=3):
@@ -112,6 +113,50 @@ class FakePerformanceService:
 
     def summarize_results(self, requested_count, results):
         return self.summary_service.summarize_results(requested_count, results)
+
+    def evaluate_snapshots(
+        self, snapshot_ids, *, horizon_minutes, overrides, outcome_as_of=None
+    ):
+        key = (horizon_minutes, overrides["liquidity"])
+        self.calls.append(("snapshots", tuple(snapshot_ids), key, outcome_as_of))
+        return self.batches[key]
+
+
+def test_explicit_matrix_preserves_ids_and_forwards_outcome_as_of() -> None:
+    definition = scenarios(1)
+    ids = (3, 5, 8, 10)
+    as_of = datetime(2026, 9, 2, tzinfo=UTC)
+    batches = {
+        (60, Decimal("0.20")): tuple(
+            performance_result(snapshot_id) for snapshot_id in ids
+        )
+    }
+    performance = FakePerformanceService(batches)
+    matrix = RankingScenarioSweepService(
+        MagicMock(), performance_service=performance
+    ).evaluate_matrix_snapshots(
+        scenarios=definition,
+        horizons=(60,),
+        snapshot_ids=ids,
+        outcome_as_of=as_of,
+    )
+
+    assert matrix.requested_snapshot_count == matrix.evaluated_snapshot_count == 4
+    assert matrix.cohorts[0].candidate_snapshot_ids == ids
+    assert performance.calls == [("snapshots", ids, (60, Decimal("0.20")), as_of)]
+
+
+def test_explicit_matrix_rejects_duplicate_or_reordered_results() -> None:
+    definition = scenarios(1)
+    performance = FakePerformanceService(
+        {(60, Decimal("0.20")): (performance_result(2), performance_result(1))}
+    )
+    with pytest.raises(ReplayInputError, match="order does not match"):
+        RankingScenarioSweepService(
+            MagicMock(), performance_service=performance
+        ).evaluate_matrix_snapshots(
+            scenarios=definition, horizons=(60,), snapshot_ids=(1, 2)
+        )
 
 
 def test_common_set_intersection_drives_every_scenario_aggregate() -> None:

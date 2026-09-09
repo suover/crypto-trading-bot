@@ -522,6 +522,33 @@ outcome이 아직 완성되지 않았거나 Forward transition이 부족하면 `
 명령은 DB SELECT-only이고 external API, LIVE policy, worker, scheduler, Compose service, env flag 또는
 migration을 변경하지 않습니다. Sample sufficiency, statistical inference 및 promotion도 수행하지 않습니다.
 
+## Candidate Registration-Bounded Historical Evidence v1
+
+등록 Candidate의 trusted anchor 시점에 실제 이용 가능했던 Historical evidence만 재구성합니다.
+
+```bash
+python -m scripts.evaluate_candidate_registration_bounded_historical_evidence \
+  --candidate-id 1 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --initial-research-size 2 \
+  --validation-size 1 \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+범위는 Candidate `registered_at`과 두 registration watermark가 정하므로 `--latest`, `--as-of`,
+scenario file 입력은 없습니다. Snapshot `created_at`까지 상한을 적용하며 outcome timestamp 조건은
+outer join의 ON 절에 적용되어 cutoff 이후 outcome이 Candidate row 자체를 제거하지 않고
+`OUTCOME_INCOMPLETE`로 보이게 합니다.
+
+등록 전 snapshot이라도 해당 horizon outcome이 Candidate 등록 후에야 COMPLETE되었다면 bounded
+Historical success evidence에는 포함되지 않습니다. 이 계층은 strict unseen 검증이 아니며 실제 unseen
+검증은 Forward evidence가 담당합니다. DB SELECT-only이고 외부 API, worker, migration, promotion 및
+LIVE 정책 변경은 없습니다. 다음 별도 연구 단계는 `Policy Promotion Gate v1`입니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

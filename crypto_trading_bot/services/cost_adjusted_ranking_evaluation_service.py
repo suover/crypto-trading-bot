@@ -332,13 +332,65 @@ class CostAdjustedRankingEvaluationService:
                 str(error),
             )
 
+    def evaluate_from_results(
+        self,
+        turnover: TemporalRankingTurnoverResult,
+        matrix: RankingScenarioEvaluationMatrix,
+        *,
+        fee_rate: object,
+        spread_cost_rate: object,
+        slippage_rate: object,
+    ) -> CostAdjustedRankingEvaluationResult:
+        """Apply canonical costs to caller-bounded turnover and gross results."""
+        assumptions = build_cost_assumptions(
+            fee_rate=fee_rate,
+            spread_cost_rate=spread_cost_rate,
+            slippage_rate=slippage_rate,
+        )
+        if turnover.status == INVALID_TURNOVER_DATA:
+            return self._empty_result(
+                turnover,
+                assumptions,
+                matrix.horizons,
+                INVALID_COST_ADJUSTED_DATA,
+                f"turnover integrity failed: {turnover.safe_reason}",
+            )
+        if turnover.status != TURNOVER_SUCCESS:
+            return self._empty_result(
+                turnover,
+                assumptions,
+                matrix.horizons,
+                NO_TURNOVER_TRANSITIONS,
+                f"turnover has no valid transition: {turnover.status}",
+            )
+        try:
+            return self._evaluate_aligned(
+                turnover, matrix, assumptions, allow_broader_turnover_timeline=True
+            )
+        except _InvalidCostAdjustedData as error:
+            return self._empty_result(
+                turnover,
+                assumptions,
+                matrix.horizons,
+                INVALID_COST_ADJUSTED_DATA,
+                str(error),
+            )
+
     def _evaluate_aligned(
         self,
         turnover: TemporalRankingTurnoverResult,
         matrix: RankingScenarioEvaluationMatrix,
         assumptions: CostAssumptions,
+        *,
+        allow_broader_turnover_timeline: bool = False,
     ) -> CostAdjustedRankingEvaluationResult:
-        if matrix.requested_snapshot_count != turnover.requested_snapshot_count:
+        if (
+            not allow_broader_turnover_timeline
+            and matrix.requested_snapshot_count != turnover.requested_snapshot_count
+        ) or (
+            allow_broader_turnover_timeline
+            and matrix.requested_snapshot_count > turnover.requested_snapshot_count
+        ):
             raise _InvalidCostAdjustedData("requested snapshot counts do not match")
         if matrix.scenarios != turnover.scenarios:
             raise _InvalidCostAdjustedData("scenario definitions do not match")
