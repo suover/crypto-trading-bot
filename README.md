@@ -526,6 +526,27 @@ semantics를 그대로 재사용하고 successful comparable subset만 집계합
 이 명령은 DB SELECT-only/in-memory report이며 외부 API, worker, scheduler, env flag, migration 및
 LIVE 영향이 없습니다. Cost-adjusted forward evidence와 policy promotion은 별도 후속 단계입니다.
 
+### Forward-only Candidate Turnover Evidence v1
+
+Registry candidate를 source of truth로 사용해 등록 이후 Forward timeline에서 Baseline과 Candidate의
+TopN 교체율·유지율을 비교하는 manual research 도구입니다. 저장된 candidate definition과 reference
+lineage를 재검증하며 Scenario file을 다시 읽지 않습니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_turnover_evidence --candidate-id 1
+```
+
+Forward broad timeline은 동일 user/exchange/quote/dataset에서 registration triple-cutoff를 strict `>`로
+통과한 모든 snapshot입니다. Candidate baseline policy/TopN과 다른 snapshot 또는 replay 실패 snapshot도
+timeline에서 제거하지 않고 continuity break로 보존합니다. 따라서 앞뒤 Candidate snapshot을 인위적으로
+이어 붙이지 않으며, pre-registration snapshot에서 첫 Forward snapshot으로의 transition도 만들지 않습니다.
+첫 Forward snapshot 하나만 있으면 `INSUFFICIENT_FORWARD_TRANSITIONS`가 정상입니다.
+
+계산은 기존 Offline Replay explicit subset과 Temporal Ranking Turnover의 canonical transition·summary
+semantics를 재사용합니다. Outcome, fee, spread, slippage와 cost-adjusted return을 사용하지 않으며 DB
+SELECT-only, external API 없음, migration/LIVE 영향 없음입니다. 다음 단계인 Forward Cost-adjusted Evidence와
+promotion은 포함하지 않습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

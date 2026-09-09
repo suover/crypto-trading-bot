@@ -6,22 +6,15 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from crypto_trading_bot.db.models import (
-    ResearchPolicyCandidate,
-    StrategyReplaySnapshot,
+from crypto_trading_bot.db.models import ResearchPolicyCandidate, StrategyReplaySnapshot
+from crypto_trading_bot.services.forward_candidate_provenance import (
+    ForwardCandidateMetadata,
+    InvalidForwardCandidateProvenance,
+    load_and_validate_forward_candidate,
 )
 from crypto_trading_bot.services.offline_strategy_replay_service import (
     ReplayInputError,
     restore_weights,
-)
-from crypto_trading_bot.services.ranking_scenario_sweep_service import (
-    SCHEMA_VERSION,
-    parse_scenario_document,
-)
-from crypto_trading_bot.services.research_policy_candidate_registry_service import (
-    CANDIDATE_SCHEMA_VERSION,
-    ResearchPolicyCandidateRegistrationError,
-    restore_component_weights,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     BASELINE_INTEGRITY_FAILED,
@@ -34,10 +27,7 @@ from crypto_trading_bot.services.strategy_ab_performance_service import (
     StrategyABPerformanceService,
     StrategyABSnapshotPerformanceResult,
 )
-from crypto_trading_bot.services.strategy_replay_dataset_service import (
-    DATASET_SCHEMA_VERSION,
-    policy_signature,
-)
+from crypto_trading_bot.services.strategy_replay_dataset_service import policy_signature
 
 
 RESULT_TYPE = "FORWARD_ONLY_RANKING_SELECTION_GROSS_EVIDENCE"
@@ -59,26 +49,6 @@ _KNOWN_AB_STATUSES = frozenset(
 
 class _InvalidForwardEvidence(Exception):
     pass
-
-
-@dataclass(frozen=True)
-class ForwardCandidateMetadata:
-    candidate_id: int
-    candidate_schema_version: str
-    scenario_name: str
-    scenario_definition_signature: str
-    component_weights: dict[str, Decimal]
-    user_id: int
-    exchange: str
-    quote_asset: str
-    baseline_policy_signature: str
-    effective_top_n: int
-    dataset_schema_version: str
-    reference_snapshot_id: int
-    reference_snapshot_captured_at: datetime
-    registered_at: datetime
-    registration_snapshot_id_watermark: int
-    registration_captured_at_watermark: datetime
 
 
 @dataclass(frozen=True)
@@ -152,18 +122,10 @@ class ForwardCandidateGrossEvidenceService:
         ):
             raise ReplayInputError("candidate ID must be a positive integer")
         try:
-            candidate = self.session.scalar(
-                select(ResearchPolicyCandidate)
-                .where(ResearchPolicyCandidate.id == candidate_id)
-                .execution_options(autoflush=False)
-            )
-            if candidate is None:
-                raise _InvalidForwardEvidence(
-                    f"research policy candidate does not exist: {candidate_id}"
-                )
-            if candidate.id != candidate_id:
-                raise _InvalidForwardEvidence("candidate query identity mismatch")
-            metadata, overrides = self._validate_candidate(candidate)
+            validated = load_and_validate_forward_candidate(self.session, candidate_id)
+            candidate = validated.row
+            metadata = validated.metadata
+            overrides = dict(validated.scenario.component_weights)
             snapshots = self._load_forward_snapshots(candidate)
             self._validate_forward_snapshots(candidate, snapshots)
             evidence = tuple(
@@ -193,145 +155,8 @@ class ForwardCandidateGrossEvidenceService:
                 forward_validation_performed=True,
                 horizons=evidence,
             )
-        except _InvalidForwardEvidence as error:
+        except (_InvalidForwardEvidence, InvalidForwardCandidateProvenance) as error:
             return self._invalid(candidate_id, normalized_horizons, str(error))
-
-    def _validate_candidate(
-        self, candidate: ResearchPolicyCandidate
-    ) -> tuple[ForwardCandidateMetadata, dict[str, Decimal]]:
-        if candidate.candidate_schema_version != CANDIDATE_SCHEMA_VERSION:
-            raise _InvalidForwardEvidence("candidate schema version is unsupported")
-        if candidate.dataset_schema_version != DATASET_SCHEMA_VERSION:
-            raise _InvalidForwardEvidence("candidate dataset schema is unsupported")
-        positive_integers = {
-            "candidate id": candidate.id,
-            "user id": candidate.user_id,
-            "reference snapshot id": candidate.reference_snapshot_id,
-            "effective TopN": candidate.effective_top_n,
-            "registration snapshot ID watermark": (
-                candidate.registration_snapshot_id_watermark
-            ),
-        }
-        if any(
-            isinstance(value, bool) or not isinstance(value, int) or value < 1
-            for value in positive_integers.values()
-        ):
-            raise _InvalidForwardEvidence(
-                "candidate positive integer metadata is invalid"
-            )
-        strings = (
-            candidate.exchange,
-            candidate.quote_asset,
-            candidate.scenario_name,
-            candidate.scenario_definition_signature,
-            candidate.baseline_policy_signature,
-        )
-        if any(not isinstance(value, str) or not value for value in strings):
-            raise _InvalidForwardEvidence("candidate identity metadata is invalid")
-        registered_at = self._aware_utc(candidate.registered_at, "registered_at")
-        reference_at = self._aware_utc(
-            candidate.reference_snapshot_captured_at,
-            "reference_snapshot_captured_at",
-        )
-        watermark_at = self._aware_utc(
-            candidate.registration_captured_at_watermark,
-            "registration_captured_at_watermark",
-        )
-        if (
-            candidate.registration_snapshot_id_watermark
-            < candidate.reference_snapshot_id
-        ):
-            raise _InvalidForwardEvidence(
-                "registration snapshot ID watermark precedes reference snapshot"
-            )
-        if watermark_at < reference_at:
-            raise _InvalidForwardEvidence(
-                "registration captured_at watermark precedes reference snapshot"
-            )
-        try:
-            component_weights = restore_component_weights(candidate.component_weights)
-            scenario = parse_scenario_document(
-                {
-                    "schema_version": SCHEMA_VERSION,
-                    "scenarios": [
-                        {
-                            "name": candidate.scenario_name,
-                            "component_weights": component_weights,
-                        }
-                    ],
-                }
-            )[0]
-        except (ReplayInputError, ResearchPolicyCandidateRegistrationError) as error:
-            raise _InvalidForwardEvidence(
-                f"candidate component weights are invalid: {error}"
-            ) from error
-        if scenario.definition_signature != candidate.scenario_definition_signature:
-            raise _InvalidForwardEvidence(
-                "candidate scenario definition signature does not match weights"
-            )
-        reference = self.session.scalar(
-            select(StrategyReplaySnapshot)
-            .where(StrategyReplaySnapshot.id == candidate.reference_snapshot_id)
-            .execution_options(autoflush=False)
-        )
-        if reference is None:
-            raise _InvalidForwardEvidence("candidate reference snapshot does not exist")
-        self._validate_reference(candidate, reference, reference_at)
-        return (
-            ForwardCandidateMetadata(
-                candidate_id=candidate.id,
-                candidate_schema_version=candidate.candidate_schema_version,
-                scenario_name=candidate.scenario_name,
-                scenario_definition_signature=candidate.scenario_definition_signature,
-                component_weights=component_weights,
-                user_id=candidate.user_id,
-                exchange=candidate.exchange,
-                quote_asset=candidate.quote_asset,
-                baseline_policy_signature=candidate.baseline_policy_signature,
-                effective_top_n=candidate.effective_top_n,
-                dataset_schema_version=candidate.dataset_schema_version,
-                reference_snapshot_id=candidate.reference_snapshot_id,
-                reference_snapshot_captured_at=reference_at,
-                registered_at=registered_at,
-                registration_snapshot_id_watermark=(
-                    candidate.registration_snapshot_id_watermark
-                ),
-                registration_captured_at_watermark=watermark_at,
-            ),
-            component_weights,
-        )
-
-    def _validate_reference(
-        self,
-        candidate: ResearchPolicyCandidate,
-        reference: StrategyReplaySnapshot,
-        expected_captured_at: datetime,
-    ) -> None:
-        captured_at = self._aware_utc(reference.captured_at, "reference captured_at")
-        if captured_at != expected_captured_at:
-            raise _InvalidForwardEvidence("reference snapshot captured_at mismatch")
-        if (
-            reference.user_id != candidate.user_id
-            or reference.exchange != candidate.exchange
-            or reference.quote_asset != candidate.quote_asset
-            or reference.dataset_schema_version != candidate.dataset_schema_version
-            or reference.policy_signature != candidate.baseline_policy_signature
-        ):
-            raise _InvalidForwardEvidence("reference snapshot context mismatch")
-        if not isinstance(reference.policy_data, dict):
-            raise _InvalidForwardEvidence("reference snapshot policy_data is invalid")
-        if policy_signature(reference.policy_data) != reference.policy_signature:
-            raise _InvalidForwardEvidence(
-                "reference baseline policy signature mismatch"
-            )
-        try:
-            _, stored_top_n = restore_weights(reference.policy_data)
-        except Exception as error:
-            raise _InvalidForwardEvidence(
-                f"reference ranking policy is invalid: {error}"
-            ) from error
-        if stored_top_n != candidate.effective_top_n:
-            raise _InvalidForwardEvidence("reference effective TopN mismatch")
 
     def _load_forward_snapshots(
         self, candidate: ResearchPolicyCandidate

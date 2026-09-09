@@ -90,6 +90,8 @@ class TemporalRankingTurnoverScenarioSummary:
 class TemporalRankingTurnoverCohortResult:
     baseline_policy_signature: str
     effective_top_n: int
+    candidate_snapshot_ids: tuple[int, ...]
+    common_replayable_snapshot_ids: tuple[int, ...]
     candidate_snapshot_count: int
     common_replayable_snapshot_count: int
     common_coverage_rate: Decimal
@@ -152,8 +154,42 @@ class TemporalRankingTurnoverService:
             )
             for definition in definitions
         }
+        return self._evaluate_replays(definitions, latest, batches)
+
+    def evaluate_snapshots(
+        self,
+        *,
+        scenarios: Iterable[RankingScenarioDefinition],
+        snapshot_ids: Iterable[int],
+    ) -> TemporalRankingTurnoverResult:
+        """Evaluate one explicit timeline without removing continuity breaks."""
+        definitions = RankingScenarioSweepService._validate_definitions(
+            tuple(scenarios)
+        )
+        ids = tuple(snapshot_ids)
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+            for value in ids
+        ):
+            raise ReplayInputError("snapshot IDs must be positive integers")
+        if len(ids) != len(set(ids)):
+            raise ReplayInputError("snapshot IDs must be unique")
+        batches = {
+            definition.name: self.replay_service.replay_snapshots(
+                ids, overrides=dict(definition.component_weights), top_n=None
+            )
+            for definition in definitions
+        }
+        return self._evaluate_replays(definitions, len(ids), batches)
+
+    def _evaluate_replays(
+        self,
+        definitions: tuple[RankingScenarioDefinition, ...],
+        requested_count: int,
+        batches: dict[str, BatchReplayResult],
+    ) -> TemporalRankingTurnoverResult:
         try:
-            return self._evaluate_batches(definitions, latest, batches)
+            return self._evaluate_batches(definitions, requested_count, batches)
         except _InvalidTurnoverData as error:
             replayed_count = max(
                 (batch.replayed_snapshot_count for batch in batches.values()),
@@ -161,7 +197,7 @@ class TemporalRankingTurnoverService:
             )
             return self._result(
                 definitions,
-                latest,
+                requested_count,
                 replayed_count,
                 INVALID_TURNOVER_DATA,
                 str(error),
@@ -451,10 +487,15 @@ class TemporalRankingTurnoverService:
             for definition in definitions
         )
         common_count = sum(snapshot_id in common_ids for snapshot_id in candidate_ids)
+        common_snapshot_ids = tuple(
+            snapshot_id for snapshot_id in candidate_ids if snapshot_id in common_ids
+        )
         status = SUCCESS if transitions else INSUFFICIENT_TEMPORAL_TRANSITIONS
         return TemporalRankingTurnoverCohortResult(
             baseline_policy_signature=signature,
             effective_top_n=top_n,
+            candidate_snapshot_ids=tuple(candidate_ids),
+            common_replayable_snapshot_ids=common_snapshot_ids,
             candidate_snapshot_count=len(candidate_ids),
             common_replayable_snapshot_count=common_count,
             common_coverage_rate=Decimal(common_count) / Decimal(len(candidate_ids)),

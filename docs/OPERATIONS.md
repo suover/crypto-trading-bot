@@ -479,6 +479,25 @@ pending은 다른 horizon의 `SUCCESS` 결과를 제거하지 않습니다.
 0 수익률로 평균에 넣지 않습니다. 명령은 DB SELECT-only이고 외부 API, write, worker, scheduler,
 migration 또는 LIVE policy 변경이 없습니다. Cost-adjusted evidence와 promotion은 수행하지 않습니다.
 
+## Forward-only Candidate Turnover Evidence v1
+
+등록된 candidate의 frozen DB definition을 사용해 registration 이후 Forward TopN 교체율을 수동으로
+평가합니다. Scenario file, horizon, latest 인자를 받지 않습니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_turnover_evidence --candidate-id 1
+```
+
+동일 user/exchange/quote/dataset에서 registration triple-cutoff를 strict `>`로 통과한 broad timeline 전체를
+Offline Replay와 Temporal Ranking Turnover에 전달합니다. 중간 baseline policy/TopN 변경, baseline mismatch,
+replay incompatibility는 continuity break이며 앞뒤 snapshot을 bridge하지 않습니다. Pre-registration에서
+첫 Forward snapshot으로의 transition은 없고, Forward snapshot이 하나뿐이면
+`INSUFFICIENT_FORWARD_TRANSITIONS`가 정상입니다.
+
+명령은 DB SELECT-only이며 outcome/cost data, 외부 API, worker, scheduler, Compose service, env flag,
+migration 또는 LIVE policy를 사용하거나 변경하지 않습니다. Forward Cost-adjusted Evidence와 promotion은
+별도 후속 단계입니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

@@ -20,6 +20,11 @@ from crypto_trading_bot.services.forward_candidate_gross_evidence_service import
     SUCCESS as FORWARD_SUCCESS,
     ForwardCandidateGrossEvidenceService,
 )
+from crypto_trading_bot.services.forward_candidate_turnover_evidence_service import (
+    INSUFFICIENT_FORWARD_TRANSITIONS,
+    SUCCESS as FORWARD_TURNOVER_SUCCESS,
+    ForwardCandidateTurnoverEvidenceService,
+)
 from crypto_trading_bot.services.research_policy_candidate_registry_service import (
     ResearchPolicyCandidateRegistryService,
 )
@@ -772,4 +777,213 @@ def test_postgresql_forward_candidate_gross_evidence_enforces_anchor_and_is_read
         assert not session.new
         assert not session.dirty
         assert not session.deleted
+        session.rollback()
+
+
+def _forward_turnover_scenario():
+    return parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "registered-forward-turnover-candidate",
+                    "component_weights": {
+                        "liquidity": "0.20",
+                        "trend_alignment": "0.20",
+                        "momentum": "0.30",
+                        "volume_confirmation": "0.10",
+                        "spread": "0.08",
+                        "volatility": "0.07",
+                        "drawdown": "0.05",
+                    },
+                }
+            ],
+        }
+    )[0]
+
+
+def _register_forward_turnover_candidate(session, user):
+    reference = create_snapshot(
+        session,
+        user,
+        captured_at=datetime(2070, 1, 1, tzinfo=UTC),
+        with_outcomes=False,
+    )
+    pre_registration = create_snapshot(
+        session,
+        user,
+        captured_at=datetime(2070, 1, 4, tzinfo=UTC),
+        with_outcomes=False,
+    )
+    candidate = (
+        ResearchPolicyCandidateRegistryService(
+            session, now_fn=lambda: datetime(2070, 1, 2, tzinfo=UTC)
+        )
+        .register(
+            reference_snapshot_id=reference.id,
+            scenario=_forward_turnover_scenario(),
+        )
+        .candidate
+    )
+    assert candidate.registration_snapshot_id_watermark == pre_registration.id
+    return candidate, reference, pre_registration
+
+
+def test_postgresql_forward_turnover_first_valid_pair_excludes_pre_registration():
+    with SessionLocal() as session:
+        user = User(name=f"forward-turnover-pair-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, reference, pre_registration = _register_forward_turnover_candidate(
+            session, user
+        )
+        backfill = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 1, 12, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        second = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        tracked = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+
+        result = ForwardCandidateTurnoverEvidenceService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.status == FORWARD_TURNOVER_SUCCESS
+        assert result.forward_timeline_snapshot_ids == (first.id, second.id)
+        assert result.transition_count == 1
+        transition = result.transitions[0].baseline
+        assert (transition.previous_snapshot_id, transition.current_snapshot_id) == (
+            first.id,
+            second.id,
+        )
+        assert reference.id not in result.forward_timeline_snapshot_ids
+        assert pre_registration.id not in result.forward_timeline_snapshot_ids
+        assert backfill.id not in result.forward_timeline_snapshot_ids
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        assert after == before
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_forward_turnover_single_snapshot_is_insufficient():
+    with SessionLocal() as session:
+        user = User(name=f"forward-turnover-single-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=False,
+        )
+
+        result = ForwardCandidateTurnoverEvidenceService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.status == INSUFFICIENT_FORWARD_TRANSITIONS
+        assert result.forward_timeline_snapshot_ids == (first.id,)
+        assert result.transition_count == 0
+        assert result.transitions == ()
+        session.rollback()
+
+
+def test_postgresql_forward_turnover_middle_policy_change_is_not_bridged():
+    with SessionLocal() as session:
+        user = User(name=f"forward-turnover-policy-break-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        middle = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=False,
+            exclude_cautions=False,
+        )
+        last = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 7, tzinfo=UTC),
+            with_outcomes=False,
+        )
+
+        result = ForwardCandidateTurnoverEvidenceService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.forward_timeline_snapshot_ids == (first.id, middle.id, last.id)
+        assert result.status == INSUFFICIENT_FORWARD_TRANSITIONS
+        assert result.transition_count == 0
+        assert result.continuity_break_count == 2
+        session.rollback()
+
+
+def test_postgresql_forward_turnover_middle_replay_failure_is_not_bridged():
+    with SessionLocal() as session:
+        user = User(name=f"forward-turnover-replay-break-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        middle = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        last = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 7, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        middle.policy_data = {"dataset_schema_version": DATASET_SCHEMA_VERSION}
+        session.flush()
+
+        result = ForwardCandidateTurnoverEvidenceService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.forward_timeline_snapshot_ids == (first.id, middle.id, last.id)
+        assert result.status == INSUFFICIENT_FORWARD_TRANSITIONS
+        assert result.transition_count == 0
+        assert result.continuity_break_count == 2
         session.rollback()
