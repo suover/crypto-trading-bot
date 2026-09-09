@@ -153,8 +153,11 @@ class CostAdjustedRankingEvaluationResult:
     cohorts: tuple[CostAdjustedRankingCohortResult, ...]
 
 
-class _InvalidCostAdjustedData(Exception):
+class InvalidCostAdjustedData(Exception):
     pass
+
+
+_InvalidCostAdjustedData = InvalidCostAdjustedData
 
 
 def parse_cost_rate(value: object, *, field_name: str) -> Decimal:
@@ -197,6 +200,41 @@ def _decimal(value: object, *, field_name: str) -> Decimal:
 
 def _mean(values: tuple[Decimal, ...]) -> Decimal | None:
     return sum(values, Decimal("0")) / len(values) if values else None
+
+
+def compute_selection_change_cost(
+    transition: RankingSelectionTransition,
+    assumptions: CostAssumptions,
+) -> SelectionChangeCost:
+    """Apply the canonical equal-weight selection-change cost model."""
+    top_n = transition.effective_top_n
+    if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:
+        raise _InvalidCostAdjustedData("effective TopN is invalid")
+    if (
+        transition.entered_count != len(transition.entered_markets)
+        or transition.exited_count != len(transition.exited_markets)
+        or transition.entered_count != transition.exited_count
+    ):
+        raise _InvalidCostAdjustedData("turnover transition counts are invalid")
+    target_weight = Decimal("1") / Decimal(top_n)
+    replacement = _decimal(transition.replacement_rate, field_name="replacement_rate")
+    expected_replacement = Decimal(transition.entered_count) / Decimal(top_n)
+    if replacement < 0 or replacement > 1 or replacement != expected_replacement:
+        raise _InvalidCostAdjustedData("turnover notional identity is invalid")
+    sell = replacement
+    buy = replacement
+    gross = Decimal("2") * replacement
+    cost_ratio = gross * assumptions.total_cost_rate
+    cost_percentage = cost_ratio * Decimal("100")
+    return SelectionChangeCost(
+        target_weight=target_weight,
+        replacement_rate=replacement,
+        sell_notional_ratio=sell,
+        buy_notional_ratio=buy,
+        gross_traded_notional_ratio=gross,
+        execution_cost_ratio=cost_ratio,
+        execution_cost_percentage=cost_percentage,
+    )
 
 
 class CostAdjustedRankingEvaluationService:
@@ -609,36 +647,7 @@ class CostAdjustedRankingEvaluationService:
         transition: RankingSelectionTransition,
         assumptions: CostAssumptions,
     ) -> SelectionChangeCost:
-        top_n = transition.effective_top_n
-        if isinstance(top_n, bool) or not isinstance(top_n, int) or top_n < 1:
-            raise _InvalidCostAdjustedData("effective TopN is invalid")
-        if (
-            transition.entered_count != len(transition.entered_markets)
-            or transition.exited_count != len(transition.exited_markets)
-            or transition.entered_count != transition.exited_count
-        ):
-            raise _InvalidCostAdjustedData("turnover transition counts are invalid")
-        target_weight = Decimal("1") / Decimal(top_n)
-        replacement = _decimal(
-            transition.replacement_rate, field_name="replacement_rate"
-        )
-        expected_replacement = Decimal(transition.entered_count) / Decimal(top_n)
-        if replacement < 0 or replacement > 1 or replacement != expected_replacement:
-            raise _InvalidCostAdjustedData("turnover notional identity is invalid")
-        sell = replacement
-        buy = replacement
-        gross = Decimal("2") * replacement
-        cost_ratio = gross * assumptions.total_cost_rate
-        cost_percentage = cost_ratio * Decimal("100")
-        return SelectionChangeCost(
-            target_weight=target_weight,
-            replacement_rate=replacement,
-            sell_notional_ratio=sell,
-            buy_notional_ratio=buy,
-            gross_traded_notional_ratio=gross,
-            execution_cost_ratio=cost_ratio,
-            execution_cost_percentage=cost_percentage,
-        )
+        return compute_selection_change_cost(transition, assumptions)
 
     @staticmethod
     def _validate_lineage(

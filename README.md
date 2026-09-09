@@ -547,6 +547,32 @@ semantics를 재사용합니다. Outcome, fee, spread, slippage와 cost-adjusted
 SELECT-only, external API 없음, migration/LIVE 영향 없음입니다. 다음 단계인 Forward Cost-adjusted Evidence와
 promotion은 포함하지 않습니다.
 
+### Forward-only Candidate Cost-adjusted Evidence v1
+
+Registry candidate의 Forward Gross와 Forward Turnover를 각각 한 번 평가하고 두 결과의 candidate,
+registration anchor, snapshot set, TopN membership 및 scenario signature를 strict하게 정렬합니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_cost_adjusted_evidence \
+  --candidate-id 1 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+비용 표본은 각 horizon의 Gross `SUCCESS` snapshot과 Forward Turnover transition의 current snapshot
+교집합뿐입니다. 첫 Forward snapshot에는 prior Forward transition이 없으므로 synthetic zero cost를
+부여하지 않으며, pre-registration transition이나 continuity break 앞뒤를 연결하지 않습니다. Coverage는
+`cost-adjustable snapshot 수 / Gross SUCCESS snapshot 수`이고 분모가 0이면 unavailable입니다.
+
+Fee, spread, slippage는 모두 명시적인 Decimal fraction 입력이며 Historical Cost-adjusted Evaluation과
+동일한 canonical selection-change cost helper를 사용합니다. 결과는 descriptive research evidence일 뿐
+sample sufficiency, statistical significance 또는 promotion을 판정하지 않습니다. DB SELECT-only이고 외부
+API, worker, scheduler, migration, env flag 및 LIVE 영향이 없습니다.
+
 ## 사전 준비
 
 다음 도구가 설치되어 있어야 합니다.

@@ -498,6 +498,30 @@ replay incompatibility는 continuity break이며 앞뒤 snapshot을 bridge하지
 migration 또는 LIVE policy를 사용하거나 변경하지 않습니다. Forward Cost-adjusted Evidence와 promotion은
 별도 후속 단계입니다.
 
+## Forward-only Candidate Cost-adjusted Evidence v1
+
+등록된 candidate의 Forward Gross와 Forward Turnover를 strict하게 정렬한 뒤 기존 Historical canonical
+selection-change cost model을 적용합니다. Cost assumptions는 implicit default 없이 매번 명시합니다.
+
+```bash
+python -m scripts.evaluate_forward_candidate_cost_adjusted_evidence \
+  --candidate-id 1 \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+Cost-adjustable 표본은 Gross `SUCCESS`와 Turnover current snapshot의 교집합입니다. 첫 Forward snapshot,
+pre-registration transition 및 continuity break를 건너뛴 pair에는 비용 row를 만들지 않습니다. 최근
+outcome이 아직 완성되지 않았거나 Forward transition이 부족하면 `FORWARD_OUTCOMES_PENDING`,
+`INSUFFICIENT_FORWARD_TRANSITIONS`, `NO_FORWARD_COST_ADJUSTABLE_SNAPSHOTS`는 정상 safe state입니다.
+
+명령은 DB SELECT-only이고 external API, LIVE policy, worker, scheduler, Compose service, env flag 또는
+migration을 변경하지 않습니다. Sample sufficiency, statistical inference 및 promotion도 수행하지 않습니다.
+
 이 문서는 서버에서 `crypto-trading-bot`을 반복 가능하고 안전하게 운영하기 위한 절차를 정리합니다. 서버 기준 프로젝트 경로는 다음과 같습니다.
 
 ```bash

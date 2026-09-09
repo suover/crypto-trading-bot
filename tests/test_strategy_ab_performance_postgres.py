@@ -20,6 +20,12 @@ from crypto_trading_bot.services.forward_candidate_gross_evidence_service import
     SUCCESS as FORWARD_SUCCESS,
     ForwardCandidateGrossEvidenceService,
 )
+from crypto_trading_bot.services.forward_candidate_cost_adjusted_evidence_service import (
+    FORWARD_OUTCOMES_PENDING as FORWARD_COST_OUTCOMES_PENDING,
+    INSUFFICIENT_FORWARD_TRANSITIONS as FORWARD_COST_INSUFFICIENT,
+    SUCCESS as FORWARD_COST_SUCCESS,
+    ForwardCandidateCostAdjustedEvidenceService,
+)
 from crypto_trading_bot.services.forward_candidate_turnover_evidence_service import (
     INSUFFICIENT_FORWARD_TRANSITIONS,
     SUCCESS as FORWARD_TURNOVER_SUCCESS,
@@ -986,4 +992,153 @@ def test_postgresql_forward_turnover_middle_replay_failure_is_not_bridged():
         assert result.status == INSUFFICIENT_FORWARD_TRANSITIONS
         assert result.transition_count == 0
         assert result.continuity_break_count == 2
+        session.rollback()
+
+
+def _copy_forward_outcomes(session, snapshot, *, horizon_minutes):
+    for replay_candidate in session.scalars(
+        select(StrategyReplayCandidate).where(
+            StrategyReplayCandidate.strategy_replay_snapshot_id == snapshot.id
+        )
+    ):
+        source = session.scalar(
+            select(StrategyReplayCandidateOutcome).where(
+                StrategyReplayCandidateOutcome.strategy_replay_candidate_id
+                == replay_candidate.id,
+                StrategyReplayCandidateOutcome.horizon_minutes == 60,
+            )
+        )
+        session.add(
+            StrategyReplayCandidateOutcome(
+                strategy_replay_candidate_id=replay_candidate.id,
+                strategy_replay_snapshot_id=snapshot.id,
+                user_id=snapshot.user_id,
+                exchange=snapshot.exchange,
+                market=replay_candidate.market,
+                horizon_minutes=horizon_minutes,
+                snapshot_at=snapshot.captured_at,
+                reference_at=snapshot.captured_at,
+                target_at=snapshot.captured_at + timedelta(minutes=horizon_minutes),
+                evaluated_at=snapshot.captured_at
+                + timedelta(minutes=horizon_minutes + 1),
+                reference_price=source.reference_price,
+                reference_price_source=source.reference_price_source,
+                end_price=source.end_price,
+                end_price_at=snapshot.captured_at
+                + timedelta(minutes=horizon_minutes - 1),
+                end_price_source=source.end_price_source,
+                market_return_percentage=source.market_return_percentage,
+                evaluation_status="COMPLETE",
+                safe_reason=None,
+            )
+        )
+    session.flush()
+
+
+def test_postgresql_forward_cost_adjusted_full_pipeline_is_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"forward-cost-adjusted-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, reference, pre_registration = _register_forward_turnover_candidate(
+            session, user
+        )
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        second = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        for snapshot in (first, second):
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+        tracked = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+
+        result = ForwardCandidateCostAdjustedEvidenceService(session).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60, 240, 1440),
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        assert result.status == FORWARD_COST_SUCCESS
+        assert result.gross_forward_snapshot_ids == (first.id, second.id)
+        assert result.turnover_current_snapshot_ids == (second.id,)
+        assert reference.id not in result.gross_forward_snapshot_ids
+        assert pre_registration.id not in result.gross_forward_snapshot_ids
+        sixty, two_forty, daily = result.horizons
+        assert sixty.status == two_forty.status == FORWARD_COST_SUCCESS
+        assert sixty.cost_adjustable_forward_snapshot_ids == (second.id,)
+        assert two_forty.cost_adjustable_forward_snapshot_ids == (second.id,)
+        assert daily.status == FORWARD_COST_OUTCOMES_PENDING
+        assert daily.cost_adjustable_forward_snapshot_count == 0
+        assert all(
+            snapshot.snapshot_id != first.id
+            for horizon in result.horizons
+            for snapshot in horizon.snapshots
+        )
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        assert after == before
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_forward_cost_adjusted_does_not_bridge_policy_break():
+    with SessionLocal() as session:
+        user = User(name=f"forward-cost-policy-break-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        middle = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=True,
+            exclude_cautions=False,
+        )
+        last = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 7, tzinfo=UTC),
+            with_outcomes=True,
+        )
+
+        result = ForwardCandidateCostAdjustedEvidenceService(session).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60,),
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        assert result.gross_forward_snapshot_ids == (first.id, last.id)
+        assert middle.id not in result.gross_forward_snapshot_ids
+        assert result.status == FORWARD_COST_INSUFFICIENT
+        assert result.turnover_current_snapshot_ids == ()
+        assert result.horizons[0].cost_adjustable_forward_snapshot_count == 0
+        assert result.horizons[0].snapshots == ()
         session.rollback()
