@@ -1197,4 +1197,15 @@ python -m scripts.evaluate_shadow_policy_selection --candidate-id 1
 python -m scripts.evaluate_shadow_policy_selection --candidate-id <ENROLLED_CANDIDATE_ID> --apply
 ```
 
-기본은 DB-only dry-run입니다. `--apply`도 Shadow selection evidence만 저장하며 MarketUniverse, AI, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 변경하지 않습니다. Worker, scheduler 및 Compose service는 이번 단계에 추가되지 않았습니다.
+기본은 DB-only dry-run입니다. `--apply`도 Shadow selection evidence만 저장하며 MarketUniverse, AI, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 변경하지 않습니다.
+
+#### Shadow Selection Automatic Evaluation v1
+
+기존 `recommendation-outcome-worker`는 opt-in 설정 시 이미 Shadow Enrollment된 Candidate만 `id ASC` 순서로 고정한 뒤 자동 평가합니다. Candidate마다 별도 DB session/transaction을 사용하므로 한 Candidate의 invalid 결과나 예외가 다음 Candidate를 막지 않습니다. 이 세 번째 cycle은 기존 `ShadowPolicyEvaluationService`를 그대로 사용하며 DB-only라 outcome price resolver나 외부 API를 만들거나 호출하지 않습니다.
+
+```text
+SHADOW_SELECTION_EVALUATION_ENABLED=false
+SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS=300
+```
+
+기본값은 비활성입니다. 새 worker/container/Compose service, 자동 Enrollment, Promotion Gate 실행 또는 LIVE 정책 변경은 없습니다. 수동 CLI와 worker가 경쟁해도 기존 immutable unique constraint와 service의 concurrent conflict 처리가 중복 row를 막습니다.

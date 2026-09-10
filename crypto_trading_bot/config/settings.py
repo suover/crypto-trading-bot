@@ -123,6 +123,12 @@ class Settings(BaseSettings):
     research_candidate_outcome_horizons_minutes: str = "60,240,1440"
     research_candidate_outcome_batch_size: int = Field(default=20, ge=1, le=500)
 
+    # DB-only Shadow selection evidence. Shares the analytics worker, opt-in.
+    shadow_selection_evaluation_enabled: bool = False
+    shadow_selection_evaluation_interval_seconds: int = Field(
+        default=300, ge=30, le=86400
+    )
+
     # In-pipeline, DB-only research dataset. Disabled by default for safe rollout.
     strategy_replay_dataset_enabled: bool = False
 

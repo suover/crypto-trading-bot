@@ -5,10 +5,11 @@ from uuid import uuid4
 from unittest.mock import MagicMock
 
 from sqlalchemy import delete, func, select
+from sqlalchemy.orm import sessionmaker
 
 from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
 from crypto_trading_bot.config.settings import Settings
-from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.db.database import SessionLocal, engine
 from crypto_trading_bot.db.models import (
     AnalysisRun,
     ResearchPolicyCandidate,
@@ -85,6 +86,7 @@ from crypto_trading_bot.services.strategy_replay_dataset_service import (
     build_policy_data,
     policy_signature,
 )
+from scripts.run_recommendation_outcome_worker import run_shadow_selection_cycle
 
 
 def feature(market: str, liquidity: str, momentum: str) -> dict:
@@ -1958,6 +1960,105 @@ def test_postgresql_shadow_selection_persists_selection_evidence_idempotently():
             for model in tracked
         } == tracked
         session.rollback()
+
+
+def test_postgresql_shadow_automatic_cycle_commits_and_is_idempotent():
+    with engine.connect() as connection:
+        outer_transaction = connection.begin()
+        isolated_sessions = sessionmaker(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            with isolated_sessions() as setup_session:
+                user = User(name=f"shadow-automatic-{uuid4()}")
+                setup_session.add(user)
+                setup_session.flush()
+                candidate = _create_complete_gate_candidate(
+                    setup_session, user, year=2093
+                )
+                enrollment = ShadowPolicyEnrollmentService(
+                    setup_session,
+                    now_fn=lambda: datetime(2093, 1, 20, tzinfo=UTC),
+                ).enroll(candidate_id=candidate.id)
+                assert enrollment.enrollment_status == SHADOW_CREATED
+                create_snapshot(
+                    setup_session,
+                    user,
+                    captured_at=datetime(2093, 1, 21, tzinfo=UTC),
+                    with_outcomes=False,
+                )
+                candidate_id = candidate.id
+                setup_session.commit()
+
+            def service_factory(session):
+                return ShadowPolicyEvaluationService(
+                    session, now_fn=lambda: datetime(2093, 1, 22, tzinfo=UTC)
+                )
+
+            first = run_shadow_selection_cycle(
+                isolated_sessions, evaluation_service_factory=service_factory
+            )
+            assert first.enrollment_count == 1
+            assert first.success_candidate_count == 1
+            assert first.created_evaluation_count == 1
+
+            with isolated_sessions() as verify_session:
+                stored = tuple(
+                    verify_session.scalars(
+                        select(ShadowPolicyEvaluation).where(
+                            ShadowPolicyEvaluation.candidate_id == candidate_id
+                        )
+                    )
+                )
+                assert len(stored) == 1
+                signature = stored[0].evaluation_signature
+                verify_session.rollback()
+
+            second = run_shadow_selection_cycle(
+                isolated_sessions, evaluation_service_factory=service_factory
+            )
+            assert second.enrollment_count == 1
+            assert second.no_new_evaluation_candidate_count == 1
+            assert second.created_evaluation_count == 0
+            with isolated_sessions() as verify_session:
+                rerun = tuple(
+                    verify_session.scalars(
+                        select(ShadowPolicyEvaluation).where(
+                            ShadowPolicyEvaluation.candidate_id == candidate_id
+                        )
+                    )
+                )
+                assert len(rerun) == 1
+                assert rerun[0].evaluation_signature == signature
+                verify_session.rollback()
+        finally:
+            outer_transaction.rollback()
+
+
+def test_postgresql_shadow_automatic_cycle_ignores_unenrolled_candidates():
+    with engine.connect() as connection:
+        outer_transaction = connection.begin()
+        isolated_sessions = sessionmaker(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            with isolated_sessions() as setup_session:
+                user = User(name=f"shadow-automatic-unenrolled-{uuid4()}")
+                setup_session.add(user)
+                setup_session.flush()
+                _register_forward_turnover_candidate(setup_session, user)
+                setup_session.commit()
+
+            result = run_shadow_selection_cycle(isolated_sessions)
+            assert result.enrollment_count == 0
+            assert result.processed_candidate_count == 0
+            assert result.created_evaluation_count == 0
+        finally:
+            outer_transaction.rollback()
 
 
 def test_postgresql_shadow_selection_concurrent_apply_has_one_immutable_row():

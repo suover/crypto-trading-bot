@@ -7,8 +7,9 @@ from scripts import run_recommendation_outcome_worker as worker_script
 from scripts.report_recommendation_outcomes import build_report, source_classification
 
 
-def worker_settings(*, recommendation: bool, research: bool):
+def worker_settings(*, recommendation: bool, research: bool, shadow: bool = False):
     return SimpleNamespace(
+        database_url="postgresql+psycopg://test:test@localhost/test",
         recommendation_outcome_enabled=recommendation,
         recommendation_outcome_interval_seconds=60,
         recommendation_outcome_horizon_list=(60,),
@@ -17,6 +18,8 @@ def worker_settings(*, recommendation: bool, research: bool):
         research_candidate_outcome_interval_seconds=300,
         research_candidate_outcome_horizon_list=(60, 240, 1440),
         research_candidate_outcome_batch_size=20,
+        shadow_selection_evaluation_enabled=shadow,
+        shadow_selection_evaluation_interval_seconds=120,
     )
 
 
@@ -50,6 +53,8 @@ def test_disabled_worker_initializes_neither_database_nor_provider(monkeypatch, 
             recommendation_outcome_interval_seconds=300,
             research_candidate_outcome_enabled=False,
             research_candidate_outcome_interval_seconds=300,
+            shadow_selection_evaluation_enabled=False,
+            shadow_selection_evaluation_interval_seconds=300,
         ),
     )
     worker_script.run_worker(once=True)
@@ -61,15 +66,18 @@ def test_worker_lock_key_is_requested_unique_value():
 
 
 def test_worker_runs_each_enabled_analytics_cycle_once(monkeypatch):
-    for recommendation_enabled, research_enabled in (
-        (True, False),
-        (False, True),
-        (True, True),
+    for recommendation_enabled, research_enabled, shadow_enabled in (
+        (True, False, False),
+        (False, True, False),
+        (True, True, True),
+        (False, False, True),
     ):
         configure_worker(
             monkeypatch,
             worker_settings(
-                recommendation=recommendation_enabled, research=research_enabled
+                recommendation=recommendation_enabled,
+                research=research_enabled,
+                shadow=shadow_enabled,
             ),
         )
         calls = []
@@ -89,12 +97,27 @@ def test_worker_runs_each_enabled_analytics_cycle_once(monkeypatch):
                 or SimpleNamespace(candidate_count=1, due_outcome_count=1)
             ),
         )
+        monkeypatch.setattr(
+            worker_script,
+            "run_shadow_selection_cycle",
+            lambda *args, **kwargs: (
+                calls.append("shadow")
+                or SimpleNamespace(
+                    enrollment_count=1,
+                    processed_candidate_count=1,
+                    created_evaluation_count=1,
+                    invalid_candidate_count=0,
+                    exception_candidate_count=0,
+                )
+            ),
+        )
         worker_script.run_worker(once=True)
         assert calls == [
             name
             for enabled, name in (
                 (recommendation_enabled, "recommendation"),
                 (research_enabled, "research"),
+                (shadow_enabled, "shadow"),
             )
             if enabled
         ]
@@ -141,6 +164,39 @@ def test_same_worker_tick_shares_one_exact_key_price_resolver(monkeypatch):
     assert resolvers[0] is resolvers[1]
 
 
+def test_shadow_only_worker_never_constructs_price_resolver(monkeypatch):
+    configure_worker(
+        monkeypatch,
+        worker_settings(recommendation=False, research=False, shadow=True),
+    )
+    calls = []
+
+    class ForbiddenResolver:
+        def __init__(self):
+            raise AssertionError("Shadow-only cycle must not construct a resolver")
+
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.historical_outcome_price_resolver.HistoricalOutcomePriceResolver",
+        ForbiddenResolver,
+    )
+    monkeypatch.setattr(
+        worker_script,
+        "run_shadow_selection_cycle",
+        lambda *args: (
+            calls.append("shadow")
+            or SimpleNamespace(
+                enrollment_count=0,
+                processed_candidate_count=0,
+                created_evaluation_count=0,
+                invalid_candidate_count=0,
+                exception_candidate_count=0,
+            )
+        ),
+    )
+    worker_script.run_worker(once=True)
+    assert calls == ["shadow"]
+
+
 def test_research_failure_does_not_undo_completed_recommendation_cycle(
     monkeypatch, capsys
 ):
@@ -165,6 +221,39 @@ def test_research_failure_does_not_undo_completed_recommendation_cycle(
     assert "Research candidate outcome cycle failed" in capsys.readouterr().out
 
 
+def test_shadow_cycle_failure_does_not_undo_other_cycles(monkeypatch, capsys):
+    configure_worker(
+        monkeypatch,
+        worker_settings(recommendation=True, research=True, shadow=True),
+    )
+    calls = []
+    monkeypatch.setattr(
+        worker_script,
+        "run_cycle",
+        lambda *args, **kwargs: (
+            calls.append("recommendation")
+            or SimpleNamespace(recommendation_count=1, due_outcome_count=1)
+        ),
+    )
+    monkeypatch.setattr(
+        worker_script,
+        "run_research_cycle",
+        lambda *args, **kwargs: (
+            calls.append("research")
+            or SimpleNamespace(candidate_count=1, due_outcome_count=1)
+        ),
+    )
+
+    def failed(*args, **kwargs):
+        calls.append("shadow")
+        raise RuntimeError
+
+    monkeypatch.setattr(worker_script, "run_shadow_selection_cycle", failed)
+    worker_script.run_worker(once=True)
+    assert calls == ["recommendation", "research", "shadow"]
+    assert "Shadow selection evaluation cycle failed" in capsys.readouterr().out
+
+
 def test_worker_intervals_remain_independent(monkeypatch):
     configure_worker(monkeypatch, worker_settings(recommendation=True, research=True))
     monkeypatch.setattr(
@@ -179,7 +268,7 @@ def test_worker_intervals_remain_independent(monkeypatch):
         "run_research_cycle",
         lambda *args, **kwargs: SimpleNamespace(candidate_count=0, due_outcome_count=0),
     )
-    times = iter((0, 0, 0, 0, 0, 0))
+    times = iter((0, 0, 0, 0, 0, 0, 0))
     monkeypatch.setattr(worker_script.time, "monotonic", lambda: next(times))
     delays = []
 
@@ -191,6 +280,36 @@ def test_worker_intervals_remain_independent(monkeypatch):
     with pytest.raises(RuntimeError, match="stop"):
         worker_script.run_worker()
     assert delays == [60]
+
+
+def test_shadow_only_worker_uses_its_independent_interval(monkeypatch):
+    configure_worker(
+        monkeypatch,
+        worker_settings(recommendation=False, research=False, shadow=True),
+    )
+    monkeypatch.setattr(
+        worker_script,
+        "run_shadow_selection_cycle",
+        lambda *args: SimpleNamespace(
+            enrollment_count=0,
+            processed_candidate_count=0,
+            created_evaluation_count=0,
+            invalid_candidate_count=0,
+            exception_candidate_count=0,
+        ),
+    )
+    times = iter((0, 0, 0, 0, 0, 0))
+    monkeypatch.setattr(worker_script.time, "monotonic", lambda: next(times))
+    delays = []
+
+    def stop_after_sleep(delay):
+        delays.append(delay)
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(worker_script.time, "sleep", stop_after_sleep)
+    with pytest.raises(RuntimeError, match="stop"):
+        worker_script.run_worker()
+    assert delays == [120]
 
 
 def test_analytics_cycle_helpers_use_separate_sessions_and_transactions(monkeypatch):

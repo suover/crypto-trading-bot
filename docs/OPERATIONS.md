@@ -1071,4 +1071,26 @@ python -m scripts.evaluate_shadow_policy_selection \
   --apply
 ```
 
-`--apply`는 strict triple cutoff 이후 frozen Strategy Replay snapshot의 selection evidence만 `shadow_policy_evaluations`에 저장합니다. Broad timeline의 policy/TopN mismatch도 chronology marker로 보존합니다. 이 명령은 outcome resolver, external API, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 호출·변경하지 않습니다. 자동 worker는 evidence schema와 replay/idempotency semantics의 운영 검증 이후 별도 단계에서 검토합니다.
+`--apply`는 strict triple cutoff 이후 frozen Strategy Replay snapshot의 selection evidence만 `shadow_policy_evaluations`에 저장합니다. Broad timeline의 policy/TopN mismatch도 chronology marker로 보존합니다. 이 명령은 outcome resolver, external API, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 호출·변경하지 않습니다.
+
+### Shadow Selection Automatic Evaluation v1
+
+자동 평가는 새 service/container 없이 기존 `recommendation-outcome-worker`의 세 번째 독립 cycle로 실행됩니다.
+
+```text
+SHADOW_SELECTION_EVALUATION_ENABLED=false
+SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS=300
+```
+
+배포 기본값은 false입니다. rollout 시 Production `.env`에서 명시적으로 true로 설정하고 기존 배포 절차로 `recommendation-outcome-worker`를 recreate한 뒤 cycle summary 로그와 `check_server_runtime_safety.sh --production-live` 결과를 확인합니다. Candidate 목록은 cycle 시작 시 `shadow_policy_enrollments.id ASC`로 한 번 고정되며 각 Candidate는 별도 transaction으로 평가됩니다. 자동 Enrollment와 Promotion Gate는 실행하지 않습니다.
+
+현재 Production Candidate 1/2처럼 Shadow Enrollment가 없다면 automation이 켜져 있어도 `enrollment_count=0`, `created_evaluation_count=0`이 정상입니다. Shadow만 독립 점검할 때는 위 수동 `evaluate_shadow_policy_selection` CLI를 사용합니다.
+
+기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
+
+```bash
+docker compose run --rm recommendation-outcome-worker \
+  python -m scripts.run_recommendation_outcome_worker --once
+```
+
+주의: `--once`는 현재 활성화된 Recommendation, Research, Shadow cycle을 각각 한 번 실행합니다. Shadow-only cycle은 DB-only이고 price resolver나 Upbit/OpenAI/Telegram/CoinGecko를 호출하지 않지만, 다른 두 analytics flag가 true면 해당 public-price cycle도 함께 실행됩니다.

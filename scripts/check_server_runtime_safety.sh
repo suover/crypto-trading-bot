@@ -184,6 +184,12 @@ if [[ "$MODE" == "production-live" ]]; then
   else
     warn "production-live: Research Candidate Outcome analytics가 비활성화되어 있습니다. 거래 실행에는 영향이 없습니다."
   fi
+  SHADOW_SELECTION_EVALUATION_ENABLED="$(get_env_value SHADOW_SELECTION_EVALUATION_ENABLED)"
+  if [[ "${SHADOW_SELECTION_EVALUATION_ENABLED:-false}" == "true" ]]; then
+    pass_check "production-live: Shadow Selection Evaluation analytics가 활성화되어 있습니다."
+  else
+    warn "production-live: Shadow Selection Evaluation analytics가 비활성화되어 있습니다. 거래 실행에는 영향이 없습니다."
+  fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."
 else

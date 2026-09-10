@@ -46,6 +46,8 @@ SETTINGS_ENV_NAMES = (
     "RESEARCH_CANDIDATE_OUTCOME_INTERVAL_SECONDS",
     "RESEARCH_CANDIDATE_OUTCOME_HORIZONS_MINUTES",
     "RESEARCH_CANDIDATE_OUTCOME_BATCH_SIZE",
+    "SHADOW_SELECTION_EVALUATION_ENABLED",
+    "SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS",
     "STRATEGY_REPLAY_DATASET_ENABLED",
     "PORTFOLIO_COINGECKO_ASSET_MAPPING",
     "PORTFOLIO_EXCLUDED_ASSETS",
@@ -78,6 +80,8 @@ def test_openai_trade_defaults() -> None:
     assert settings.research_candidate_outcome_interval_seconds == 300
     assert settings.research_candidate_outcome_horizon_list == (60, 240, 1440)
     assert settings.research_candidate_outcome_batch_size == 20
+    assert settings.shadow_selection_evaluation_enabled is False
+    assert settings.shadow_selection_evaluation_interval_seconds == 300
     assert settings.live_order_chance_preflight_enabled is False
     assert settings.analysis_timeframe_list == ["15m", "60m", "240m", "1d"]
     assert settings.live_order_reconciliation_enabled is True
@@ -98,6 +102,37 @@ def test_openai_trade_defaults() -> None:
     assert settings.portfolio_coingecko_asset_identity_map == {}
     assert settings.portfolio_excluded_asset_set == set()
     assert settings.portfolio_valuation_policy_signature is None
+
+
+@pytest.mark.parametrize("value", [29, 86401])
+def test_shadow_selection_evaluation_interval_rejects_invalid_bounds(value) -> None:
+    with pytest.raises(ValueError):
+        Settings(
+            _env_file=None,
+            database_url="postgresql://test:test@localhost/test",
+            shadow_selection_evaluation_interval_seconds=value,
+        )
+
+
+@pytest.mark.parametrize("value", [30, 86400])
+def test_shadow_selection_evaluation_interval_accepts_valid_bounds(value) -> None:
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        shadow_selection_evaluation_interval_seconds=value,
+    )
+    assert settings.shadow_selection_evaluation_interval_seconds == value
+
+
+def test_shadow_selection_evaluation_environment_override(monkeypatch) -> None:
+    monkeypatch.setenv("SHADOW_SELECTION_EVALUATION_ENABLED", "true")
+    monkeypatch.setenv("SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS", "600")
+    settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+    )
+    assert settings.shadow_selection_evaluation_enabled is True
+    assert settings.shadow_selection_evaluation_interval_seconds == 600
 
 
 def test_portfolio_excluded_assets_are_normalized_and_signature_is_deterministic() -> (
