@@ -1172,3 +1172,16 @@ python -m scripts.evaluate_policy_promotion_gate --candidate-id 1
 ```
 
 작은 Forward sample에서 `INSUFFICIENT_DATA`는 정상이다. 결과가 `ELIGIBLE_FOR_REVIEW`여도 DB write, Shadow 생성, 실제 promotion, 외부 API 호출 또는 LIVE 정책 변경은 수행하지 않는다.
+
+### Shadow Policy Enrollment v1
+
+`ShadowPolicyEnrollmentService`는 현재 시점의 Policy Promotion Gate v1을 직접 다시 평가하여 정확히 `ELIGIBLE_FOR_REVIEW`인 immutable Research Policy Candidate만 향후 Shadow 검증의 시작 anchor로 등록합니다. 현재 Production Candidate 1/2는 `INSUFFICIENT_DATA`이므로 preview만 권장하며 enrollment해서는 안 됩니다.
+
+Candidate마다 enrollment는 하나뿐이고 재실행은 기존 immutable row를 검증한 뒤 Gate를 다시 실행하지 않고 `ALREADY_ENROLLED`를 반환합니다. 신규 등록만 Gate policy/check/evidence provenance와 decision signature를 저장하고, Gate 뒤 trusted enrollment 시각을 캡처한 다음 같은 user/exchange/quote/dataset의 broad snapshot watermark를 새로 계산합니다. Gate와 enrollment 사이에 생긴 snapshot은 보수적으로 watermark에 포함되어 Shadow evidence에서 제외됩니다.
+
+```bash
+python -m scripts.enroll_shadow_policy --candidate-id 1
+python -m scripts.enroll_shadow_policy --candidate-id <ELIGIBLE_CANDIDATE_ID> --apply
+```
+
+기본 실행은 dry-run입니다. `--apply`를 사용해도 Gate가 eligible이 아니면 INSERT하지 않습니다. Candidate 등록 이후 Shadow enrollment 이전 데이터는 Promotion Gate용 Forward evidence이며 Shadow evidence로 재사용하지 않습니다. 향후 Shadow Evaluation은 `id > shadow_snapshot_id_watermark`, `captured_at > shadow_enrolled_at`, `captured_at > shadow_captured_at_watermark`를 모두 만족해야 합니다. Enrollment는 Shadow runtime activation이 아니며 ranking, AI, Telegram, 주문 또는 LIVE 정책에 연결되지 않습니다.

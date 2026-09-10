@@ -1032,3 +1032,21 @@ python -m scripts.evaluate_policy_promotion_gate --candidate-id 2
 CLI decision 입력은 `--candidate-id`뿐이며 horizon, threshold, sample 수, 비용률 또는 as-of override는 지원하지 않는다. Gate는 Registration-Bounded Historical bundle을 한 번, Forward Gross와 Turnover를 각각 한 번 평가하고, 같은 결과를 Forward Cost-adjusted 계산에 재사용한다. 시작 시 캡처한 동일 Forward snapshot ceiling이 두 Forward query에 적용된다.
 
 `INVALID_PROMOTION_DATA`는 lineage/integrity 오류(exit 1), `INSUFFICIENT_DATA`는 표본 부족(exit 0), `NOT_ELIGIBLE`은 충분한 표본의 기준 실패(exit 0), `ELIGIBLE_FOR_REVIEW`는 Shadow 검토 최소 gate 통과(exit 0)다. 21 observations, 20 transitions, 168시간은 통계적 유의성이 아니라 다음 단계 전의 deterministic engineering guardrail이다. `ELIGIBLE_FOR_REVIEW`도 실제 promotion, Candidate lifecycle 변경, Shadow 생성, Telegram 승인, 주문 또는 LIVE 정책 변경을 수행하지 않는다. 명령은 DB SELECT-only이며 외부 API를 호출하지 않는다.
+## Shadow Policy Enrollment v1
+
+현재 Candidate 1/2는 Promotion Gate가 `INSUFFICIENT_DATA`이므로 다음 preview만 권장합니다.
+
+```bash
+python -m scripts.enroll_shadow_policy --candidate-id 1
+python -m scripts.enroll_shadow_policy --candidate-id 2
+```
+
+실제 eligible Candidate에 한해 운영자가 명시적으로 적용합니다.
+
+```bash
+python -m scripts.enroll_shadow_policy \
+  --candidate-id <ELIGIBLE_CANDIDATE_ID> \
+  --apply
+```
+
+`--apply`를 사용해도 현재 Gate 결과가 정확히 `ELIGIBLE_FOR_REVIEW`가 아니면 `GATE_NOT_ELIGIBLE`, `database_write=false`로 종료하며 INSERT하지 않습니다. Candidate당 anchor는 하나이고 정상 기존 row는 Gate 재평가 없이 `ALREADY_ENROLLED`가 됩니다. 이 명령은 Shadow runtime/evaluation을 시작하지 않고 외부 API, Telegram, 주문 또는 LIVE policy를 변경하지 않습니다. 다음 별도 단계인 Shadow Evaluation v1만 enrollment triple cutoff 이후의 snapshot을 사용해야 합니다.

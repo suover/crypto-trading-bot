@@ -339,6 +339,104 @@ class ResearchPolicyCandidate(Base):
     )
 
 
+class ShadowPolicyEnrollment(Base):
+    __tablename__ = "shadow_policy_enrollments"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", name="uq_shadow_enrollment_candidate"),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_shadow_enrollment_top_n_positive"
+        ),
+        CheckConstraint(
+            "candidate_registration_snapshot_id_watermark > 0",
+            name="ck_shadow_enrollment_candidate_watermark_positive",
+        ),
+        CheckConstraint(
+            "gate_forward_snapshot_id_ceiling > 0",
+            name="ck_shadow_enrollment_gate_ceiling_positive",
+        ),
+        CheckConstraint(
+            "shadow_snapshot_id_watermark > 0",
+            name="ck_shadow_enrollment_shadow_watermark_positive",
+        ),
+        CheckConstraint(
+            "gate_status = 'ELIGIBLE_FOR_REVIEW'",
+            name="ck_shadow_enrollment_gate_status_eligible",
+        ),
+        CheckConstraint(
+            "shadow_snapshot_id_watermark >= gate_forward_snapshot_id_ceiling",
+            name="ck_shadow_enrollment_watermark_after_gate",
+        ),
+        CheckConstraint(
+            "shadow_enrolled_at >= gate_evaluated_at",
+            name="ck_shadow_enrollment_time_after_gate",
+        ),
+        Index(
+            "ix_shadow_enrollment_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "shadow_enrolled_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    enrollment_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    candidate_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    component_weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    candidate_registration_snapshot_id_watermark: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    candidate_registration_captured_at_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    gate_result_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    gate_policy_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    gate_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    gate_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    gate_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    gate_evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    gate_forward_snapshot_id_ceiling: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    gate_checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    gate_evidence_provenance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    gate_decision_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    shadow_enrolled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    shadow_snapshot_id_watermark: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    shadow_captured_at_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class StrategyReplayCandidate(Base):
     __tablename__ = "strategy_replay_candidates"
     __table_args__ = (

@@ -1,9 +1,10 @@
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from threading import Barrier, Thread
 from uuid import uuid4
 from unittest.mock import MagicMock
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
 from crypto_trading_bot.config.settings import Settings
@@ -11,6 +12,7 @@ from crypto_trading_bot.db.database import SessionLocal
 from crypto_trading_bot.db.models import (
     AnalysisRun,
     ResearchPolicyCandidate,
+    ShadowPolicyEnrollment,
     StrategyReplayCandidate,
     StrategyReplayCandidateOutcome,
     StrategyReplaySnapshot,
@@ -42,6 +44,12 @@ from crypto_trading_bot.services.research_policy_candidate_registry_service impo
 from crypto_trading_bot.services.policy_promotion_gate_service import (
     INSUFFICIENT_DATA as PROMOTION_INSUFFICIENT,
     PolicyPromotionGateService,
+)
+from crypto_trading_bot.services.shadow_policy_enrollment_service import (
+    ALREADY_ENROLLED as SHADOW_ALREADY_ENROLLED,
+    CREATED as SHADOW_CREATED,
+    GATE_NOT_ELIGIBLE as SHADOW_GATE_NOT_ELIGIBLE,
+    ShadowPolicyEnrollmentService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -1461,6 +1469,18 @@ def test_postgresql_policy_promotion_gate_is_insufficient_and_read_only():
             > candidate.registration_snapshot_id_watermark
         )
         assert len(result.forward_gross.eligible_forward_snapshot_ids) == 2
+        enrollment_count = session.scalar(
+            select(func.count()).select_from(ShadowPolicyEnrollment)
+        )
+        enrollment_result = ShadowPolicyEnrollmentService(session).enroll(
+            candidate_id=candidate.id
+        )
+        assert enrollment_result.enrollment_status == SHADOW_GATE_NOT_ELIGIBLE
+        assert enrollment_result.gate.status == PROMOTION_INSUFFICIENT
+        assert (
+            session.scalar(select(func.count()).select_from(ShadowPolicyEnrollment))
+            == enrollment_count
+        )
         after = {
             model: session.scalar(select(func.count()).select_from(model))
             for model in tracked
@@ -1653,3 +1673,139 @@ def test_postgresql_policy_promotion_gate_corrupt_registry_is_invalid():
         assert result.status == "INVALID_PROMOTION_DATA"
         assert result.invalid_checks
         session.rollback()
+
+
+def test_postgresql_shadow_enrollment_actual_gate_eligible_is_idempotent_and_scoped():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-enrollment-eligible-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2084)
+        tracked = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        before_enrollments = session.scalar(
+            select(func.count()).select_from(ShadowPolicyEnrollment)
+        )
+        service = ShadowPolicyEnrollmentService(
+            session, now_fn=lambda: datetime(2084, 1, 20, tzinfo=UTC)
+        )
+
+        created = service.enroll(candidate_id=candidate.id)
+        retry = service.enroll(candidate_id=candidate.id)
+
+        assert created.enrollment_status == SHADOW_CREATED
+        assert retry.enrollment_status == SHADOW_ALREADY_ENROLLED
+        assert retry.enrollment.id == created.enrollment.id
+        assert (
+            session.scalar(select(func.count()).select_from(ShadowPolicyEnrollment))
+            == before_enrollments + 1
+        )
+        assert {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        } == before
+        assert created.enrollment.shadow_snapshot_id_watermark >= (
+            created.enrollment.gate_forward_snapshot_id_ceiling
+        )
+        session.rollback()
+
+
+def test_postgresql_shadow_enrollment_actual_gate_not_eligible_does_not_write():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-enrollment-not-eligible-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(
+            session, user, year=2085, failing_horizon=1440
+        )
+        before = session.scalar(
+            select(func.count()).select_from(ShadowPolicyEnrollment)
+        )
+
+        result = ShadowPolicyEnrollmentService(session).enroll(
+            candidate_id=candidate.id
+        )
+
+        assert result.enrollment_status == SHADOW_GATE_NOT_ELIGIBLE
+        assert result.gate.status == "NOT_ELIGIBLE"
+        assert (
+            session.scalar(select(func.count()).select_from(ShadowPolicyEnrollment))
+            == before
+        )
+        session.rollback()
+
+
+def test_postgresql_shadow_enrollment_concurrent_insert_has_one_winner():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-enrollment-race-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate = _create_complete_gate_candidate(setup_session, user, year=2086)
+        gate = PolicyPromotionGateService(setup_session).evaluate(
+            candidate_id=candidate.id
+        )
+        candidate_id = candidate.id
+        user_id = user.id
+        setup_session.commit()
+
+    barrier = Barrier(2)
+    results = []
+    errors = []
+
+    def enroll_once():
+        try:
+            with SessionLocal() as session:
+                gate_service = MagicMock()
+                gate_service.evaluate.return_value = gate
+                result = ShadowPolicyEnrollmentService(
+                    session,
+                    gate_service=gate_service,
+                    now_fn=lambda: datetime(2086, 1, 20, tzinfo=UTC),
+                    before_watermark_fn=barrier.wait,
+                ).enroll(candidate_id=candidate_id)
+                session.commit()
+                results.append(result.enrollment_status)
+        except Exception as error:
+            errors.append(error)
+
+    threads = (Thread(target=enroll_once), Thread(target=enroll_once))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert sorted(results) == sorted([SHADOW_CREATED, SHADOW_ALREADY_ENROLLED])
+    with SessionLocal() as verify_session:
+        assert (
+            verify_session.scalar(
+                select(func.count())
+                .select_from(ShadowPolicyEnrollment)
+                .where(ShadowPolicyEnrollment.candidate_id == candidate_id)
+            )
+            == 1
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEnrollment).where(
+                ShadowPolicyEnrollment.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ResearchPolicyCandidate).where(
+                ResearchPolicyCandidate.id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplaySnapshot).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+        )
+        verify_session.commit()
