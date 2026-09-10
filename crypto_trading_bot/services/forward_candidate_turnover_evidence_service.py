@@ -73,7 +73,9 @@ class ForwardCandidateTurnoverEvidenceService:
             session
         )
 
-    def evaluate(self, *, candidate_id: int) -> ForwardCandidateTurnoverEvidenceResult:
+    def evaluate(
+        self, *, candidate_id: int, snapshot_id_ceiling: int | None = None
+    ) -> ForwardCandidateTurnoverEvidenceResult:
         if (
             isinstance(candidate_id, bool)
             or not isinstance(candidate_id, int)
@@ -82,7 +84,11 @@ class ForwardCandidateTurnoverEvidenceService:
             raise ReplayInputError("candidate ID must be a positive integer")
         try:
             validated = load_and_validate_forward_candidate(self.session, candidate_id)
-            snapshots = self._load_forward_timeline(validated)
+            self._validate_ceiling(
+                snapshot_id_ceiling,
+                validated.metadata.registration_snapshot_id_watermark,
+            )
+            snapshots = self._load_forward_timeline(validated, snapshot_id_ceiling)
             self._validate_forward_timeline(validated, snapshots)
             if not snapshots:
                 return self._safe_result(
@@ -158,31 +164,41 @@ class ForwardCandidateTurnoverEvidenceService:
             return self._invalid(candidate_id, str(error))
 
     def _load_forward_timeline(
-        self, validated: ValidatedForwardCandidate
+        self,
+        validated: ValidatedForwardCandidate,
+        snapshot_id_ceiling: int | None = None,
     ) -> tuple[StrategyReplaySnapshot, ...]:
         candidate = validated.row
+        query = select(StrategyReplaySnapshot).where(
+            StrategyReplaySnapshot.user_id == candidate.user_id,
+            StrategyReplaySnapshot.exchange == candidate.exchange,
+            StrategyReplaySnapshot.quote_asset == candidate.quote_asset,
+            StrategyReplaySnapshot.dataset_schema_version
+            == candidate.dataset_schema_version,
+            StrategyReplaySnapshot.id > candidate.registration_snapshot_id_watermark,
+            StrategyReplaySnapshot.captured_at > candidate.registered_at,
+            StrategyReplaySnapshot.captured_at
+            > candidate.registration_captured_at_watermark,
+        )
+        if snapshot_id_ceiling is not None:
+            query = query.where(StrategyReplaySnapshot.id <= snapshot_id_ceiling)
         return tuple(
             self.session.scalars(
-                select(StrategyReplaySnapshot)
-                .where(
-                    StrategyReplaySnapshot.user_id == candidate.user_id,
-                    StrategyReplaySnapshot.exchange == candidate.exchange,
-                    StrategyReplaySnapshot.quote_asset == candidate.quote_asset,
-                    StrategyReplaySnapshot.dataset_schema_version
-                    == candidate.dataset_schema_version,
-                    StrategyReplaySnapshot.id
-                    > candidate.registration_snapshot_id_watermark,
-                    StrategyReplaySnapshot.captured_at > candidate.registered_at,
-                    StrategyReplaySnapshot.captured_at
-                    > candidate.registration_captured_at_watermark,
-                )
-                .order_by(
+                query.order_by(
                     StrategyReplaySnapshot.captured_at.asc(),
                     StrategyReplaySnapshot.id.asc(),
-                )
-                .execution_options(autoflush=False)
+                ).execution_options(autoflush=False)
             )
         )
+
+    @staticmethod
+    def _validate_ceiling(value: int | None, watermark: int) -> None:
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, int) or value < watermark:
+            raise ReplayInputError(
+                "snapshot ID ceiling must be an integer at or above registration watermark"
+            )
 
     @staticmethod
     def _validate_forward_timeline(

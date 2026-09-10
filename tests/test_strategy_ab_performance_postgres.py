@@ -39,6 +39,10 @@ from crypto_trading_bot.services.forward_candidate_turnover_evidence_service imp
 from crypto_trading_bot.services.research_policy_candidate_registry_service import (
     ResearchPolicyCandidateRegistryService,
 )
+from crypto_trading_bot.services.policy_promotion_gate_service import (
+    INSUFFICIENT_DATA as PROMOTION_INSUFFICIENT,
+    PolicyPromotionGateService,
+)
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
     SUCCESS,
@@ -1399,4 +1403,253 @@ def test_postgresql_forward_cost_adjusted_does_not_bridge_policy_break():
         assert result.turnover_current_snapshot_ids == ()
         assert result.horizons[0].cost_adjustable_forward_snapshot_count == 0
         assert result.horizons[0].snapshots == ()
+        session.rollback()
+
+
+def test_postgresql_policy_promotion_gate_is_insufficient_and_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"promotion-gate-{uuid4()}")
+        session.add(user)
+        session.flush()
+        historical = []
+        for day in range(7):
+            snapshot = create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2080, 1, 1, tzinfo=UTC) + timedelta(days=day),
+                with_outcomes=True,
+            )
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+            historical.append(snapshot)
+        candidate = (
+            ResearchPolicyCandidateRegistryService(
+                session, now_fn=lambda: datetime(2080, 1, 8, tzinfo=UTC)
+            )
+            .register(
+                reference_snapshot_id=historical[-1].id,
+                scenario=_forward_turnover_scenario(),
+            )
+            .candidate
+        )
+        for day in range(2):
+            snapshot = create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2080, 1, 9, tzinfo=UTC) + timedelta(days=day),
+                with_outcomes=True,
+            )
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+        session.flush()
+        tracked = (
+            ResearchPolicyCandidate,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+
+        result = PolicyPromotionGateService(session).evaluate(candidate_id=candidate.id)
+
+        assert result.status == PROMOTION_INSUFFICIENT
+        assert (
+            result.forward_snapshot_id_ceiling
+            > candidate.registration_snapshot_id_watermark
+        )
+        assert len(result.forward_gross.eligible_forward_snapshot_ids) == 2
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        assert after == before
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_forward_ceiling_excludes_snapshot_inserted_between_evaluations():
+    with SessionLocal() as session:
+        user = User(name=f"promotion-ceiling-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 5, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        second = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 6, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        ceiling = second.id
+        gross = ForwardCandidateGrossEvidenceService(session).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60,),
+            snapshot_id_ceiling=ceiling,
+        )
+        inserted_after_ceiling = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2070, 1, 7, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        turnover = ForwardCandidateTurnoverEvidenceService(session).evaluate(
+            candidate_id=candidate.id,
+            snapshot_id_ceiling=ceiling,
+        )
+
+        assert gross.eligible_forward_snapshot_ids == (first.id, second.id)
+        assert turnover.forward_timeline_snapshot_ids == (first.id, second.id)
+        assert inserted_after_ceiling.id not in gross.eligible_forward_snapshot_ids
+        assert inserted_after_ceiling.id not in turnover.forward_timeline_snapshot_ids
+        session.rollback()
+
+
+def _create_complete_gate_candidate(session, user, *, year, failing_horizon=None):
+    promotion_scenario = parse_scenario_document(
+        {
+            "schema_version": "ranking-scenario-sweep-v1",
+            "scenarios": [
+                {
+                    "name": "promotion-gate-candidate",
+                    "component_weights": {
+                        "liquidity": "0",
+                        "trend_alignment": "0",
+                        "momentum": "1",
+                        "volume_confirmation": "0",
+                        "spread": "0",
+                        "volatility": "0",
+                        "drawdown": "0",
+                    },
+                }
+            ],
+        }
+    )[0]
+
+    def make_candidate_outcomes_supportive(snapshot):
+        favorable_returns = {
+            "KRW-A": Decimal("10"),
+            "KRW-B": Decimal("-5"),
+            "KRW-C": Decimal("20"),
+        }
+        for outcome in session.scalars(
+            select(StrategyReplayCandidateOutcome).where(
+                StrategyReplayCandidateOutcome.strategy_replay_snapshot_id
+                == snapshot.id
+            )
+        ):
+            market_return = favorable_returns[outcome.market]
+            outcome.market_return_percentage = market_return
+            outcome.end_price = Decimal("100") + market_return
+
+    historical = []
+    base = datetime(year, 1, 1, tzinfo=UTC)
+    for day in range(9):
+        snapshot = create_snapshot(
+            session,
+            user,
+            captured_at=base + timedelta(days=day),
+            with_outcomes=True,
+        )
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+        make_candidate_outcomes_supportive(snapshot)
+        historical.append(snapshot)
+    registered_at = base + timedelta(days=9)
+    candidate = (
+        ResearchPolicyCandidateRegistryService(session, now_fn=lambda: registered_at)
+        .register(
+            reference_snapshot_id=historical[-1].id,
+            scenario=promotion_scenario,
+        )
+        .candidate
+    )
+    for index in range(21):
+        snapshot = create_snapshot(
+            session,
+            user,
+            captured_at=registered_at + timedelta(hours=1 + (index * 8.4)),
+            with_outcomes=True,
+        )
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+        make_candidate_outcomes_supportive(snapshot)
+        if failing_horizon is not None:
+            adverse_returns = {
+                "KRW-A": Decimal("0"),
+                "KRW-B": Decimal("10"),
+                "KRW-C": Decimal("-10"),
+            }
+            outcomes = session.scalars(
+                select(StrategyReplayCandidateOutcome).where(
+                    StrategyReplayCandidateOutcome.strategy_replay_snapshot_id
+                    == snapshot.id,
+                    StrategyReplayCandidateOutcome.horizon_minutes == failing_horizon,
+                )
+            )
+            for outcome in outcomes:
+                market_return = adverse_returns[outcome.market]
+                outcome.market_return_percentage = market_return
+                outcome.end_price = Decimal("100") + market_return
+    session.flush()
+    return candidate
+
+
+def test_postgresql_policy_promotion_gate_all_pass_fixture_is_eligible():
+    with SessionLocal() as session:
+        user = User(name=f"promotion-eligible-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2081)
+
+        result = PolicyPromotionGateService(session).evaluate(candidate_id=candidate.id)
+
+        assert result.status == "ELIGIBLE_FOR_REVIEW", result.failed_checks
+        assert not result.insufficient_checks
+        assert not result.failed_checks
+        assert not result.invalid_checks
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_policy_promotion_gate_sufficient_failure_is_not_eligible():
+    with SessionLocal() as session:
+        user = User(name=f"promotion-not-eligible-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(
+            session, user, year=2082, failing_horizon=1440
+        )
+
+        result = PolicyPromotionGateService(session).evaluate(candidate_id=candidate.id)
+
+        assert result.status == "NOT_ELIGIBLE", result.insufficient_checks
+        assert any(
+            check.horizon_minutes == 1440 and check.status == "FAIL"
+            for check in result.failed_checks
+        )
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_policy_promotion_gate_corrupt_registry_is_invalid():
+    with SessionLocal() as session:
+        user = User(name=f"promotion-invalid-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2083)
+        candidate.candidate_schema_version = "corrupt"
+        session.flush()
+
+        result = PolicyPromotionGateService(session).evaluate(candidate_id=candidate.id)
+
+        assert result.status == "INVALID_PROMOTION_DATA"
+        assert result.invalid_checks
         session.rollback()

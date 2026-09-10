@@ -113,6 +113,7 @@ class ForwardCandidateGrossEvidenceService:
         *,
         candidate_id: int,
         horizons: Iterable[int],
+        snapshot_id_ceiling: int | None = None,
     ) -> ForwardCandidateGrossEvidenceResult:
         normalized_horizons = self._normalize_horizons(horizons)
         if (
@@ -124,9 +125,12 @@ class ForwardCandidateGrossEvidenceService:
         try:
             validated = load_and_validate_forward_candidate(self.session, candidate_id)
             candidate = validated.row
+            self._validate_ceiling(
+                snapshot_id_ceiling, candidate.registration_snapshot_id_watermark
+            )
             metadata = validated.metadata
             overrides = dict(validated.scenario.component_weights)
-            snapshots = self._load_forward_snapshots(candidate)
+            snapshots = self._load_forward_snapshots(candidate, snapshot_id_ceiling)
             self._validate_forward_snapshots(candidate, snapshots)
             evidence = tuple(
                 self._evaluate_horizon(
@@ -159,32 +163,42 @@ class ForwardCandidateGrossEvidenceService:
             return self._invalid(candidate_id, normalized_horizons, str(error))
 
     def _load_forward_snapshots(
-        self, candidate: ResearchPolicyCandidate
+        self,
+        candidate: ResearchPolicyCandidate,
+        snapshot_id_ceiling: int | None = None,
     ) -> tuple[StrategyReplaySnapshot, ...]:
+        query = select(StrategyReplaySnapshot).where(
+            StrategyReplaySnapshot.user_id == candidate.user_id,
+            StrategyReplaySnapshot.exchange == candidate.exchange,
+            StrategyReplaySnapshot.quote_asset == candidate.quote_asset,
+            StrategyReplaySnapshot.dataset_schema_version
+            == candidate.dataset_schema_version,
+            StrategyReplaySnapshot.policy_signature
+            == candidate.baseline_policy_signature,
+            StrategyReplaySnapshot.id > candidate.registration_snapshot_id_watermark,
+            StrategyReplaySnapshot.captured_at > candidate.registered_at,
+            StrategyReplaySnapshot.captured_at
+            > candidate.registration_captured_at_watermark,
+        )
+        if snapshot_id_ceiling is not None:
+            query = query.where(StrategyReplaySnapshot.id <= snapshot_id_ceiling)
         return tuple(
             self.session.scalars(
-                select(StrategyReplaySnapshot)
-                .where(
-                    StrategyReplaySnapshot.user_id == candidate.user_id,
-                    StrategyReplaySnapshot.exchange == candidate.exchange,
-                    StrategyReplaySnapshot.quote_asset == candidate.quote_asset,
-                    StrategyReplaySnapshot.dataset_schema_version
-                    == candidate.dataset_schema_version,
-                    StrategyReplaySnapshot.policy_signature
-                    == candidate.baseline_policy_signature,
-                    StrategyReplaySnapshot.id
-                    > candidate.registration_snapshot_id_watermark,
-                    StrategyReplaySnapshot.captured_at > candidate.registered_at,
-                    StrategyReplaySnapshot.captured_at
-                    > candidate.registration_captured_at_watermark,
-                )
-                .order_by(
+                query.order_by(
                     StrategyReplaySnapshot.captured_at.asc(),
                     StrategyReplaySnapshot.id.asc(),
-                )
-                .execution_options(autoflush=False)
+                ).execution_options(autoflush=False)
             )
         )
+
+    @staticmethod
+    def _validate_ceiling(value: int | None, watermark: int) -> None:
+        if value is None:
+            return
+        if isinstance(value, bool) or not isinstance(value, int) or value < watermark:
+            raise ReplayInputError(
+                "snapshot ID ceiling must be an integer at or above registration watermark"
+            )
 
     def _validate_forward_snapshots(
         self,

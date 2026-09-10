@@ -1159,3 +1159,16 @@ uv run pytest -q
 uv run ruff format --check .
 uv run ruff check .
 ```
+### Policy Promotion Gate v1
+
+`PolicyPromotionGateService`는 하나의 immutable `ResearchPolicyCandidate`에 대해 등록 시점에 고정된 Historical evidence와 genuine Forward Gross/Turnover/Cost-adjusted evidence를 함께 검증한다. 이는 실제 promotion이 아니라 다음 Shadow 검토 대상으로 고려할 최소 engineering eligibility 판정이다. `INVALID_PROMOTION_DATA`, `INSUFFICIENT_DATA`, `NOT_ELIGIBLE`, `ELIGIBLE_FOR_REVIEW`를 구분하며 integrity, sufficiency, historical stability, forward performance 순서의 구조화된 check를 남긴다.
+
+v1은 60/240/1440분 horizon, Historical gross/cost 5 folds와 cost coverage 0.70, supportive horizon 2개, catastrophic delta floor -0.50, Forward gross 21 observations, turnover 20 transitions, cost-adjustable 20 observations와 coverage 0.80, 168시간, continuity break 0을 고정한다. Forward performance는 모든 horizon에서 gross mean delta `>= 0`, cost-adjusted mean delta `> 0`, median delta `>= 0`, win rate `>= 0.55`를 요구한다. 이 기준은 현재 Candidate 결과에 맞춰 조정되지 않으며 통계적 유의성을 뜻하지 않는다. Shadow review 전에 약 1주 이상의 실제 Forward 시간 범위와 다수의 성숙 outcome을 요구하는 deterministic guardrail이다.
+
+Historical의 `strict unseen` 표시는 계속 `not_verified`이며 genuine unseen evidence는 등록 이후 Forward 데이터다. 실행 시작 시 broad Forward context의 maximum snapshot ID를 한 번 캡처하고 Gross와 Turnover에 같은 ceiling을 적용하므로 실행 도중 추가된 snapshot은 섞이지 않는다. CLI는 Candidate ID 외 threshold, horizon, cost 또는 as-of override를 받지 않는다.
+
+```bash
+python -m scripts.evaluate_policy_promotion_gate --candidate-id 1
+```
+
+작은 Forward sample에서 `INSUFFICIENT_DATA`는 정상이다. 결과가 `ELIGIBLE_FOR_REVIEW`여도 DB write, Shadow 생성, 실제 promotion, 외부 API 호출 또는 LIVE 정책 변경은 수행하지 않는다.

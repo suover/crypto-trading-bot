@@ -1020,3 +1020,15 @@ docker compose down
 - DB 백업 파일을 유지합니다.
 - 복구는 자동으로 처리하지 말고, 상황을 확인한 뒤 수동으로 신중하게 진행합니다.
 - 복구 전에는 현재 컨테이너 상태, 백업 파일 시각, `.env`와 비밀 디렉터리를 다시 확인합니다.
+## Policy Promotion Gate v1
+
+등록된 Candidate의 고정된 v1 gate를 수동 평가한다.
+
+```bash
+python -m scripts.evaluate_policy_promotion_gate --candidate-id 1
+python -m scripts.evaluate_policy_promotion_gate --candidate-id 2
+```
+
+CLI decision 입력은 `--candidate-id`뿐이며 horizon, threshold, sample 수, 비용률 또는 as-of override는 지원하지 않는다. Gate는 Registration-Bounded Historical bundle을 한 번, Forward Gross와 Turnover를 각각 한 번 평가하고, 같은 결과를 Forward Cost-adjusted 계산에 재사용한다. 시작 시 캡처한 동일 Forward snapshot ceiling이 두 Forward query에 적용된다.
+
+`INVALID_PROMOTION_DATA`는 lineage/integrity 오류(exit 1), `INSUFFICIENT_DATA`는 표본 부족(exit 0), `NOT_ELIGIBLE`은 충분한 표본의 기준 실패(exit 0), `ELIGIBLE_FOR_REVIEW`는 Shadow 검토 최소 gate 통과(exit 0)다. 21 observations, 20 transitions, 168시간은 통계적 유의성이 아니라 다음 단계 전의 deterministic engineering guardrail이다. `ELIGIBLE_FOR_REVIEW`도 실제 promotion, Candidate lifecycle 변경, Shadow 생성, Telegram 승인, 주문 또는 LIVE 정책 변경을 수행하지 않는다. 명령은 DB SELECT-only이며 외부 API를 호출하지 않는다.
