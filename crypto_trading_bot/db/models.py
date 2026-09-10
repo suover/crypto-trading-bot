@@ -437,6 +437,110 @@ class ShadowPolicyEnrollment(Base):
     )
 
 
+class ShadowPolicyEvaluation(Base):
+    __tablename__ = "shadow_policy_evaluations"
+    __table_args__ = (
+        UniqueConstraint(
+            "shadow_enrollment_id",
+            "strategy_replay_snapshot_id",
+            name="uq_shadow_evaluation_enrollment_snapshot",
+        ),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_shadow_evaluation_top_n_positive"
+        ),
+        CheckConstraint(
+            "top_n_overlap_count >= 0 AND top_n_overlap_count <= effective_top_n",
+            name="ck_shadow_evaluation_overlap_count",
+        ),
+        CheckConstraint(
+            "top_n_overlap_rate >= 0 AND top_n_overlap_rate <= 1",
+            name="ck_shadow_evaluation_overlap_rate",
+        ),
+        CheckConstraint(
+            "evaluation_status IN ('SUCCESS', 'CONTEXT_MISMATCH', "
+            "'BASELINE_INTEGRITY_FAILED', 'REPLAY_INCOMPATIBLE')",
+            name="ck_shadow_evaluation_status",
+        ),
+        CheckConstraint(
+            "strategy_replay_snapshot_id > shadow_snapshot_id_watermark",
+            name="ck_shadow_evaluation_snapshot_after_watermark",
+        ),
+        CheckConstraint(
+            "snapshot_captured_at > shadow_enrolled_at",
+            name="ck_shadow_evaluation_snapshot_after_enrollment",
+        ),
+        CheckConstraint(
+            "snapshot_captured_at > shadow_captured_at_watermark",
+            name="ck_shadow_evaluation_snapshot_after_captured_watermark",
+        ),
+        Index(
+            "ix_shadow_evaluation_enrollment_captured",
+            "shadow_enrollment_id",
+            "snapshot_captured_at",
+        ),
+        Index(
+            "ix_shadow_evaluation_candidate_captured",
+            "candidate_id",
+            "snapshot_captured_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    evaluation_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id"), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    gate_decision_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    shadow_enrolled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    shadow_snapshot_id_watermark: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    shadow_captured_at_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    strategy_replay_snapshot_id: Mapped[int] = mapped_column(
+        ForeignKey("strategy_replay_snapshots.id"), nullable=False
+    )
+    pipeline_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    snapshot_captured_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    snapshot_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    snapshot_stored_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    scenario_signature: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    context_matches_enrollment: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    replay_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    baseline_matches_stored: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    baseline_top_markets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    shadow_top_markets: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    top_n_overlap_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    top_n_overlap_rate: Mapped[Decimal] = mapped_column(Numeric(38, 28), nullable=False)
+    entered_top_n: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    exited_top_n: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    rankable_candidate_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    evaluation_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    safe_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    evaluation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class StrategyReplayCandidate(Base):
     __tablename__ = "strategy_replay_candidates"
     __table_args__ = (

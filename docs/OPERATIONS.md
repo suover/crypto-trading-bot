@@ -1050,3 +1050,25 @@ python -m scripts.enroll_shadow_policy \
 ```
 
 `--apply`를 사용해도 현재 Gate 결과가 정확히 `ELIGIBLE_FOR_REVIEW`가 아니면 `GATE_NOT_ELIGIBLE`, `database_write=false`로 종료하며 INSERT하지 않습니다. Candidate당 anchor는 하나이고 정상 기존 row는 Gate 재평가 없이 `ALREADY_ENROLLED`가 됩니다. 이 명령은 Shadow runtime/evaluation을 시작하지 않고 외부 API, Telegram, 주문 또는 LIVE policy를 변경하지 않습니다. 다음 별도 단계인 Shadow Evaluation v1만 enrollment triple cutoff 이후의 snapshot을 사용해야 합니다.
+
+## Shadow Selection Evaluation v1
+
+현재 Production Candidate 1/2에는 Shadow Enrollment가 없어야 하므로 다음 preview의 정상 예상 결과는 `NO_SHADOW_ENROLLMENT`, `database_write=false`입니다.
+
+```bash
+python -m scripts.evaluate_shadow_policy_selection --candidate-id 1
+python -m scripts.evaluate_shadow_policy_selection --candidate-id 2
+```
+
+실제로 eligible enrollment가 생성된 Candidate는 먼저 preview하고, 결과와 invocation ceiling을 확인한 뒤 적용합니다.
+
+```bash
+python -m scripts.evaluate_shadow_policy_selection \
+  --candidate-id <ENROLLED_CANDIDATE_ID>
+
+python -m scripts.evaluate_shadow_policy_selection \
+  --candidate-id <ENROLLED_CANDIDATE_ID> \
+  --apply
+```
+
+`--apply`는 strict triple cutoff 이후 frozen Strategy Replay snapshot의 selection evidence만 `shadow_policy_evaluations`에 저장합니다. Broad timeline의 policy/TopN mismatch도 chronology marker로 보존합니다. 이 명령은 outcome resolver, external API, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 호출·변경하지 않습니다. 자동 worker는 evidence schema와 replay/idempotency semantics의 운영 검증 이후 별도 단계에서 검토합니다.

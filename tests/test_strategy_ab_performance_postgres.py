@@ -13,6 +13,7 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
+    ShadowPolicyEvaluation,
     StrategyReplayCandidate,
     StrategyReplayCandidateOutcome,
     StrategyReplaySnapshot,
@@ -50,6 +51,16 @@ from crypto_trading_bot.services.shadow_policy_enrollment_service import (
     CREATED as SHADOW_CREATED,
     GATE_NOT_ELIGIBLE as SHADOW_GATE_NOT_ELIGIBLE,
     ShadowPolicyEnrollmentService,
+)
+from crypto_trading_bot.services.shadow_policy_evaluation_service import (
+    BASELINE_INTEGRITY_FAILED as SHADOW_BASELINE_INTEGRITY_FAILED,
+    CONTEXT_MISMATCH as SHADOW_CONTEXT_MISMATCH,
+    NO_NEW_SHADOW_EVALUATIONS as SHADOW_NO_NEW_EVALUATIONS,
+    NO_POST_ENROLLMENT_SNAPSHOTS as SHADOW_NO_POST_SNAPSHOTS,
+    NO_SHADOW_ENROLLMENT as SHADOW_NO_ENROLLMENT,
+    REPLAY_INCOMPATIBLE as SHADOW_REPLAY_INCOMPATIBLE,
+    SUCCESS as SHADOW_EVALUATION_SUCCESS,
+    ShadowPolicyEvaluationService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -1809,3 +1820,303 @@ def test_postgresql_shadow_enrollment_concurrent_insert_has_one_winner():
             )
         )
         verify_session.commit()
+
+
+def test_postgresql_shadow_selection_requires_existing_enrollment():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-selection-no-enrollment-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate, _, _ = _register_forward_turnover_candidate(session, user)
+        before = session.scalar(
+            select(func.count()).select_from(ShadowPolicyEvaluation)
+        )
+
+        result = ShadowPolicyEvaluationService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.status == SHADOW_NO_ENROLLMENT
+        assert not result.database_write
+        assert (
+            session.scalar(select(func.count()).select_from(ShadowPolicyEvaluation))
+            == before
+        )
+        session.rollback()
+
+
+def test_postgresql_shadow_selection_no_post_snapshot_is_safe():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-selection-no-post-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2087)
+        enrollment = ShadowPolicyEnrollmentService(
+            session, now_fn=lambda: datetime(2087, 1, 20, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        assert enrollment.enrollment_status == SHADOW_CREATED
+
+        result = ShadowPolicyEvaluationService(session).evaluate(
+            candidate_id=candidate.id
+        )
+
+        assert result.status == SHADOW_NO_POST_SNAPSHOTS
+        assert not result.database_write
+        assert not session.scalars(select(ShadowPolicyEvaluation)).all()
+        session.rollback()
+
+
+def test_postgresql_shadow_selection_persists_selection_evidence_idempotently():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-selection-evidence-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2088)
+        enrollment = ShadowPolicyEnrollmentService(
+            session, now_fn=lambda: datetime(2088, 1, 20, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        assert enrollment.enrollment_status == SHADOW_CREATED
+        success_snapshot = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2088, 1, 21, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        context_break = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2088, 1, 22, tzinfo=UTC),
+            with_outcomes=False,
+            top_n=1,
+        )
+        baseline_mismatch = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2088, 1, 23, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        mismatch_candidate = session.scalar(
+            select(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id
+                == baseline_mismatch.id,
+                StrategyReplayCandidate.original_rank == 1,
+            )
+        )
+        mismatch_candidate.original_score += Decimal("0.1")
+        incompatible = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2088, 1, 24, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        incompatible_candidate = session.scalar(
+            select(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id == incompatible.id,
+                StrategyReplayCandidate.original_rank == 1,
+            )
+        )
+        incompatible_candidate.feature_data = {}
+        session.flush()
+        tracked = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in (
+                ResearchPolicyCandidate,
+                ShadowPolicyEnrollment,
+                StrategyReplaySnapshot,
+                StrategyReplayCandidate,
+                StrategyReplayCandidateOutcome,
+            )
+        }
+
+        result = ShadowPolicyEvaluationService(
+            session, now_fn=lambda: datetime(2088, 1, 25, tzinfo=UTC)
+        ).evaluate(candidate_id=candidate.id)
+
+        assert result.status == SHADOW_EVALUATION_SUCCESS
+        assert result.created_evaluation_count == 4
+        statuses = {
+            row.strategy_replay_snapshot_id: row.evaluation_status
+            for row in result.evaluations
+        }
+        assert statuses == {
+            success_snapshot.id: SHADOW_EVALUATION_SUCCESS,
+            context_break.id: SHADOW_CONTEXT_MISMATCH,
+            baseline_mismatch.id: SHADOW_BASELINE_INTEGRITY_FAILED,
+            incompatible.id: SHADOW_REPLAY_INCOMPATIBLE,
+        }
+        signatures = tuple(row.evaluation_signature for row in result.evaluations)
+        rerun = ShadowPolicyEvaluationService(session).evaluate(
+            candidate_id=candidate.id
+        )
+        assert rerun.status == SHADOW_NO_NEW_EVALUATIONS
+        assert rerun.created_evaluation_count == 0
+        assert (
+            tuple(row.evaluation_signature for row in rerun.evaluations) == signatures
+        )
+        assert {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        } == tracked
+        session.rollback()
+
+
+def test_postgresql_shadow_selection_concurrent_apply_has_one_immutable_row():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-selection-concurrent-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate = _create_complete_gate_candidate(setup_session, user, year=2089)
+        enrollment = ShadowPolicyEnrollmentService(
+            setup_session, now_fn=lambda: datetime(2089, 1, 20, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        snapshot = create_snapshot(
+            setup_session,
+            user,
+            captured_at=datetime(2089, 1, 21, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        candidate_id = candidate.id
+        enrollment_id = enrollment.enrollment.id
+        snapshot_id = snapshot.id
+        user_id = user.id
+        setup_session.commit()
+
+    barrier = Barrier(2)
+    statuses = []
+    errors = []
+
+    def evaluate_once():
+        try:
+            with SessionLocal() as session:
+                result = ShadowPolicyEvaluationService(
+                    session,
+                    now_fn=lambda: datetime(2089, 1, 22, tzinfo=UTC),
+                    after_ceiling_fn=barrier.wait,
+                ).evaluate(candidate_id=candidate_id)
+                session.commit()
+                statuses.append(result.status)
+        except Exception as error:
+            errors.append(error)
+
+    threads = (Thread(target=evaluate_once), Thread(target=evaluate_once))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert sorted(statuses) == sorted(
+        [SHADOW_EVALUATION_SUCCESS, SHADOW_NO_NEW_EVALUATIONS]
+    )
+    with SessionLocal() as verify_session:
+        rows = tuple(
+            verify_session.scalars(
+                select(ShadowPolicyEvaluation).where(
+                    ShadowPolicyEvaluation.shadow_enrollment_id == enrollment_id,
+                    ShadowPolicyEvaluation.strategy_replay_snapshot_id == snapshot_id,
+                )
+            )
+        )
+        assert len(rows) == 1
+        verify_session.execute(
+            delete(ShadowPolicyEvaluation).where(
+                ShadowPolicyEvaluation.shadow_enrollment_id == enrollment_id
+            )
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEnrollment).where(
+                ShadowPolicyEnrollment.id == enrollment_id
+            )
+        )
+        verify_session.execute(
+            delete(ResearchPolicyCandidate).where(
+                ResearchPolicyCandidate.id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplaySnapshot).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+        )
+        verify_session.commit()
+
+
+def test_postgresql_shadow_selection_ceiling_defers_concurrent_snapshot():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-selection-ceiling-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate = _create_complete_gate_candidate(setup_session, user, year=2090)
+        enrollment = ShadowPolicyEnrollmentService(
+            setup_session, now_fn=lambda: datetime(2090, 1, 20, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        first = create_snapshot(
+            setup_session,
+            user,
+            captured_at=datetime(2090, 1, 21, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        candidate_id = candidate.id
+        enrollment_id = enrollment.enrollment.id
+        first_id = first.id
+        user_id = user.id
+        setup_session.commit()
+
+    inserted_id = None
+
+    def insert_after_ceiling():
+        nonlocal inserted_id
+        with SessionLocal() as insert_session:
+            insert_user = insert_session.get(User, user_id)
+            inserted = create_snapshot(
+                insert_session,
+                insert_user,
+                captured_at=datetime(2090, 1, 22, tzinfo=UTC),
+                with_outcomes=False,
+            )
+            inserted_id = inserted.id
+            insert_session.commit()
+
+    with SessionLocal() as evaluation_session:
+        first_result = ShadowPolicyEvaluationService(
+            evaluation_session,
+            now_fn=lambda: datetime(2090, 1, 23, tzinfo=UTC),
+            after_ceiling_fn=insert_after_ceiling,
+        ).evaluate(candidate_id=candidate_id)
+        assert first_result.status == SHADOW_EVALUATION_SUCCESS
+        assert first_result.evaluation_snapshot_id_ceiling == first_id
+        assert first_result.timeline_snapshot_ids == (first_id,)
+        assert inserted_id not in first_result.timeline_snapshot_ids
+        evaluation_session.commit()
+
+    with SessionLocal() as next_session:
+        next_result = ShadowPolicyEvaluationService(
+            next_session, now_fn=lambda: datetime(2090, 1, 24, tzinfo=UTC)
+        ).evaluate(candidate_id=candidate_id)
+        assert next_result.status == SHADOW_EVALUATION_SUCCESS
+        assert next_result.created_evaluation_count == 1
+        assert inserted_id in next_result.timeline_snapshot_ids
+        next_session.commit()
+
+    with SessionLocal() as cleanup_session:
+        cleanup_session.execute(
+            delete(ShadowPolicyEvaluation).where(
+                ShadowPolicyEvaluation.shadow_enrollment_id == enrollment_id
+            )
+        )
+        cleanup_session.execute(
+            delete(ShadowPolicyEnrollment).where(
+                ShadowPolicyEnrollment.id == enrollment_id
+            )
+        )
+        cleanup_session.execute(
+            delete(ResearchPolicyCandidate).where(
+                ResearchPolicyCandidate.id == candidate_id
+            )
+        )
+        cleanup_session.execute(
+            delete(StrategyReplaySnapshot).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+        )
+        cleanup_session.commit()

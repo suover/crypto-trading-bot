@@ -1185,3 +1185,16 @@ python -m scripts.enroll_shadow_policy --candidate-id <ELIGIBLE_CANDIDATE_ID> --
 ```
 
 기본 실행은 dry-run입니다. `--apply`를 사용해도 Gate가 eligible이 아니면 INSERT하지 않습니다. Candidate 등록 이후 Shadow enrollment 이전 데이터는 Promotion Gate용 Forward evidence이며 Shadow evidence로 재사용하지 않습니다. 향후 Shadow Evaluation은 `id > shadow_snapshot_id_watermark`, `captured_at > shadow_enrolled_at`, `captured_at > shadow_captured_at_watermark`를 모두 만족해야 합니다. Enrollment는 Shadow runtime activation이 아니며 ranking, AI, Telegram, 주문 또는 LIVE 정책에 연결되지 않습니다.
+
+### Shadow Selection Evaluation v1
+
+`ShadowPolicyEvaluationService`는 유효한 Shadow Enrollment가 있는 Candidate만 평가합니다. Enrollment 이후 `snapshot.id`, `captured_at`, captured watermark에 strict `>`를 모두 적용하고, 같은 user/exchange/quote/dataset의 broad timeline을 먼저 고정합니다. Baseline policy 또는 TopN이 달라진 snapshot도 제거하지 않고 immutable `CONTEXT_MISMATCH` marker로 저장해 향후 chronology가 잘못 연결되지 않게 합니다.
+
+Candidate context의 아직 평가되지 않은 snapshot만 기존 `OfflineStrategyReplayService.replay_snapshots()`로 한 번에 replay합니다. 정상 selection, baseline integrity failure, replay incompatibility를 구분해 저장하지만 outcome, 가격, 수익률, PnL 또는 performance는 계산하지 않습니다. 기존 `StrategyReplayCandidateOutcome`은 다음 Shadow Performance v1에서 Selection evidence와 결합해 재사용합니다.
+
+```bash
+python -m scripts.evaluate_shadow_policy_selection --candidate-id 1
+python -m scripts.evaluate_shadow_policy_selection --candidate-id <ENROLLED_CANDIDATE_ID> --apply
+```
+
+기본은 DB-only dry-run입니다. `--apply`도 Shadow selection evidence만 저장하며 MarketUniverse, AI, Telegram, 주문, LIVE ranking 또는 Shadow runtime을 변경하지 않습니다. Worker, scheduler 및 Compose service는 이번 단계에 추가되지 않았습니다.

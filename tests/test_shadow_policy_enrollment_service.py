@@ -1,6 +1,5 @@
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta, timezone
-from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -21,6 +20,10 @@ from crypto_trading_bot.services.policy_promotion_gate_service import (
     PromotionGateCheckResult,
     gate_policy_signature,
 )
+from crypto_trading_bot.services.ranking_scenario_sweep_service import (
+    SCHEMA_VERSION,
+    parse_scenario_document,
+)
 from crypto_trading_bot.services.shadow_policy_enrollment_service import (
     ALREADY_ENROLLED,
     CREATED,
@@ -30,19 +33,45 @@ from crypto_trading_bot.services.shadow_policy_enrollment_service import (
     ShadowPolicyEnrollmentService,
     gate_decision_signature,
 )
+from crypto_trading_bot.services.shadow_policy_provenance import (
+    load_and_validate_shadow_policy_enrollment,
+)
 from scripts.enroll_shadow_policy import parse_arguments, report, run
 
 
 NOW = datetime(2026, 9, 10, tzinfo=UTC)
 
 
+def _scenario():
+    return parse_scenario_document(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "scenarios": [
+                {
+                    "name": "shadow-candidate",
+                    "component_weights": {
+                        "liquidity": "0.2",
+                        "trend_alignment": "0",
+                        "momentum": "0.8",
+                        "volume_confirmation": "0",
+                        "spread": "0",
+                        "volatility": "0",
+                        "drawdown": "0",
+                    },
+                }
+            ],
+        }
+    )[0]
+
+
 def _candidate(**changes):
+    scenario = _scenario()
     value = ForwardCandidateMetadata(
         candidate_id=3,
         candidate_schema_version="research-policy-candidate-v1",
         scenario_name="shadow-candidate",
-        scenario_definition_signature="scenario-signature",
-        component_weights={"liquidity": Decimal("0.2"), "momentum": Decimal("0.8")},
+        scenario_definition_signature=scenario.definition_signature,
+        component_weights=scenario.component_weights,
         user_id=7,
         exchange="UPBIT",
         quote_asset="KRW",
@@ -246,6 +275,27 @@ def test_existing_valid_enrollment_is_returned_before_gate(monkeypatch):
     session.add.assert_not_called()
 
 
+def test_shared_shadow_provenance_loader_validates_enrollment(monkeypatch):
+    first_service, _, _ = _service(monkeypatch)
+    enrollment = first_service.enroll(candidate_id=3).enrollment
+    candidate = _candidate()
+    session = MagicMock()
+    session.scalar.return_value = enrollment
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.shadow_policy_provenance.load_and_validate_forward_candidate",
+        lambda _session, _candidate_id: SimpleNamespace(metadata=candidate),
+    )
+
+    validated = load_and_validate_shadow_policy_enrollment(session, 3)
+
+    assert validated.row is enrollment
+    assert validated.candidate == candidate
+    assert (
+        validated.scenario.definition_signature
+        == candidate.scenario_definition_signature
+    )
+
+
 @pytest.mark.parametrize(
     "field,value",
     [
@@ -296,7 +346,9 @@ def test_decision_signature_is_deterministic_timezone_normalized_and_sensitive()
         ) != gate_decision_signature(gate)
     reordered_candidate = replace(
         gate.candidate,
-        component_weights={"momentum": Decimal("0.8"), "liquidity": Decimal("0.2")},
+        component_weights=dict(
+            reversed(tuple(gate.candidate.component_weights.items()))
+        ),
     )
     assert gate_decision_signature(
         replace(gate, candidate=reordered_candidate)

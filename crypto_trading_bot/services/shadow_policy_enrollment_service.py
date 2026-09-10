@@ -259,6 +259,56 @@ def gate_decision_signature(gate: PolicyPromotionGateResult) -> str:
     )
 
 
+def validate_stored_shadow_policy_enrollment(row, candidate) -> None:
+    """Validate immutable enrollment provenance without evaluating the Gate again."""
+    expected_candidate = _canonicalize(_candidate_definition(candidate))
+    stored_candidate = {key: getattr(row, key) for key in expected_candidate}
+    policy_definition = gate_policy_definition()
+    if (
+        row.enrollment_schema_version != ENROLLMENT_SCHEMA_VERSION
+        or _canonicalize(stored_candidate) != expected_candidate
+        or row.gate_result_type != GATE_RESULT_TYPE
+        or row.gate_policy_schema_version != POLICY_PROMOTION_GATE_V1.schema_version
+        or row.gate_policy_signature != gate_policy_signature(POLICY_PROMOTION_GATE_V1)
+        or row.gate_policy_definition != policy_definition
+        or row.gate_status != ELIGIBLE_FOR_REVIEW
+        or not _valid_stored_checks(row.gate_checks)
+        or not _valid_evidence(row.gate_evidence_provenance)
+    ):
+        raise ShadowPolicyEnrollmentError(
+            "stored shadow enrollment provenance is invalid"
+        )
+    payload = {
+        "candidate": stored_candidate,
+        "gate_result_type": row.gate_result_type,
+        "gate_policy_schema_version": row.gate_policy_schema_version,
+        "gate_policy_signature": row.gate_policy_signature,
+        "gate_policy_definition": row.gate_policy_definition,
+        "gate_status": row.gate_status,
+        "gate_evaluated_at": row.gate_evaluated_at,
+        "gate_forward_snapshot_id_ceiling": row.gate_forward_snapshot_id_ceiling,
+        "gate_checks": row.gate_checks,
+        "gate_evidence_provenance": row.gate_evidence_provenance,
+    }
+    if row.gate_decision_signature != _decision_signature(payload):
+        raise ShadowPolicyEnrollmentError(
+            "stored gate decision signature does not verify"
+        )
+    if (
+        _utc(row.shadow_enrolled_at, "shadow enrolled_at")
+        < _utc(row.gate_evaluated_at, "gate evaluated_at")
+        or row.gate_forward_snapshot_id_ceiling
+        < candidate.registration_snapshot_id_watermark
+        or row.shadow_snapshot_id_watermark < row.gate_forward_snapshot_id_ceiling
+        or _utc(row.shadow_captured_at_watermark, "shadow captured watermark")
+        < _utc(
+            candidate.registration_captured_at_watermark,
+            "candidate captured watermark",
+        )
+    ):
+        raise ShadowPolicyEnrollmentError("stored shadow anchor is invalid")
+
+
 class ShadowPolicyEnrollmentService:
     def __init__(
         self,
@@ -496,53 +546,7 @@ class ShadowPolicyEnrollmentService:
         return id_watermark, _utc(captured_watermark, "shadow captured_at watermark")
 
     def _validate_existing(self, row, candidate):
-        expected_candidate = _canonicalize(_candidate_definition(candidate))
-        stored_candidate = {key: getattr(row, key) for key in expected_candidate}
-        policy_definition = gate_policy_definition()
-        if (
-            row.enrollment_schema_version != ENROLLMENT_SCHEMA_VERSION
-            or _canonicalize(stored_candidate) != expected_candidate
-            or row.gate_result_type != GATE_RESULT_TYPE
-            or row.gate_policy_schema_version != POLICY_PROMOTION_GATE_V1.schema_version
-            or row.gate_policy_signature
-            != gate_policy_signature(POLICY_PROMOTION_GATE_V1)
-            or row.gate_policy_definition != policy_definition
-            or row.gate_status != ELIGIBLE_FOR_REVIEW
-            or not _valid_stored_checks(row.gate_checks)
-            or not _valid_evidence(row.gate_evidence_provenance)
-        ):
-            raise ShadowPolicyEnrollmentError(
-                "stored shadow enrollment provenance is invalid"
-            )
-        payload = {
-            "candidate": stored_candidate,
-            "gate_result_type": row.gate_result_type,
-            "gate_policy_schema_version": row.gate_policy_schema_version,
-            "gate_policy_signature": row.gate_policy_signature,
-            "gate_policy_definition": row.gate_policy_definition,
-            "gate_status": row.gate_status,
-            "gate_evaluated_at": row.gate_evaluated_at,
-            "gate_forward_snapshot_id_ceiling": row.gate_forward_snapshot_id_ceiling,
-            "gate_checks": row.gate_checks,
-            "gate_evidence_provenance": row.gate_evidence_provenance,
-        }
-        if row.gate_decision_signature != _decision_signature(payload):
-            raise ShadowPolicyEnrollmentError(
-                "stored gate decision signature does not verify"
-            )
-        if (
-            _utc(row.shadow_enrolled_at, "shadow enrolled_at")
-            < _utc(row.gate_evaluated_at, "gate evaluated_at")
-            or row.gate_forward_snapshot_id_ceiling
-            < candidate.registration_snapshot_id_watermark
-            or row.shadow_snapshot_id_watermark < row.gate_forward_snapshot_id_ceiling
-            or _utc(row.shadow_captured_at_watermark, "shadow captured watermark")
-            < _utc(
-                candidate.registration_captured_at_watermark,
-                "candidate captured watermark",
-            )
-        ):
-            raise ShadowPolicyEnrollmentError("stored shadow anchor is invalid")
+        validate_stored_shadow_policy_enrollment(row, candidate)
 
     @staticmethod
     def _result(
@@ -590,4 +594,5 @@ __all__ = [
     "ShadowPolicyEnrollmentService",
     "gate_decision_signature",
     "gate_policy_definition",
+    "validate_stored_shadow_policy_enrollment",
 ]
