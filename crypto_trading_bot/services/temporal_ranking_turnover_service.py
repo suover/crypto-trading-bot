@@ -125,6 +125,76 @@ class _InvalidTurnoverData(Exception):
     pass
 
 
+def build_ranking_selection_transition(
+    *,
+    previous_snapshot_id: int,
+    current_snapshot_id: int,
+    previous_captured_at: datetime,
+    current_captured_at: datetime,
+    effective_top_n: int,
+    previous_top_markets: tuple[str, ...],
+    current_top_markets: tuple[str, ...],
+) -> RankingSelectionTransition:
+    """Build the canonical equal-weight TopN membership transition."""
+    for values in (previous_top_markets, current_top_markets):
+        TemporalRankingTurnoverService._validate_top_markets(values, effective_top_n)
+    current_set = set(current_top_markets)
+    previous_set = set(previous_top_markets)
+    retained = tuple(market for market in previous_top_markets if market in current_set)
+    exited = tuple(
+        market for market in previous_top_markets if market not in current_set
+    )
+    entered = tuple(
+        market for market in current_top_markets if market not in previous_set
+    )
+    if len(entered) != len(exited):
+        raise _InvalidTurnoverData("Top-N entered/exited counts are inconsistent")
+    retained_count = len(retained)
+    entered_count = len(entered)
+    denominator = Decimal(effective_top_n)
+    return RankingSelectionTransition(
+        previous_snapshot_id=previous_snapshot_id,
+        current_snapshot_id=current_snapshot_id,
+        previous_captured_at=previous_captured_at.astimezone(UTC),
+        current_captured_at=current_captured_at.astimezone(UTC),
+        effective_top_n=effective_top_n,
+        previous_top_markets=previous_top_markets,
+        current_top_markets=current_top_markets,
+        retained_markets=retained,
+        entered_markets=entered,
+        exited_markets=exited,
+        retained_count=retained_count,
+        entered_count=entered_count,
+        exited_count=len(exited),
+        retention_rate=Decimal(retained_count) / denominator,
+        replacement_rate=Decimal(entered_count) / denominator,
+    )
+
+
+def summarize_ranking_selection_transitions(
+    transitions: tuple[RankingSelectionTransition, ...],
+) -> RankingSelectionTurnoverSummary:
+    """Summarize transitions using the canonical turnover statistics."""
+    replacements = tuple(item.replacement_rate for item in transitions)
+    retentions = tuple(item.retention_rate for item in transitions)
+    count = len(transitions)
+    return RankingSelectionTurnoverSummary(
+        transition_count=count,
+        total_entered_count=sum(item.entered_count for item in transitions),
+        total_exited_count=sum(item.exited_count for item in transitions),
+        mean_replacement_rate=(
+            sum(replacements, Decimal("0")) / count if count else None
+        ),
+        median_replacement_rate=median(replacements) if count else None,
+        min_replacement_rate=min(replacements) if count else None,
+        max_replacement_rate=max(replacements) if count else None,
+        mean_retention_rate=sum(retentions, Decimal("0")) / count if count else None,
+        median_retention_rate=median(retentions) if count else None,
+        zero_replacement_transition_count=sum(value == 0 for value in replacements),
+        full_replacement_transition_count=sum(value == 1 for value in replacements),
+    )
+
+
 class TemporalRankingTurnoverService:
     """Describe chronological Top-N membership changes from persisted replay data."""
 
@@ -531,23 +601,7 @@ class TemporalRankingTurnoverService:
             if use_baseline
             else current.scenario_top_markets
         )
-        for values in (previous_markets, current_markets):
-            TemporalRankingTurnoverService._validate_top_markets(values, top_n)
-        current_set = set(current_markets)
-        previous_set = set(previous_markets)
-        retained = tuple(market for market in previous_markets if market in current_set)
-        exited = tuple(
-            market for market in previous_markets if market not in current_set
-        )
-        entered = tuple(
-            market for market in current_markets if market not in previous_set
-        )
-        if len(entered) != len(exited):
-            raise _InvalidTurnoverData("Top-N entered/exited counts are inconsistent")
-        retained_count = len(retained)
-        entered_count = len(entered)
-        denominator = Decimal(top_n)
-        return RankingSelectionTransition(
+        return build_ranking_selection_transition(
             previous_snapshot_id=previous.snapshot_id,
             current_snapshot_id=current.snapshot_id,
             previous_captured_at=previous.captured_at.astimezone(UTC),
@@ -555,40 +609,13 @@ class TemporalRankingTurnoverService:
             effective_top_n=top_n,
             previous_top_markets=previous_markets,
             current_top_markets=current_markets,
-            retained_markets=retained,
-            entered_markets=entered,
-            exited_markets=exited,
-            retained_count=retained_count,
-            entered_count=entered_count,
-            exited_count=len(exited),
-            retention_rate=Decimal(retained_count) / denominator,
-            replacement_rate=Decimal(entered_count) / denominator,
         )
 
     @staticmethod
     def _summary(
         transitions: tuple[RankingSelectionTransition, ...],
     ) -> RankingSelectionTurnoverSummary:
-        replacements = tuple(item.replacement_rate for item in transitions)
-        retentions = tuple(item.retention_rate for item in transitions)
-        count = len(transitions)
-        return RankingSelectionTurnoverSummary(
-            transition_count=count,
-            total_entered_count=sum(item.entered_count for item in transitions),
-            total_exited_count=sum(item.exited_count for item in transitions),
-            mean_replacement_rate=(
-                sum(replacements, Decimal("0")) / count if count else None
-            ),
-            median_replacement_rate=median(replacements) if count else None,
-            min_replacement_rate=min(replacements) if count else None,
-            max_replacement_rate=max(replacements) if count else None,
-            mean_retention_rate=(
-                sum(retentions, Decimal("0")) / count if count else None
-            ),
-            median_retention_rate=median(retentions) if count else None,
-            zero_replacement_transition_count=sum(value == 0 for value in replacements),
-            full_replacement_transition_count=sum(value == 1 for value in replacements),
-        )
+        return summarize_ranking_selection_transitions(transitions)
 
     @classmethod
     def _scenario_summary(

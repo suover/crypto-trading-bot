@@ -1209,3 +1209,22 @@ SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS=300
 ```
 
 기본값은 비활성입니다. 새 worker/container/Compose service, 자동 Enrollment, Promotion Gate 실행 또는 LIVE 정책 변경은 없습니다. 수동 CLI와 worker가 경쟁해도 기존 immutable unique constraint와 service의 concurrent conflict 처리가 중복 row를 막습니다.
+
+### Shadow Performance Evidence v1
+
+`ShadowPolicyPerformanceService`는 저장된 immutable `ShadowPolicyEvaluation.baseline_top_markets`와 `shadow_top_markets`를 selection source of truth로 사용하고, 기존 `StrategyReplayCandidateOutcome`과 결합해 Gross, Turnover, Cost-adjusted evidence를 조회 시점에 계산합니다. Offline Replay로 selection을 다시 계산하지 않으며 derived performance row도 저장하지 않습니다.
+
+한 invocation에서 timezone-aware `performance_evidence_as_of`와 as-of 조건을 만족하는 최대 evaluation snapshot ID를 각각 한 번 고정합니다. Gross, Turnover, Cost-adjusted는 같은 broad timeline과 ceiling을 공유하고 outcome에도 같은 as-of를 적용합니다. Gross는 `SUCCESS` selection만 사용하지만 `CONTEXT_MISMATCH`, `BASELINE_INTEGRITY_FAILED`, `REPLAY_INCOMPATIBLE` row는 chronology에 남아 인접한 두 `SUCCESS` 사이를 연결하지 못하게 합니다. 첫 Shadow selection과 continuity break 직후 첫 `SUCCESS`에는 이전 turnover나 execution cost를 붙이지 않습니다.
+
+Turnover와 equal-weight selection-change cost는 기존 canonical 계산을 재사용합니다. 이 evidence는 sample sufficiency, 통계적 유의성, Shadow Review 또는 Promotion을 판단하지 않으며 DB write, worker, 외부 API, Telegram, 주문, ranking/LIVE policy 변경이 없습니다.
+
+```bash
+python -m scripts.evaluate_shadow_policy_performance \
+  --candidate-id <ENROLLED_CANDIDATE_ID> \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```

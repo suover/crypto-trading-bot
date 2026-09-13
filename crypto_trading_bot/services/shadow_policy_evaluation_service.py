@@ -606,10 +606,11 @@ class ShadowPolicyEvaluationService:
                 "Offline Replay selection metrics are invalid"
             )
 
-    def _validate_evaluation(self, row, validated):
+    @classmethod
+    def _validate_evaluation(cls, row, validated):
         if evaluation_signature(row) != row.evaluation_signature:
             raise ShadowPolicyEvaluationError("evaluation signature does not verify")
-        self._validate_common_row(row, validated)
+        cls._validate_common_row(row, validated)
         if (
             row.evaluation_status
             not in {
@@ -656,7 +657,7 @@ class ShadowPolicyEvaluationService:
             )
             if row.replay_status != SUCCESS or not row.baseline_matches_stored:
                 raise ShadowPolicyEvaluationError("SUCCESS evaluation is inconsistent")
-            self._validate_selection_metrics(synthetic, row.effective_top_n)
+            cls._validate_selection_metrics(synthetic, row.effective_top_n)
         elif row.evaluation_status == CONTEXT_MISMATCH:
             if (
                 row.context_matches_enrollment
@@ -711,7 +712,7 @@ class ShadowPolicyEvaluationService:
                 candidate_results=(),
                 mismatch_diagnostics=(),
             )
-            self._validate_selection_metrics(synthetic, row.effective_top_n)
+            cls._validate_selection_metrics(synthetic, row.effective_top_n)
         elif (
             not row.context_matches_enrollment
             or row.replay_status in {SUCCESS, "BASELINE_MISMATCH", NOT_REPLAYED}
@@ -758,7 +759,8 @@ class ShadowPolicyEvaluationService:
                 "evaluation enrollment lineage is invalid"
             )
 
-    def _validate_existing(self, row, snapshot, context, validated):
+    @classmethod
+    def _validate_existing(cls, row, snapshot, context, validated):
         if (
             row.strategy_replay_snapshot_id != snapshot.id
             or row.pipeline_run_id != snapshot.pipeline_run_id
@@ -772,7 +774,7 @@ class ShadowPolicyEvaluationService:
             raise ShadowPolicyEvaluationError(
                 "stored evaluation snapshot lineage is invalid"
             )
-        self._validate_evaluation(row, validated)
+        cls._validate_evaluation(row, validated)
 
     @staticmethod
     def _result(
@@ -830,6 +832,13 @@ class ShadowPolicyEvaluationService:
         )
 
 
+def validate_stored_shadow_policy_evaluation(row, snapshot, validated):
+    """Validate immutable evaluation provenance for downstream Shadow evidence."""
+    context = ShadowPolicyEvaluationService._validate_snapshot(snapshot, validated)
+    ShadowPolicyEvaluationService._validate_existing(row, snapshot, context, validated)
+    return context
+
+
 __all__ = [
     "BASELINE_INTEGRITY_FAILED",
     "CONTEXT_MISMATCH",
@@ -845,4 +854,5 @@ __all__ = [
     "ShadowPolicyEvaluationResult",
     "ShadowPolicyEvaluationService",
     "evaluation_signature",
+    "validate_stored_shadow_policy_evaluation",
 ]

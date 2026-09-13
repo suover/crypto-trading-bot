@@ -97,6 +97,33 @@ class StrategyABBatchPerformanceResult:
 
 
 @dataclass(frozen=True)
+class StoredSelectionPerformanceInput:
+    snapshot_id: int
+    pipeline_run_id: str
+    captured_at: datetime
+    baseline_policy_signature: str
+    scenario_signature: str
+    replay_status: str
+    replay_safe_reason: str | None
+    baseline_matches_stored: bool
+    effective_top_n: int
+    baseline_top_markets: tuple[str, ...]
+    scenario_top_markets: tuple[str, ...]
+    top_n_overlap_count: int
+    top_n_overlap_rate: Decimal
+    entered_top_n: tuple[str, ...]
+    exited_top_n: tuple[str, ...]
+
+    @property
+    def status(self) -> str:
+        return self.replay_status
+
+    @property
+    def safe_reason(self) -> str | None:
+        return self.replay_safe_reason
+
+
+@dataclass(frozen=True)
 class _SelectionMetrics:
     mean_return: Decimal
     median_return: Decimal
@@ -222,6 +249,83 @@ class StrategyABPerformanceService:
             raise ReplayInputError("requested snapshot count must be >= 0")
         return self._summarize(requested_count, tuple(results))
 
+    def evaluate_stored_selections(
+        self,
+        selections: Iterable[StoredSelectionPerformanceInput],
+        *,
+        horizon_minutes: int,
+        outcome_as_of: datetime,
+    ) -> tuple[StrategyABSnapshotPerformanceResult, ...]:
+        """Evaluate immutable stored selections without invoking Offline Replay."""
+        self._validate_horizon(horizon_minutes)
+        as_of = self._validate_outcome_as_of(outcome_as_of)
+        values = tuple(selections)
+        seen: set[int] = set()
+        for value in values:
+            self._validate_stored_selection(value)
+            if value.snapshot_id in seen:
+                raise ReplayInputError("stored selection snapshot IDs must be unique")
+            seen.add(value.snapshot_id)
+        outcome_map = self._load_outcome_map(
+            tuple(value.snapshot_id for value in values),
+            horizon_minutes=horizon_minutes,
+            outcome_as_of=as_of,
+        )
+        return tuple(
+            self._evaluate_selection(value, horizon_minutes, outcome_map)
+            for value in values
+        )
+
+    @staticmethod
+    def _validate_stored_selection(value: StoredSelectionPerformanceInput) -> None:
+        baseline = value.baseline_top_markets
+        scenario = value.scenario_top_markets
+        baseline_set = set(baseline)
+        scenario_set = set(scenario)
+        overlap = baseline_set & scenario_set
+        expected_entered = tuple(sorted(scenario_set - baseline_set))
+        expected_exited = tuple(sorted(baseline_set - scenario_set))
+        expected_rate = (
+            Decimal(len(overlap)) / Decimal(value.effective_top_n)
+            if isinstance(value.effective_top_n, int)
+            and not isinstance(value.effective_top_n, bool)
+            and value.effective_top_n > 0
+            else None
+        )
+        if (
+            isinstance(value.snapshot_id, bool)
+            or not isinstance(value.snapshot_id, int)
+            or value.snapshot_id < 1
+            or not isinstance(value.pipeline_run_id, str)
+            or not value.pipeline_run_id
+            or not isinstance(value.captured_at, datetime)
+            or value.captured_at.tzinfo is None
+            or not isinstance(value.baseline_policy_signature, str)
+            or not value.baseline_policy_signature
+            or not isinstance(value.scenario_signature, str)
+            or not value.scenario_signature
+            or value.replay_status != SUCCESS
+            or value.baseline_matches_stored is not True
+            or isinstance(value.effective_top_n, bool)
+            or not isinstance(value.effective_top_n, int)
+            or value.effective_top_n < 1
+            or len(value.baseline_top_markets) != value.effective_top_n
+            or len(value.scenario_top_markets) != value.effective_top_n
+            or len(set(value.baseline_top_markets)) != value.effective_top_n
+            or len(set(value.scenario_top_markets)) != value.effective_top_n
+            or any(not isinstance(market, str) or not market for market in baseline)
+            or any(not isinstance(market, str) or not market for market in scenario)
+            or isinstance(value.top_n_overlap_count, bool)
+            or not isinstance(value.top_n_overlap_count, int)
+            or not isinstance(value.top_n_overlap_rate, Decimal)
+            or not value.top_n_overlap_rate.is_finite()
+            or value.top_n_overlap_count != len(overlap)
+            or value.top_n_overlap_rate != expected_rate
+            or value.entered_top_n != expected_entered
+            or value.exited_top_n != expected_exited
+        ):
+            raise ReplayInputError("stored selection identity or TopN is invalid")
+
     @staticmethod
     def _validate_horizon(horizon_minutes: int) -> None:
         if (
@@ -328,6 +432,15 @@ class StrategyABPerformanceService:
                 status=REPLAY_INCOMPATIBLE,
                 safe_reason="baseline and scenario TopN counts do not match",
             )
+
+        return self._evaluate_selection(replay, horizon_minutes, outcome_map)
+
+    def _evaluate_selection(
+        self,
+        replay: SnapshotReplayResult | StoredSelectionPerformanceInput,
+        horizon_minutes: int,
+        outcome_map: _OutcomeMap,
+    ) -> StrategyABSnapshotPerformanceResult:
 
         selected_markets = set(replay.baseline_top_markets) | set(
             replay.scenario_top_markets

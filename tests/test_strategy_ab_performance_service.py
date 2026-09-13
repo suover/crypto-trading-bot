@@ -17,6 +17,7 @@ from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
     REPLAY_INCOMPATIBLE,
     SUCCESS,
+    StoredSelectionPerformanceInput,
     StrategyABPerformanceService,
 )
 
@@ -103,6 +104,75 @@ def evaluate(replay=None, outcomes=None, *, horizon=60):
     return StrategyABPerformanceService(MagicMock())._evaluate_replay(
         replay or replay_result(), horizon, outcomes or {}
     )
+
+
+def stored_selection(**changes):
+    replay = replay_result()
+    values = {
+        "snapshot_id": replay.snapshot_id,
+        "pipeline_run_id": replay.pipeline_run_id,
+        "captured_at": replay.captured_at,
+        "baseline_policy_signature": replay.baseline_policy_signature,
+        "scenario_signature": replay.scenario_signature,
+        "replay_status": replay.status,
+        "replay_safe_reason": replay.safe_reason,
+        "baseline_matches_stored": replay.baseline_matches_stored,
+        "effective_top_n": replay.effective_top_n,
+        "baseline_top_markets": replay.baseline_top_markets,
+        "scenario_top_markets": replay.scenario_top_markets,
+        "top_n_overlap_count": replay.top_n_overlap_count,
+        "top_n_overlap_rate": replay.top_n_overlap_rate,
+        "entered_top_n": replay.entered_top_n,
+        "exited_top_n": replay.exited_top_n,
+    }
+    values.update(changes)
+    return StoredSelectionPerformanceInput(**values)
+
+
+def test_stored_selection_path_reuses_outcome_evaluator_without_replay() -> None:
+    replay_service = MagicMock()
+    service = StrategyABPerformanceService(MagicMock(), replay_service=replay_service)
+    service._load_outcome_map = MagicMock(
+        return_value=outcome_map(
+            {"KRW-A": Decimal("10"), "KRW-B": Decimal("-10"), "KRW-C": "20"}
+        )
+    )
+
+    results = service.evaluate_stored_selections(
+        (stored_selection(),),
+        horizon_minutes=60,
+        outcome_as_of=datetime(2026, 9, 2, tzinfo=UTC),
+    )
+
+    assert len(results) == 1
+    assert results[0].status == SUCCESS
+    assert results[0].baseline_top_markets == ("KRW-A", "KRW-B")
+    assert results[0].scenario_top_markets == ("KRW-A", "KRW-C")
+    assert results[0].mean_return_delta == Decimal("15")
+    replay_service.replay_snapshot.assert_not_called()
+    replay_service.replay_snapshots.assert_not_called()
+    replay_service.replay_latest.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"baseline_top_markets": ("KRW-A", "KRW-A")},
+        {"scenario_top_markets": ("KRW-A",)},
+        {"baseline_matches_stored": False},
+        {"top_n_overlap_count": 2},
+        {"top_n_overlap_rate": Decimal("NaN")},
+        {"entered_top_n": ("KRW-B",)},
+        {"exited_top_n": ("KRW-C",)},
+    ],
+)
+def test_stored_selection_path_rejects_invalid_identity(changes) -> None:
+    with pytest.raises(ReplayInputError, match="stored selection"):
+        StrategyABPerformanceService(MagicMock()).evaluate_stored_selections(
+            (stored_selection(**changes),),
+            horizon_minutes=60,
+            outcome_as_of=datetime(2026, 9, 2, tzinfo=UTC),
+        )
 
 
 def test_outcome_as_of_is_timezone_aware_and_kept_in_outer_join_on_clause() -> None:

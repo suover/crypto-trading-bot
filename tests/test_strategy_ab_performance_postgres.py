@@ -12,12 +12,14 @@ from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.db.database import SessionLocal, engine
 from crypto_trading_bot.db.models import (
     AnalysisRun,
+    OrderLog,
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
     ShadowPolicyEvaluation,
     StrategyReplayCandidate,
     StrategyReplayCandidateOutcome,
     StrategyReplaySnapshot,
+    TradeRecommendation,
     User,
 )
 from crypto_trading_bot.services.forward_candidate_gross_evidence_service import (
@@ -62,6 +64,12 @@ from crypto_trading_bot.services.shadow_policy_evaluation_service import (
     REPLAY_INCOMPATIBLE as SHADOW_REPLAY_INCOMPATIBLE,
     SUCCESS as SHADOW_EVALUATION_SUCCESS,
     ShadowPolicyEvaluationService,
+)
+from crypto_trading_bot.services.shadow_policy_performance_service import (
+    NO_SHADOW_ENROLLMENT as SHADOW_PERFORMANCE_NO_ENROLLMENT,
+    NO_SHADOW_EVALUATIONS as SHADOW_PERFORMANCE_NO_EVALUATIONS,
+    SUCCESS as SHADOW_PERFORMANCE_SUCCESS,
+    ShadowPolicyPerformanceService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -1960,6 +1968,286 @@ def test_postgresql_shadow_selection_persists_selection_evidence_idempotently():
             for model in tracked
         } == tracked
         session.rollback()
+
+
+def test_postgresql_shadow_performance_uses_stored_evidence_read_only_without_replay():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-performance-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2094)
+        no_enrollment = ShadowPolicyPerformanceService(
+            session, now_fn=lambda: datetime(2094, 2, 1, tzinfo=UTC)
+        ).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60,),
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+        assert no_enrollment.status == SHADOW_PERFORMANCE_NO_ENROLLMENT
+
+        enrollment = ShadowPolicyEnrollmentService(
+            session, now_fn=lambda: datetime(2094, 2, 1, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        assert enrollment.enrollment_status == SHADOW_CREATED
+        no_evaluations = ShadowPolicyPerformanceService(
+            session, now_fn=lambda: datetime(2094, 2, 2, tzinfo=UTC)
+        ).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60,),
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+        assert no_evaluations.status == SHADOW_PERFORMANCE_NO_EVALUATIONS
+
+        first = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 3, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        context_break = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 4, tzinfo=UTC),
+            with_outcomes=False,
+            top_n=1,
+        )
+        baseline_break = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 5, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        baseline_break_candidate = session.scalar(
+            select(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id
+                == baseline_break.id,
+                StrategyReplayCandidate.original_rank == 1,
+            )
+        )
+        baseline_break_candidate.original_score += Decimal("0.1")
+        replay_break = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 6, tzinfo=UTC),
+            with_outcomes=False,
+        )
+        replay_break_candidate = session.scalar(
+            select(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id == replay_break.id,
+                StrategyReplayCandidate.original_rank == 1,
+            )
+        )
+        replay_break_candidate.feature_data = {}
+        third = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 7, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        fourth = create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2094, 2, 8, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        for snapshot in (first, third, fourth):
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+        selection = ShadowPolicyEvaluationService(
+            session, now_fn=lambda: datetime(2094, 2, 9, tzinfo=UTC)
+        ).evaluate(candidate_id=candidate.id)
+        assert selection.status == SHADOW_EVALUATION_SUCCESS
+        tracked = (
+            ResearchPolicyCandidate,
+            ShadowPolicyEnrollment,
+            ShadowPolicyEvaluation,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+            TradeRecommendation,
+            OrderLog,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        replay_service = MagicMock()
+        performance = ShadowPolicyPerformanceService(
+            session,
+            performance_service=StrategyABPerformanceService(
+                session, replay_service=replay_service
+            ),
+            now_fn=lambda: datetime(2094, 2, 10, tzinfo=UTC),
+        ).evaluate(
+            candidate_id=candidate.id,
+            horizons=(60, 240, 1440),
+            fee_rate="0.0005",
+            spread_cost_rate="0.0005",
+            slippage_rate="0.001",
+        )
+
+        assert performance.status == SHADOW_PERFORMANCE_SUCCESS, performance.safe_reason
+        assert performance.timeline_snapshot_ids == (
+            first.id,
+            context_break.id,
+            baseline_break.id,
+            replay_break.id,
+            third.id,
+            fourth.id,
+        )
+        assert performance.successful_selection_snapshot_ids == (
+            first.id,
+            third.id,
+            fourth.id,
+        )
+        assert all(
+            horizon.successful_comparable_snapshot_count == 3
+            for horizon in performance.gross
+        )
+        assert performance.context_mismatch_count == 1
+        assert performance.baseline_integrity_failed_count == 1
+        assert performance.replay_incompatible_count == 1
+        assert performance.turnover.transition_count == 1
+        assert performance.turnover.transitions[0].previous_snapshot_id == third.id
+        assert performance.turnover.transitions[0].current_snapshot_id == fourth.id
+        assert performance.turnover.continuity_break_count == 4
+        assert all(
+            horizon.cost_adjustable_shadow_snapshot_ids == (fourth.id,)
+            for horizon in performance.cost_adjusted
+        )
+        assert performance.offline_replay_performed is False
+        assert performance.database_write is False
+        replay_service.replay_snapshot.assert_not_called()
+        replay_service.replay_snapshots.assert_not_called()
+        replay_service.replay_latest.assert_not_called()
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked
+        }
+        assert after == before
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_shadow_performance_ceiling_defers_new_evaluation():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-performance-ceiling-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate = _create_complete_gate_candidate(setup_session, user, year=2095)
+        enrollment = ShadowPolicyEnrollmentService(
+            setup_session, now_fn=lambda: datetime(2095, 2, 1, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        assert enrollment.enrollment_status == SHADOW_CREATED
+        first = create_snapshot(
+            setup_session,
+            user,
+            captured_at=datetime(2095, 2, 2, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        second = create_snapshot(
+            setup_session,
+            user,
+            captured_at=datetime(2095, 2, 3, tzinfo=UTC),
+            with_outcomes=True,
+        )
+        selection = ShadowPolicyEvaluationService(
+            setup_session, now_fn=lambda: datetime(2095, 2, 4, tzinfo=UTC)
+        ).evaluate(candidate_id=candidate.id)
+        assert selection.created_evaluation_count == 2
+        candidate_id = candidate.id
+        enrollment_id = enrollment.enrollment.id
+        user_id = user.id
+        original_ceiling = second.id
+        first_id = first.id
+        setup_session.commit()
+
+    inserted_id = None
+
+    def insert_after_ceiling():
+        nonlocal inserted_id
+        with SessionLocal() as insert_session:
+            insert_user = insert_session.get(User, user_id)
+            inserted = create_snapshot(
+                insert_session,
+                insert_user,
+                captured_at=datetime(2095, 2, 5, tzinfo=UTC),
+                with_outcomes=True,
+            )
+            evaluation = ShadowPolicyEvaluationService(
+                insert_session, now_fn=lambda: datetime(2095, 2, 6, tzinfo=UTC)
+            ).evaluate(candidate_id=candidate_id)
+            assert evaluation.created_evaluation_count == 1
+            inserted_id = inserted.id
+            insert_session.commit()
+
+    try:
+        with SessionLocal() as performance_session:
+            current = ShadowPolicyPerformanceService(
+                performance_session,
+                now_fn=lambda: datetime(2095, 2, 7, tzinfo=UTC),
+                after_ceiling_fn=insert_after_ceiling,
+            ).evaluate(
+                candidate_id=candidate_id,
+                horizons=(60,),
+                fee_rate="0",
+                spread_cost_rate="0",
+                slippage_rate="0",
+            )
+            assert current.status == SHADOW_PERFORMANCE_SUCCESS
+            assert current.shadow_evaluation_snapshot_id_ceiling == original_ceiling
+            assert current.timeline_snapshot_ids == (first_id, original_ceiling)
+            assert inserted_id not in current.timeline_snapshot_ids
+
+            following = ShadowPolicyPerformanceService(
+                performance_session,
+                now_fn=lambda: datetime(2095, 2, 7, tzinfo=UTC),
+            ).evaluate(
+                candidate_id=candidate_id,
+                horizons=(60,),
+                fee_rate="0",
+                spread_cost_rate="0",
+                slippage_rate="0",
+            )
+            assert following.status == SHADOW_PERFORMANCE_SUCCESS
+            assert following.shadow_evaluation_snapshot_id_ceiling == inserted_id
+            assert following.timeline_snapshot_ids == (
+                first_id,
+                original_ceiling,
+                inserted_id,
+            )
+            performance_session.rollback()
+    finally:
+        with SessionLocal() as cleanup_session:
+            cleanup_session.execute(
+                delete(ShadowPolicyEvaluation).where(
+                    ShadowPolicyEvaluation.shadow_enrollment_id == enrollment_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyEnrollment).where(
+                    ShadowPolicyEnrollment.id == enrollment_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ResearchPolicyCandidate).where(
+                    ResearchPolicyCandidate.id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(StrategyReplaySnapshot).where(
+                    StrategyReplaySnapshot.user_id == user_id
+                )
+            )
+            cleanup_session.execute(
+                delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+            )
+            cleanup_session.execute(delete(User).where(User.id == user_id))
+            cleanup_session.commit()
 
 
 def test_postgresql_shadow_automatic_cycle_commits_and_is_idempotent():

@@ -1086,6 +1086,23 @@ SHADOW_SELECTION_EVALUATION_INTERVAL_SECONDS=300
 
 현재 Production Candidate 1/2처럼 Shadow Enrollment가 없다면 automation이 켜져 있어도 `enrollment_count=0`, `created_evaluation_count=0`이 정상입니다. Shadow만 독립 점검할 때는 위 수동 `evaluate_shadow_policy_selection` CLI를 사용합니다.
 
+## Shadow Performance Evidence v1
+
+저장된 Shadow selection과 기존 Candidate Outcome만 사용하는 read-only 진단입니다. invocation 시작 시 stable UTC as-of와 Shadow evaluation snapshot ceiling을 한 번씩 고정하며, Offline Replay, outcome 생성, price resolver, 외부 API, DB write, Shadow Review/Promotion 또는 LIVE 변경을 수행하지 않습니다.
+
+```bash
+python -m scripts.evaluate_shadow_policy_performance \
+  --candidate-id <ID> \
+  --horizon 60 \
+  --horizon 240 \
+  --horizon 1440 \
+  --fee-rate 0.0005 \
+  --spread-cost-rate 0.0005 \
+  --slippage-rate 0.001
+```
+
+Gross는 저장된 `SUCCESS` evaluation만 비교합니다. Turnover와 비용은 broad timeline의 실제 인접 row가 모두 `SUCCESS`일 때만 계산하므로 context/baseline/replay break를 건너뛰지 않습니다. Horizon outcome이 아직 성숙하지 않은 상태와 transition 부족은 안전한 component status이며 promotion 실패를 뜻하지 않습니다. 현재 Production Candidate 1/2에 Shadow Enrollment가 없다면 정상 결과는 `NO_SHADOW_ENROLLMENT`, exit code 0, `database_write=false`입니다.
+
 기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
 
 ```bash
