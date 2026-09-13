@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from threading import Barrier, Thread
@@ -70,6 +71,13 @@ from crypto_trading_bot.services.shadow_policy_performance_service import (
     NO_SHADOW_EVALUATIONS as SHADOW_PERFORMANCE_NO_EVALUATIONS,
     SUCCESS as SHADOW_PERFORMANCE_SUCCESS,
     ShadowPolicyPerformanceService,
+)
+from crypto_trading_bot.services.shadow_review_gate_service import (
+    ELIGIBLE_FOR_PROMOTION_REVIEW as SHADOW_REVIEW_ELIGIBLE,
+    INSUFFICIENT_DATA as SHADOW_REVIEW_INSUFFICIENT,
+    NOT_ELIGIBLE as SHADOW_REVIEW_NOT_ELIGIBLE,
+    NO_SHADOW_ENROLLMENT as SHADOW_REVIEW_NO_ENROLLMENT,
+    ShadowReviewGateService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -2128,6 +2136,168 @@ def test_postgresql_shadow_performance_uses_stored_evidence_read_only_without_re
             model: session.scalar(select(func.count()).select_from(model))
             for model in tracked
         }
+        assert after == before
+        assert not session.new and not session.dirty and not session.deleted
+        session.rollback()
+
+
+def test_postgresql_shadow_review_gate_full_evidence_is_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"shadow-review-{uuid4()}")
+        session.add(user)
+        session.flush()
+        candidate = _create_complete_gate_candidate(session, user, year=2096)
+
+        no_enrollment = ShadowReviewGateService(
+            session, now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC)
+        ).evaluate(candidate_id=candidate.id)
+        assert no_enrollment.status == SHADOW_REVIEW_NO_ENROLLMENT
+
+        enrolled = ShadowPolicyEnrollmentService(
+            session, now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC)
+        ).enroll(candidate_id=candidate.id)
+        assert enrolled.enrollment_status == SHADOW_CREATED
+        no_evaluations = ShadowReviewGateService(
+            session,
+            performance_service=ShadowPolicyPerformanceService(
+                session, now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC)
+            ),
+            now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC),
+        ).evaluate(candidate_id=candidate.id)
+        assert no_evaluations.status == "INSUFFICIENT_DATA"
+
+        first_captured_at = datetime(2096, 2, 2, tzinfo=UTC)
+        for index in range(42):
+            snapshot = create_snapshot(
+                session,
+                user,
+                captured_at=first_captured_at + timedelta(hours=index * 9),
+                with_outcomes=True,
+            )
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+            _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+            for outcome in session.scalars(
+                select(StrategyReplayCandidateOutcome).where(
+                    StrategyReplayCandidateOutcome.strategy_replay_snapshot_id
+                    == snapshot.id
+                )
+            ):
+                market_return = {
+                    "KRW-A": Decimal("10"),
+                    "KRW-B": Decimal("-5"),
+                    "KRW-C": Decimal("20"),
+                }[outcome.market]
+                outcome.market_return_percentage = market_return
+                outcome.end_price = Decimal("100") + market_return
+
+        evidence_as_of = first_captured_at + timedelta(hours=41 * 9, days=2)
+        selection = ShadowPolicyEvaluationService(
+            session, now_fn=lambda: evidence_as_of
+        ).evaluate(candidate_id=candidate.id)
+        assert selection.status == SHADOW_EVALUATION_SUCCESS
+        assert selection.created_evaluation_count == 42
+
+        tracked_models = (
+            ResearchPolicyCandidate,
+            ShadowPolicyEnrollment,
+            ShadowPolicyEvaluation,
+            StrategyReplaySnapshot,
+            StrategyReplayCandidate,
+            StrategyReplayCandidateOutcome,
+            TradeRecommendation,
+            OrderLog,
+        )
+        before = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked_models
+        }
+        performance_service = ShadowPolicyPerformanceService(
+            session, now_fn=lambda: evidence_as_of
+        )
+        result = ShadowReviewGateService(
+            session,
+            performance_service=performance_service,
+            now_fn=lambda: evidence_as_of,
+        ).evaluate(candidate_id=candidate.id)
+        after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked_models
+        }
+
+        assert result.status == SHADOW_REVIEW_ELIGIBLE, result.all_checks
+        assert result.eligible_for_promotion_review is True
+        assert result.promotion_performed is False
+        assert result.database_write is False
+        assert result.external_calls is False
+        assert result.live_policy_change is False
+        assert result.shadow_runtime_changed is False
+
+        def review_with(performance):
+            source = MagicMock()
+            source.evaluate.return_value = performance
+            return ShadowReviewGateService(
+                session,
+                performance_service=source,
+                now_fn=lambda: evidence_as_of,
+            ).evaluate(candidate_id=candidate.id)
+
+        base_performance = result.performance
+        insufficient_period = replace(
+            base_performance,
+            first_success_captured_at=(
+                base_performance.last_success_captured_at - timedelta(hours=335)
+            ),
+            observation_span_hours=Decimal("335"),
+        )
+        assert review_with(insufficient_period).status == SHADOW_REVIEW_INSUFFICIENT
+
+        gross_1440 = replace(
+            base_performance.gross[2],
+            successful_comparable_snapshot_count=34,
+            outcome_incomplete_count=8,
+            shadow_win_count=34,
+            shadow_loss_count=0,
+            tie_count=0,
+            shadow_win_rate=Decimal("1"),
+        )
+        cost_ids = base_performance.cost_adjusted[
+            2
+        ].cost_adjustable_shadow_snapshot_ids[:34]
+        cost_1440 = replace(
+            base_performance.cost_adjusted[2],
+            successful_gross_snapshot_count=34,
+            cost_adjustable_shadow_snapshot_count=34,
+            cost_adjustable_shadow_snapshot_ids=cost_ids,
+            cost_adjustable_coverage_rate=Decimal(34) / Decimal(42),
+            outcome_incomplete_count=8,
+            cost_adjusted_shadow_win_count=34,
+            cost_adjusted_shadow_loss_count=0,
+            tie_count=0,
+            cost_adjusted_shadow_win_rate=Decimal("1"),
+        )
+        immature_horizon = replace(
+            base_performance,
+            gross=base_performance.gross[:2] + (gross_1440,),
+            cost_adjusted=base_performance.cost_adjusted[:2] + (cost_1440,),
+        )
+        assert review_with(immature_horizon).status == SHADOW_REVIEW_INSUFFICIENT
+
+        weak_gross = tuple(
+            item
+            if item.horizon_minutes == 60
+            else replace(item, mean_return_delta=Decimal("-0.01"))
+            for item in base_performance.gross
+        )
+        assert (
+            review_with(replace(base_performance, gross=weak_gross)).status
+            == SHADOW_REVIEW_NOT_ELIGIBLE
+        )
+
+        continuity_failure = replace(
+            base_performance,
+            turnover=replace(base_performance.turnover, continuity_break_count=1),
+        )
+        assert review_with(continuity_failure).status == SHADOW_REVIEW_NOT_ELIGIBLE
         assert after == before
         assert not session.new and not session.dirty and not session.deleted
         session.rollback()

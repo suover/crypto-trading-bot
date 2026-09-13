@@ -1103,6 +1103,18 @@ python -m scripts.evaluate_shadow_policy_performance \
 
 Gross는 저장된 `SUCCESS` evaluation만 비교합니다. Turnover와 비용은 broad timeline의 실제 인접 row가 모두 `SUCCESS`일 때만 계산하므로 context/baseline/replay break를 건너뛰지 않습니다. Horizon outcome이 아직 성숙하지 않은 상태와 transition 부족은 안전한 component status이며 promotion 실패를 뜻하지 않습니다. 현재 Production Candidate 1/2에 Shadow Enrollment가 없다면 정상 결과는 `NO_SHADOW_ENROLLMENT`, exit code 0, `database_write=false`입니다.
 
+## Shadow Review Gate v1
+
+Shadow Review Gate는 저장된 Enrollment의 pre-Shadow Gate provenance를 검증한 다음 `ShadowPolicyPerformanceService`를 정확히 한 번 호출하는 read-only 수동 점검입니다. 현재 Forward evidence, Historical evidence 또는 Offline Replay를 재평가하지 않습니다.
+
+```bash
+python -m scripts.evaluate_shadow_review_gate --candidate-id <ID>
+```
+
+CLI 입력은 `--candidate-id`만 허용합니다. v1 정책은 코드에 고정되며 required horizon은 60/240/1440분, fee/spread/slippage는 0.0005/0.0005/0.001입니다. 최소 관찰 기간 336시간, successful selection 42개, horizon별 Gross 35개, turnover transition 40개, horizon별 cost-adjustable 35개 및 coverage 0.80, continuity break 0개를 요구합니다. Gross supportive horizon은 mean delta >= 0, Cost supportive horizon은 mean delta > 0, median delta >= 0, win rate >= 0.55이며 각각 3개 중 2개 이상이어야 합니다. 모든 horizon에 -0.50 percentage-point catastrophic floor를 적용합니다.
+
+종료 코드는 `INVALID_REVIEW_DATA`만 1이고, `NO_SHADOW_ENROLLMENT`, `INSUFFICIENT_DATA`, `NOT_ELIGIBLE`, `ELIGIBLE_FOR_PROMOTION_REVIEW`는 0입니다. 현재 Production Candidate 1/2에 enrollment가 없다면 `NO_SHADOW_ENROLLMENT`가 정상입니다. Eligible 결과도 Promotion을 수행하지 않으며 DB write, 외부 호출, Telegram, 주문, Shadow runtime 또는 LIVE policy 변경이 없습니다.
+
 기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
 
 ```bash

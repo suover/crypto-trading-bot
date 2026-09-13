@@ -1228,3 +1228,17 @@ python -m scripts.evaluate_shadow_policy_performance \
   --spread-cost-rate 0.0005 \
   --slippage-rate 0.001
 ```
+
+### Shadow Review Gate v1
+
+`ShadowReviewGateService`는 immutable Shadow Performance Evidence를 코드에 고정된 deterministic 정책으로 검토합니다. Enrollment에 동결된 pre-Shadow Promotion Gate provenance를 공용 validator로 검증하며, 현재 Forward/Historical evidence나 Offline Replay를 다시 실행하지 않습니다.
+
+v1은 60/240/1440분 horizon, 비용률 0.0005/0.0005/0.001, 관찰 기간 336시간, successful selection 42개, horizon별 Gross 35개, turnover transition 40개, horizon별 cost-adjustable 35개와 coverage 0.80을 요구합니다. Gross mean delta가 0 이상인 horizon 및 cost-adjusted mean > 0, median >= 0, win rate >= 0.55를 모두 만족한 horizon이 각각 최소 2개여야 합니다. 모든 horizon의 Gross와 cost-adjusted mean delta는 -0.50 이상이어야 하고 continuity break는 0개여야 합니다.
+
+`INVALID > INSUFFICIENT > FAIL > PASS` 우선순위를 사용해 표본 부족과 성과 실패를 구분합니다. `ELIGIBLE_FOR_PROMOTION_REVIEW`는 사람의 검토 대상이라는 뜻일 뿐 Promotion이나 LIVE 적용이 아닙니다. 이 Gate는 DB write, 외부 호출, worker, Promotion, Shadow runtime 또는 LIVE policy 변경을 수행하지 않습니다.
+
+```bash
+python -m scripts.evaluate_shadow_review_gate --candidate-id <ID>
+```
+
+정책, horizon, 비용, as-of 또는 ceiling을 CLI에서 override할 수 없습니다.
