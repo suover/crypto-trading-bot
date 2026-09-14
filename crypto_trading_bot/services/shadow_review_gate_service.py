@@ -217,6 +217,7 @@ class ShadowReviewGateCheckResult:
 
 @dataclass(frozen=True)
 class ShadowReviewGateResult:
+    result_type: str
     candidate_id: int
     enrollment: object | None
     review_policy_schema_version: str
@@ -961,6 +962,7 @@ class ShadowReviewGateService:
             ELIGIBLE_FOR_PROMOTION_REVIEW: None,
         }
         result = ShadowReviewGateResult(
+            result_type=RESULT_TYPE,
             candidate_id=candidate_id,
             enrollment=enrollment,
             review_policy_schema_version=self.policy.schema_version,
@@ -999,7 +1001,46 @@ class ShadowReviewGateService:
         return result
 
 
-def shadow_review_decision_signature(result: ShadowReviewGateResult) -> str:
+def shadow_review_evidence_provenance(result: ShadowReviewGateResult) -> dict:
+    performance = result.performance
+    if performance is None:
+        raise ReplayInputError("review evidence provenance requires performance")
+    turnover = performance.turnover
+    return _canonicalize(
+        {
+            "timeline_snapshot_ids": performance.timeline_snapshot_ids,
+            "candidate_context_snapshot_ids": (
+                performance.candidate_context_snapshot_ids
+            ),
+            "successful_selection_snapshot_ids": (
+                performance.successful_selection_snapshot_ids
+            ),
+            "gross_successful_snapshot_ids_by_horizon": [
+                {
+                    "horizon_minutes": item.horizon_minutes,
+                    "snapshot_ids": tuple(row.snapshot_id for row in item.snapshots),
+                }
+                for item in performance.gross
+            ],
+            "turnover_transitions": [
+                {
+                    "previous_snapshot_id": item.previous_snapshot_id,
+                    "current_snapshot_id": item.current_snapshot_id,
+                }
+                for item in (() if turnover is None else turnover.transitions)
+            ],
+            "cost_adjustable_snapshot_ids_by_horizon": [
+                {
+                    "horizon_minutes": item.horizon_minutes,
+                    "snapshot_ids": item.cost_adjustable_shadow_snapshot_ids,
+                }
+                for item in performance.cost_adjusted
+            ],
+        }
+    )
+
+
+def shadow_review_decision_payload(result: ShadowReviewGateResult) -> dict:
     enrollment = result.enrollment
     performance = result.performance
     if enrollment is None or performance is None:
@@ -1043,35 +1084,39 @@ def shadow_review_decision_signature(result: ShadowReviewGateResult) -> str:
         }
         for item in performance.cost_adjusted
     ]
-    payload = {
-        "result_type": RESULT_TYPE,
-        "candidate": {
-            "candidate_id": result.candidate_id,
-            "shadow_enrollment_id": enrollment.id,
-            "user_id": enrollment.user_id,
-            "exchange": enrollment.exchange,
-            "quote_asset": enrollment.quote_asset,
-            "scenario_name": enrollment.scenario_name,
-            "scenario_definition_signature": enrollment.scenario_definition_signature,
-            "baseline_policy_signature": enrollment.baseline_policy_signature,
-            "effective_top_n": enrollment.effective_top_n,
-        },
-        "stored_pre_shadow_gate_decision_signature": enrollment.gate_decision_signature,
-        "review_policy_signature": result.review_policy_signature,
-        "review_policy_definition": result.review_policy_definition,
-        "performance_evidence_as_of": performance.performance_evidence_as_of,
-        "shadow_evaluation_snapshot_id_ceiling": performance.shadow_evaluation_snapshot_id_ceiling,
-        "successful_selection_snapshot_ids": performance.successful_selection_snapshot_ids,
-        "gross": gross,
-        "turnover": turnover_summary,
-        "cost": cost,
-        "checks": [asdict(item) for item in result.all_checks],
-        "status": result.status,
-        "review_evaluated_at": result.evaluated_at,
-    }
-    encoded = json.dumps(
-        _canonicalize(payload), sort_keys=True, separators=(",", ":")
-    ).encode("utf-8")
+    return _canonicalize(
+        {
+            "result_type": RESULT_TYPE,
+            "candidate": {
+                "candidate_id": result.candidate_id,
+                "shadow_enrollment_id": enrollment.id,
+                "user_id": enrollment.user_id,
+                "exchange": enrollment.exchange,
+                "quote_asset": enrollment.quote_asset,
+                "scenario_name": enrollment.scenario_name,
+                "scenario_definition_signature": enrollment.scenario_definition_signature,
+                "baseline_policy_signature": enrollment.baseline_policy_signature,
+                "effective_top_n": enrollment.effective_top_n,
+            },
+            "stored_pre_shadow_gate_decision_signature": enrollment.gate_decision_signature,
+            "review_policy_signature": result.review_policy_signature,
+            "review_policy_definition": result.review_policy_definition,
+            "performance_evidence_as_of": performance.performance_evidence_as_of,
+            "shadow_evaluation_snapshot_id_ceiling": performance.shadow_evaluation_snapshot_id_ceiling,
+            "successful_selection_snapshot_ids": performance.successful_selection_snapshot_ids,
+            "gross": gross,
+            "turnover": turnover_summary,
+            "cost": cost,
+            "checks": [asdict(item) for item in result.all_checks],
+            "status": result.status,
+            "review_evaluated_at": result.evaluated_at,
+        }
+    )
+
+
+def shadow_review_decision_signature(result: ShadowReviewGateResult) -> str:
+    payload = shadow_review_decision_payload(result)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return f"{result.review_policy_schema_version}:{sha256(encoded).hexdigest()}"
 
 
@@ -1092,6 +1137,8 @@ __all__ = [
     "ShadowReviewGateResult",
     "ShadowReviewGateService",
     "shadow_review_decision_signature",
+    "shadow_review_decision_payload",
+    "shadow_review_evidence_provenance",
     "shadow_review_policy_definition",
     "shadow_review_policy_signature",
     "validate_shadow_review_policy",

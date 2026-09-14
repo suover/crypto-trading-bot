@@ -437,6 +437,111 @@ class ShadowPolicyEnrollment(Base):
     )
 
 
+class ShadowPolicyPromotionApproval(Base):
+    __tablename__ = "shadow_policy_promotion_approvals"
+    __table_args__ = (
+        UniqueConstraint("candidate_id", name="uq_shadow_promotion_candidate"),
+        UniqueConstraint("shadow_enrollment_id", name="uq_shadow_promotion_enrollment"),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_shadow_promotion_top_n_positive"
+        ),
+        CheckConstraint(
+            "review_status = 'ELIGIBLE_FOR_PROMOTION_REVIEW'",
+            name="ck_shadow_promotion_review_eligible",
+        ),
+        CheckConstraint(
+            "approval_source = 'MANUAL_CLI'",
+            name="ck_shadow_promotion_source_manual",
+        ),
+        CheckConstraint(
+            "shadow_evaluation_snapshot_id_ceiling > 0",
+            name="ck_shadow_promotion_ceiling_positive",
+        ),
+        CheckConstraint(
+            "human_approved_at >= review_evaluated_at",
+            name="ck_shadow_promotion_time_after_review",
+        ),
+        CheckConstraint(
+            "human_approved_at >= performance_evidence_as_of",
+            name="ck_shadow_promotion_time_after_evidence",
+        ),
+        Index(
+            "ix_shadow_promotion_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "human_approved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    approval_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id"), nullable=False
+    )
+    candidate_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    component_weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    shadow_enrolled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    shadow_snapshot_id_watermark: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    shadow_captured_at_watermark: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    pre_shadow_gate_decision_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    review_result_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    review_policy_schema_version: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )
+    review_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    review_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    review_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    review_evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    review_decision_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    review_decision_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    performance_evidence_as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    shadow_evaluation_snapshot_id_ceiling: Mapped[int] = mapped_column(
+        BigInteger, nullable=False
+    )
+    review_checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    review_evidence_provenance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    approval_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    human_approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    approval_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ShadowPolicyEvaluation(Base):
     __tablename__ = "shadow_policy_evaluations"
     __table_args__ = (

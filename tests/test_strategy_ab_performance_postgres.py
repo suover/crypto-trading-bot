@@ -17,6 +17,7 @@ from crypto_trading_bot.db.models import (
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
     ShadowPolicyEvaluation,
+    ShadowPolicyPromotionApproval,
     StrategyReplayCandidate,
     StrategyReplayCandidateOutcome,
     StrategyReplaySnapshot,
@@ -78,6 +79,15 @@ from crypto_trading_bot.services.shadow_review_gate_service import (
     NOT_ELIGIBLE as SHADOW_REVIEW_NOT_ELIGIBLE,
     NO_SHADOW_ENROLLMENT as SHADOW_REVIEW_NO_ENROLLMENT,
     ShadowReviewGateService,
+)
+from crypto_trading_bot.services.shadow_policy_promotion_approval_service import (
+    ALREADY_APPROVED as PROMOTION_ALREADY_APPROVED,
+    CREATED as PROMOTION_CREATED,
+    DRY_RUN as PROMOTION_DRY_RUN,
+    NO_SHADOW_ENROLLMENT as PROMOTION_NO_SHADOW_ENROLLMENT,
+    REVIEW_DECISION_CHANGED as PROMOTION_REVIEW_CHANGED,
+    REVIEW_NOT_ELIGIBLE as PROMOTION_REVIEW_NOT_ELIGIBLE,
+    ShadowPolicyPromotionApprovalService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -2152,6 +2162,18 @@ def test_postgresql_shadow_review_gate_full_evidence_is_read_only():
             session, now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC)
         ).evaluate(candidate_id=candidate.id)
         assert no_enrollment.status == SHADOW_REVIEW_NO_ENROLLMENT
+        no_enrollment_approval = ShadowPolicyPromotionApprovalService(
+            session,
+            review_service=MagicMock(evaluate=MagicMock(return_value=no_enrollment)),
+        ).preview(candidate_id=candidate.id)
+        assert no_enrollment_approval.approval_status == PROMOTION_NO_SHADOW_ENROLLMENT
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ShadowPolicyPromotionApproval)
+            )
+            == 0
+        )
+        assert not session.new and not session.dirty and not session.deleted
 
         enrolled = ShadowPolicyEnrollmentService(
             session, now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC)
@@ -2165,6 +2187,11 @@ def test_postgresql_shadow_review_gate_full_evidence_is_read_only():
             now_fn=lambda: datetime(2096, 2, 1, tzinfo=UTC),
         ).evaluate(candidate_id=candidate.id)
         assert no_evaluations.status == "INSUFFICIENT_DATA"
+        insufficient_approval = ShadowPolicyPromotionApprovalService(
+            session,
+            review_service=MagicMock(evaluate=MagicMock(return_value=no_evaluations)),
+        ).preview(candidate_id=candidate.id)
+        assert insufficient_approval.approval_status == PROMOTION_REVIEW_NOT_ELIGIBLE
 
         first_captured_at = datetime(2096, 2, 2, tzinfo=UTC)
         for index in range(42):
@@ -2292,15 +2319,359 @@ def test_postgresql_shadow_review_gate_full_evidence_is_read_only():
             review_with(replace(base_performance, gross=weak_gross)).status
             == SHADOW_REVIEW_NOT_ELIGIBLE
         )
+        weak_review = review_with(replace(base_performance, gross=weak_gross))
+        failed_approval = ShadowPolicyPromotionApprovalService(
+            session,
+            review_service=MagicMock(evaluate=MagicMock(return_value=weak_review)),
+        ).preview(candidate_id=candidate.id)
+        assert failed_approval.approval_status == PROMOTION_REVIEW_NOT_ELIGIBLE
 
         continuity_failure = replace(
             base_performance,
             turnover=replace(base_performance.turnover, continuity_break_count=1),
         )
         assert review_with(continuity_failure).status == SHADOW_REVIEW_NOT_ELIGIBLE
-        assert after == before
+
+        review_source = MagicMock()
+        review_source.evaluate.return_value = result
+        approval_service = ShadowPolicyPromotionApprovalService(
+            session, review_service=review_source, now_fn=lambda: evidence_as_of
+        )
+        preview = approval_service.preview(candidate_id=candidate.id)
+        assert preview.approval_status == PROMOTION_DRY_RUN
+        assert (
+            preview.current_review_decision_signature
+            == result.review_decision_signature
+        )
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ShadowPolicyPromotionApproval)
+            )
+            == 0
+        )
+        assert not session.new and not session.dirty and not session.deleted
+
+        mismatch = approval_service.approve(
+            candidate_id=candidate.id,
+            expected_review_decision_signature=(
+                result.review_decision_signature[:-1]
+                + ("0" if result.review_decision_signature[-1] != "0" else "1")
+            ),
+        )
+        assert mismatch.approval_status == PROMOTION_REVIEW_CHANGED
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ShadowPolicyPromotionApproval)
+            )
+            == 0
+        )
+        assert not session.new and not session.dirty and not session.deleted
+
+        created = approval_service.approve(
+            candidate_id=candidate.id,
+            expected_review_decision_signature=result.review_decision_signature,
+        )
+        assert created.approval_status == PROMOTION_CREATED
+        assert created.database_write is True
+        assert created.human_approval_recorded is True
+        assert created.live_policy_change is False
+        assert created.live_order_change is False
+        assert created.ranking_runtime_changed is False
+        assert created.canary_started is False
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ShadowPolicyPromotionApproval)
+            )
+            == 1
+        )
+
+        review_source.reset_mock()
+        already_preview = approval_service.preview(candidate_id=candidate.id)
+        already_apply = approval_service.approve(
+            candidate_id=candidate.id,
+            expected_review_decision_signature=result.review_decision_signature,
+        )
+        assert already_preview.approval_status == PROMOTION_ALREADY_APPROVED
+        assert already_apply.approval_status == PROMOTION_ALREADY_APPROVED
+        assert already_apply.database_write is False
+        review_source.evaluate.assert_not_called()
+        assert (
+            session.scalar(
+                select(func.count()).select_from(ShadowPolicyPromotionApproval)
+            )
+            == 1
+        )
+        final_after = {
+            model: session.scalar(select(func.count()).select_from(model))
+            for model in tracked_models
+        }
+        assert after == before == final_after
         assert not session.new and not session.dirty and not session.deleted
         session.rollback()
+
+
+def _create_fully_eligible_shadow_review(session, user, *, year):
+    candidate = _create_complete_gate_candidate(session, user, year=year)
+    enrolled_at = datetime(year, 2, 1, tzinfo=UTC)
+    enrolled = ShadowPolicyEnrollmentService(
+        session, now_fn=lambda: enrolled_at
+    ).enroll(candidate_id=candidate.id)
+    assert enrolled.enrollment_status == SHADOW_CREATED
+    first_captured_at = datetime(year, 2, 2, tzinfo=UTC)
+    for index in range(42):
+        snapshot = create_snapshot(
+            session,
+            user,
+            captured_at=first_captured_at + timedelta(hours=index * 9),
+            with_outcomes=True,
+        )
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=240)
+        _copy_forward_outcomes(session, snapshot, horizon_minutes=1440)
+        for outcome in session.scalars(
+            select(StrategyReplayCandidateOutcome).where(
+                StrategyReplayCandidateOutcome.strategy_replay_snapshot_id
+                == snapshot.id
+            )
+        ):
+            market_return = {
+                "KRW-A": Decimal("10"),
+                "KRW-B": Decimal("-5"),
+                "KRW-C": Decimal("20"),
+            }[outcome.market]
+            outcome.market_return_percentage = market_return
+            outcome.end_price = Decimal("100") + market_return
+    evidence_as_of = first_captured_at + timedelta(hours=41 * 9, days=2)
+    selection = ShadowPolicyEvaluationService(
+        session, now_fn=lambda: evidence_as_of
+    ).evaluate(candidate_id=candidate.id)
+    assert selection.created_evaluation_count == 42
+    review = ShadowReviewGateService(
+        session,
+        performance_service=ShadowPolicyPerformanceService(
+            session, now_fn=lambda: evidence_as_of
+        ),
+        now_fn=lambda: evidence_as_of,
+    ).evaluate(candidate_id=candidate.id)
+    assert review.status == SHADOW_REVIEW_ELIGIBLE
+    return candidate, review, evidence_as_of
+
+
+def test_postgresql_shadow_promotion_concurrent_apply_has_one_winner():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-promotion-race-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate, review, approved_at = _create_fully_eligible_shadow_review(
+            setup_session, user, year=2097
+        )
+        candidate_id = candidate.id
+        user_id = user.id
+        expected = review.review_decision_signature
+        setup_session.expunge(review.enrollment)
+        setup_session.commit()
+
+    barrier = Barrier(2)
+    results = []
+    errors = []
+
+    def approve_once():
+        try:
+            with SessionLocal() as session:
+                review_service = MagicMock()
+                review_service.evaluate.return_value = review
+                result = ShadowPolicyPromotionApprovalService(
+                    session,
+                    review_service=review_service,
+                    now_fn=lambda: approved_at,
+                    before_insert_fn=barrier.wait,
+                ).approve(
+                    candidate_id=candidate_id,
+                    expected_review_decision_signature=expected,
+                )
+                session.commit()
+                results.append(result.approval_status)
+        except Exception as error:
+            errors.append(error)
+
+    threads = (Thread(target=approve_once), Thread(target=approve_once))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not errors
+    assert sorted(results) == sorted([PROMOTION_CREATED, PROMOTION_ALREADY_APPROVED])
+    with SessionLocal() as verify_session:
+        assert (
+            verify_session.scalar(
+                select(func.count())
+                .select_from(ShadowPolicyPromotionApproval)
+                .where(ShadowPolicyPromotionApproval.candidate_id == candidate_id)
+            )
+            == 1
+        )
+        current_review = MagicMock()
+        conflict = ShadowPolicyPromotionApprovalService(
+            verify_session, review_service=current_review
+        ).approve(
+            candidate_id=candidate_id,
+            expected_review_decision_signature=(
+                expected[:-1] + ("0" if expected[-1] != "0" else "1")
+            ),
+        )
+        assert conflict.approval_status == PROMOTION_REVIEW_CHANGED
+        current_review.evaluate.assert_not_called()
+
+        verify_session.execute(
+            delete(ShadowPolicyPromotionApproval).where(
+                ShadowPolicyPromotionApproval.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEvaluation).where(
+                ShadowPolicyEvaluation.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEnrollment).where(
+                ShadowPolicyEnrollment.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ResearchPolicyCandidate).where(
+                ResearchPolicyCandidate.id == candidate_id
+            )
+        )
+        snapshot_ids = select(StrategyReplaySnapshot.id).where(
+            StrategyReplaySnapshot.user_id == user_id
+        )
+        verify_session.execute(
+            delete(StrategyReplayCandidateOutcome).where(
+                StrategyReplayCandidateOutcome.strategy_replay_snapshot_id.in_(
+                    snapshot_ids
+                )
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id.in_(snapshot_ids)
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplaySnapshot).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+        )
+        verify_session.execute(
+            delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+        )
+        verify_session.execute(delete(User).where(User.id == user_id))
+        verify_session.commit()
+
+
+def test_postgresql_shadow_promotion_concurrent_different_signatures():
+    with SessionLocal() as setup_session:
+        user = User(name=f"shadow-promotion-different-race-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate, review, approved_at = _create_fully_eligible_shadow_review(
+            setup_session, user, year=2098
+        )
+        candidate_id = candidate.id
+        user_id = user.id
+        expected = review.review_decision_signature
+        different = expected[:-1] + ("0" if expected[-1] != "0" else "1")
+        setup_session.expunge(review.enrollment)
+        setup_session.commit()
+
+    barrier = Barrier(2)
+    results = []
+    errors = []
+
+    def approve_once(signature):
+        try:
+            with SessionLocal() as session:
+                review_service = MagicMock()
+                review_service.evaluate.return_value = review
+                barrier.wait()
+                result = ShadowPolicyPromotionApprovalService(
+                    session,
+                    review_service=review_service,
+                    now_fn=lambda: approved_at,
+                ).approve(
+                    candidate_id=candidate_id,
+                    expected_review_decision_signature=signature,
+                )
+                session.commit()
+                results.append(result.approval_status)
+        except Exception as error:
+            errors.append(error)
+
+    threads = (
+        Thread(target=approve_once, args=(expected,)),
+        Thread(target=approve_once, args=(different,)),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not errors
+    assert sorted(results) == sorted([PROMOTION_CREATED, PROMOTION_REVIEW_CHANGED])
+    with SessionLocal() as verify_session:
+        assert (
+            verify_session.scalar(
+                select(func.count())
+                .select_from(ShadowPolicyPromotionApproval)
+                .where(ShadowPolicyPromotionApproval.candidate_id == candidate_id)
+            )
+            == 1
+        )
+        verify_session.execute(
+            delete(ShadowPolicyPromotionApproval).where(
+                ShadowPolicyPromotionApproval.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEvaluation).where(
+                ShadowPolicyEvaluation.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ShadowPolicyEnrollment).where(
+                ShadowPolicyEnrollment.candidate_id == candidate_id
+            )
+        )
+        verify_session.execute(
+            delete(ResearchPolicyCandidate).where(
+                ResearchPolicyCandidate.id == candidate_id
+            )
+        )
+        snapshot_ids = select(StrategyReplaySnapshot.id).where(
+            StrategyReplaySnapshot.user_id == user_id
+        )
+        verify_session.execute(
+            delete(StrategyReplayCandidateOutcome).where(
+                StrategyReplayCandidateOutcome.strategy_replay_snapshot_id.in_(
+                    snapshot_ids
+                )
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplayCandidate).where(
+                StrategyReplayCandidate.strategy_replay_snapshot_id.in_(snapshot_ids)
+            )
+        )
+        verify_session.execute(
+            delete(StrategyReplaySnapshot).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+        )
+        verify_session.execute(
+            delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+        )
+        verify_session.execute(delete(User).where(User.id == user_id))
+        verify_session.commit()
 
 
 def test_postgresql_shadow_performance_ceiling_defers_new_evaluation():

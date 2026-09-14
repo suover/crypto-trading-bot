@@ -1115,6 +1115,27 @@ CLI 입력은 `--candidate-id`만 허용합니다. v1 정책은 코드에 고정
 
 종료 코드는 `INVALID_REVIEW_DATA`만 1이고, `NO_SHADOW_ENROLLMENT`, `INSUFFICIENT_DATA`, `NOT_ELIGIBLE`, `ELIGIBLE_FOR_PROMOTION_REVIEW`는 0입니다. 현재 Production Candidate 1/2에 enrollment가 없다면 `NO_SHADOW_ENROLLMENT`가 정상입니다. Eligible 결과도 Promotion을 수행하지 않으며 DB write, 외부 호출, Telegram, 주문, Shadow runtime 또는 LIVE policy 변경이 없습니다.
 
+## Human-approved Promotion v1
+
+먼저 Preview에서 `current_review_decision_signature`와 모든 Review evidence를 사람이 확인합니다.
+
+```bash
+python -m scripts.approve_shadow_policy_promotion --candidate-id <ID>
+```
+
+승인하려면 Preview에서 확인한 signature를 그대로 제출합니다.
+
+```bash
+python -m scripts.approve_shadow_policy_promotion \
+  --candidate-id <ID> \
+  --expected-review-decision-signature "<EXACT_SIGNATURE_FROM_PREVIEW>" \
+  --apply
+```
+
+Apply는 Review Gate를 다시 평가합니다. Shadow evidence가 추가되거나 decision이 달라져 signature가 불일치하면 `REVIEW_DECISION_CHANGED`가 정상이며 INSERT하지 않습니다. 새 Preview부터 다시 확인해야 하며 `--force`, horizon/cost/as-of/ceiling override는 없습니다. Candidate와 Enrollment당 하나의 immutable approval만 허용하고 동일 승인 재실행은 `ALREADY_APPROVED`입니다.
+
+현재 Production Candidate 1/2는 `NO_SHADOW_ENROLLMENT`이므로 승인 대상이 아닙니다. Approval row 생성은 LIVE policy activation, ranking runtime 변경, 주문 변경 또는 Limited LIVE Canary 시작이 아닙니다.
+
 기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
 
 ```bash

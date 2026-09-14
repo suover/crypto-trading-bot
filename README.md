@@ -1242,3 +1242,20 @@ python -m scripts.evaluate_shadow_review_gate --candidate-id <ID>
 ```
 
 정책, horizon, 비용, as-of 또는 ceiling을 CLI에서 override할 수 없습니다.
+
+### Human-approved Promotion v1
+
+`ShadowPolicyPromotionApprovalService`는 Shadow Review Gate가 정확히 `ELIGIBLE_FOR_PROMOTION_REVIEW`인 Candidate에 대해 사람이 확인한 exact Review decision signature를 immutable approval row로 기록합니다. Preview는 signature만 보여 주고 DB를 변경하지 않으며, Apply는 Review Gate를 다시 한 번 평가해 Preview에서 복사한 expected signature와 완전히 같을 때만 INSERT합니다. 그 사이 Shadow evidence가 달라지면 `REVIEW_DECISION_CHANGED`로 종료되며 `--force` 우회는 없습니다.
+
+Candidate와 Shadow Enrollment마다 approval은 하나뿐입니다. 동일 signature 재실행은 `ALREADY_APPROVED`이고, 기존 approval은 현재 Review를 다시 실행하지 않고 저장된 review payload와 approval signature로 검증합니다. 이 기록은 LIVE activation이나 Canary 시작이 아니며 ranking runtime, 주문, scheduler, Shadow runtime을 변경하지 않습니다.
+
+```bash
+# Preview
+python -m scripts.approve_shadow_policy_promotion --candidate-id <ID>
+
+# Apply: Preview에서 사람이 확인한 exact signature가 필수
+python -m scripts.approve_shadow_policy_promotion \
+  --candidate-id <ID> \
+  --expected-review-decision-signature "<EXACT_SIGNATURE_FROM_PREVIEW>" \
+  --apply
+```
