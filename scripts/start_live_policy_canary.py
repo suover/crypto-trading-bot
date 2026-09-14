@@ -21,7 +21,7 @@ def _positive_integer(value: str) -> int:
 
 def parse_arguments(args=None):
     parser = argparse.ArgumentParser(
-        description="Preview or explicitly start Limited LIVE Canary v1-A."
+        description="Preview or explicitly start Limited LIVE Canary v1-B."
     )
     parser.add_argument(
         "--promotion-approval-id", type=_positive_integer, required=True
@@ -42,6 +42,7 @@ def _bool(value):
 
 def report(result):
     activation = result.activation
+    binding = result.safety_binding
     approval = result.approval
     return [
         f"report_type={REPORT_TYPE}",
@@ -63,11 +64,17 @@ def report(result):
         f"expires_at={getattr(activation, 'expires_at', result.proposed_expires_at)}",
         f"max_analysis_runs={result.max_analysis_runs}",
         f"activation_signature={getattr(activation, 'activation_signature', None)}",
+        f"safety_binding_id={getattr(binding, 'id', None)}",
+        f"safety_binding_signature={getattr(binding, 'binding_signature', None)}",
+        f"order_safety_policy_schema_version={result.order_safety_policy_schema_version}",
+        f"order_safety_policy_signature={result.order_safety_policy_signature}",
+        f"max_buy_order_amount_krw={result.max_buy_order_amount_krw}",
+        f"daily_max_buy_amount_krw={result.daily_max_buy_amount_krw}",
         f"database_write={_bool(result.database_write)}",
         f"external_calls={_bool(result.external_calls)}",
         f"ranking_runtime_activation_record_created={_bool(result.ranking_runtime_activation_record_created)}",
         f"order_behavior_changed={_bool(result.order_behavior_changed)}",
-        f"canary_order_cap_enabled={_bool(result.canary_order_cap_enabled)}",
+        f"canary_order_cap_enabled={_bool(result.safety_binding is not None)}",
         f"safe_reason={result.safe_reason}",
     ]
 

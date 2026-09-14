@@ -15,6 +15,11 @@ def build_market_universe() -> None:
                 settings=settings,
                 ranking_policy=lease.ranking_policy,
                 canary_run_reserver=lease.reserve_run,
+                canary_max_buy_order_amount_krw=(
+                    lease.resolution.safety_binding.max_buy_order_amount_krw
+                    if lease.resolution.safety_binding is not None
+                    else None
+                ),
             ).build_and_persist()
         print(
             "Market universe saved. "

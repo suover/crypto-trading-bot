@@ -172,15 +172,30 @@ def test_activation_requires_exact_approval_signature(monkeypatch):
 
 def test_activation_exact_signature_creates_and_commits_under_lock(monkeypatch):
     value, session, row, lock = service(monkeypatch)
+    flush_count = 0
+
+    def assign_ids():
+        nonlocal flush_count
+        flush_count += 1
+        if flush_count == 1:
+            session.add.call_args.args[0].id = 21
+        elif flush_count == 2:
+            session.add.call_args.args[0].id = 22
+
+    session.flush.side_effect = assign_ids
     result = value.activate(
         promotion_approval_id=row.id,
         expected_approval_signature=row.approval_signature,
     )
     assert result.activation_status == CREATED
     assert result.activation.activation_signature
+    assert result.safety_binding.canary_activation_id == result.activation.id
+    assert result.safety_binding.max_buy_order_amount_krw == 10_000
+    assert result.safety_binding.daily_max_buy_amount_krw == 30_000
     assert result.database_write is True
-    session.add.assert_called_once_with(result.activation)
-    session.flush.assert_called_once()
+    assert session.add.call_args_list[0].args[0] is result.activation
+    assert session.add.call_args_list[1].args[0] is result.safety_binding
+    assert session.flush.call_count == 3
     session.commit.assert_called_once()
     assert lock.released is True
 
@@ -228,6 +243,11 @@ def test_existing_activation_is_validated_and_idempotent(monkeypatch):
     value, session, row, _ = service(monkeypatch)
     activation = value.preview(promotion_approval_id=row.id).activation
     session.scalar.return_value = activation
+    binding = SimpleNamespace(id=22)
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.live_policy_canary_service.load_and_validate_canary_safety_binding",
+        lambda *_: binding,
+    )
 
     result = value.activate(
         promotion_approval_id=row.id,
@@ -236,6 +256,7 @@ def test_existing_activation_is_validated_and_idempotent(monkeypatch):
 
     assert result.activation_status == ALREADY_ACTIVATED
     assert result.database_write is False
+    assert result.safety_binding is binding
     session.add.assert_not_called()
 
 

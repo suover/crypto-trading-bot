@@ -1136,7 +1136,7 @@ Apply는 Review Gate를 다시 평가합니다. Shadow evidence가 추가되거�
 
 현재 Production Candidate 1/2는 `NO_SHADOW_ENROLLMENT`이므로 승인 대상이 아닙니다. Approval row 생성은 LIVE policy activation, ranking runtime 변경, 주문 변경 또는 Limited LIVE Canary 시작이 아닙니다.
 
-## Limited LIVE Canary v1-A
+## Limited LIVE Canary v1-B
 
 상태 확인은 DB/settings만 읽고 run slot을 예약하거나 외부 API를 호출하지 않습니다.
 
@@ -1160,9 +1160,24 @@ python -m scripts.start_live_policy_canary \
   --apply
 ```
 
-그러나 v1-A Production rollout에서는 위 `--apply` 명령을 실행하지 않습니다. v1-A는
-ranking 연결만 제공하고 Canary 전용 BUY cap과 stop/termination은 제공하지 않으므로,
-실제 Activation은 v1-B 배포와 별도 운영 승인이 끝난 뒤에만 수행합니다.
+Apply 성공 시 기존 v1-A Activation과 v1-B immutable Safety Binding이 한 transaction에서
+생성됩니다. 고정 BUY cap은 10,000원/건, 30,000원/일이며 CLI/env override가 없습니다.
+SELL은 이 cap에서 제외됩니다. 주문 분류는 현재 Canary 상태가 아니라 recommendation 생성
+당시 persisted lineage를 사용합니다.
+
+중지 preview와 apply:
+
+```bash
+python -m scripts.stop_live_policy_canary --canary-activation-id <ID>
+python -m scripts.stop_live_policy_canary \
+  --canary-activation-id <ID> \
+  --expected-activation-signature "<EXACT_SIGNATURE>" \
+  --apply
+```
+
+Stop은 immutable termination event만 만들며 기존 주문을 취소하지 않습니다. 다음
+MarketUniverse부터 `BASELINE_STOPPED`를 사용하고, 이미 생성된 Canary recommendation에는
+계속 Canary BUY cap을 적용합니다.
 
 배포 직후 정상 smoke 결과는 `mode=BASELINE_NO_CANARY`, `active_canary_count=0`,
 `database_write=false`, `external_calls=false`입니다. 그 뒤 기존

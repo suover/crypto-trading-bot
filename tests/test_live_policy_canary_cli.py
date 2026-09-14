@@ -6,6 +6,7 @@ import pytest
 from crypto_trading_bot.services.live_policy_canary_service import CREATED, DRY_RUN
 from scripts import check_live_policy_canary as status_cli
 from scripts import start_live_policy_canary as start_cli
+from scripts import stop_live_policy_canary as stop_cli
 
 
 SIGNATURE = "human-approved-promotion-v1:" + ("a" * 64)
@@ -79,3 +80,21 @@ def test_status_cli_is_read_only(monkeypatch):
     session = SimpleNamespace(rollback=MagicMock())
     assert status_cli.run(session, SimpleNamespace(user_name="Minsu")) == ["ok"]
     session.rollback.assert_called_once()
+
+
+def test_stop_cli_enforces_two_step_contract_and_forbids_overrides():
+    activation_signature = "limited-live-canary-v1a:" + ("a" * 64)
+    assert stop_cli.parse_arguments(["--canary-activation-id", "1"]).apply is False
+    assert stop_cli.parse_arguments(
+        [
+            "--canary-activation-id",
+            "1",
+            "--expected-activation-signature",
+            activation_signature,
+            "--apply",
+        ]
+    ).apply
+    with pytest.raises(SystemExit):
+        stop_cli.parse_arguments(["--canary-activation-id", "1", "--apply"])
+    with pytest.raises(SystemExit):
+        stop_cli.parse_arguments(["--canary-activation-id", "1", "--cancel-orders"])

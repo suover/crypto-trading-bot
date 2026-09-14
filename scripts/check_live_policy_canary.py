@@ -8,7 +8,7 @@ from crypto_trading_bot.services.live_ranking_policy_resolver import (
 
 def parse_arguments(args=None):
     parser = argparse.ArgumentParser(
-        description="Inspect Limited LIVE Canary v1-A without reserving a run."
+        description="Inspect Limited LIVE Canary v1-B without reserving a run."
     )
     parser.add_argument("--user-name", default="Minsu")
     return parser.parse_args(args)
@@ -17,11 +17,21 @@ def parse_arguments(args=None):
 def report(result):
     activation = result.activation
     approval = result.promotion_approval
+    binding = result.safety_binding
+    termination = result.termination_event
     return [
         f"report_type={STATUS_REPORT_TYPE}",
         f"mode={result.mode}",
         f"active_canary_count={result.active_canary_count}",
         f"activation_id={getattr(activation, 'id', None)}",
+        f"safety_binding_id={getattr(binding, 'id', None)}",
+        f"order_safety_policy_schema_version={getattr(binding, 'order_safety_policy_schema_version', None)}",
+        f"order_safety_policy_signature={getattr(binding, 'order_safety_policy_signature', None)}",
+        f"max_buy_order_amount_krw={getattr(binding, 'max_buy_order_amount_krw', None)}",
+        f"daily_max_buy_amount_krw={getattr(binding, 'daily_max_buy_amount_krw', None)}",
+        f"termination_event_id={getattr(termination, 'id', None)}",
+        f"termination_reason={getattr(termination, 'termination_reason', None)}",
+        f"terminated_at={getattr(termination, 'terminated_at', None)}",
         f"promotion_approval_id={getattr(approval, 'id', None)}",
         f"candidate_id={getattr(approval, 'candidate_id', None)}",
         f"baseline_policy_signature={result.baseline_policy_signature}",

@@ -12,6 +12,8 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     LivePolicyCanaryActivation,
     LivePolicyCanaryRun,
+    LivePolicyCanarySafetyBinding,
+    LivePolicyCanaryTerminationEvent,
     User,
 )
 from crypto_trading_bot.db.postgres_advisory_lock import PostgresAdvisoryLock
@@ -27,11 +29,16 @@ from crypto_trading_bot.services.live_policy_canary_service import (
     canary_context_lock_key,
     canary_run_count,
     canary_run_signature,
+    load_and_validate_canary_safety_binding,
     validate_stored_canary_activation,
+)
+from crypto_trading_bot.services.live_policy_canary_termination_service import (
+    load_and_validate_canary_termination,
 )
 
 
 logger = logging.getLogger(__name__)
+BASELINE_STOPPED = "BASELINE_STOPPED"
 
 
 class CanaryRuntimeBusyError(RuntimeError):
@@ -45,6 +52,8 @@ class LiveRankingPolicyResolution:
     baseline_policy_signature: str
     canary_policy_signature: str | None
     activation: LivePolicyCanaryActivation | None
+    safety_binding: LivePolicyCanarySafetyBinding | None
+    termination_event: LivePolicyCanaryTerminationEvent | None
     promotion_approval: object | None
     used_analysis_run_count: int
     max_analysis_runs: int | None
@@ -87,6 +96,9 @@ class LiveRankingPolicyLease:
         validated, _, _ = validate_stored_canary_activation(
             self.session, activation, self.settings
         )
+        binding = load_and_validate_canary_safety_binding(self.session, activation)
+        if load_and_validate_canary_termination(self.session, activation, binding):
+            raise LivePolicyCanaryError("Canary was manually stopped")
         now = self.now_fn().astimezone(UTC)
         used = canary_run_count(self.session, activation.id)
         if now < activation.started_at.astimezone(UTC):
@@ -226,8 +238,14 @@ class LiveRankingPolicyResolver:
                 validated, _, candidate_policy = validate_stored_canary_activation(
                     self.session, row, self.settings
                 )
+                binding = load_and_validate_canary_safety_binding(self.session, row)
+                termination = load_and_validate_canary_termination(
+                    self.session, row, binding
+                )
                 used = canary_run_count(self.session, row.id)
-                evaluated.append((row, validated.row, candidate_policy, used))
+                evaluated.append(
+                    (row, validated.row, candidate_policy, binding, termination, used)
+                )
         except (ValueError, TypeError, AttributeError, KeyError) as error:
             logger.warning(
                 "Canary metadata is invalid; using baseline. reason=%s", error
@@ -243,7 +261,8 @@ class LiveRankingPolicyResolver:
             for item in evaluated
             if item[0].started_at.astimezone(UTC) <= now
             and now < item[0].expires_at.astimezone(UTC)
-            and item[3] < item[0].max_analysis_runs
+            and item[5] < item[0].max_analysis_runs
+            and item[4] is None
         ]
         if len(active) > 1:
             logger.warning("Multiple active Canary rows found; using baseline")
@@ -262,14 +281,30 @@ class LiveRankingPolicyResolver:
                 baseline_signature,
                 reason="CANARY_NOT_STARTED",
             )
+        stopped = [item for item in evaluated if item[4] is not None]
+        if stopped:
+            latest = stopped[0]
+            return self._baseline(
+                BASELINE_STOPPED,
+                baseline_policy,
+                baseline_signature,
+                activation=latest[0],
+                approval=latest[1],
+                binding=latest[3],
+                termination=latest[4],
+                used=latest[5],
+                reason="CANARY_MANUALLY_STOPPED",
+            )
         if len(active) == 1:
-            activation, approval, candidate_policy, used = active[0]
+            activation, approval, candidate_policy, binding, _, used = active[0]
             return LiveRankingPolicyResolution(
                 mode=CANARY,
                 ranking_policy=candidate_policy,
                 baseline_policy_signature=baseline_signature,
                 canary_policy_signature=activation.canary_policy_signature,
                 activation=activation,
+                safety_binding=binding,
+                termination_event=None,
                 promotion_approval=approval,
                 used_analysis_run_count=used,
                 max_analysis_runs=activation.max_analysis_runs,
@@ -280,7 +315,7 @@ class LiveRankingPolicyResolver:
         unexpired = [
             item for item in evaluated if now < item[0].expires_at.astimezone(UTC)
         ]
-        if any(item[3] >= item[0].max_analysis_runs for item in unexpired):
+        if any(item[5] >= item[0].max_analysis_runs for item in unexpired):
             latest = unexpired[0]
             return self._baseline(
                 BASELINE_EXHAUSTED,
@@ -288,7 +323,8 @@ class LiveRankingPolicyResolver:
                 baseline_signature,
                 activation=latest[0],
                 approval=latest[1],
-                used=latest[3],
+                binding=latest[3],
+                used=latest[5],
                 reason="MAX_ANALYSIS_RUNS_REACHED",
             )
         latest = evaluated[0]
@@ -298,7 +334,8 @@ class LiveRankingPolicyResolver:
             baseline_signature,
             activation=latest[0],
             approval=latest[1],
-            used=latest[3],
+            binding=latest[3],
+            used=latest[5],
             reason="CANARY_EXPIRED",
         )
 
@@ -310,6 +347,8 @@ class LiveRankingPolicyResolver:
         *,
         activation=None,
         approval=None,
+        binding=None,
+        termination=None,
         used=0,
         reason=None,
         active_count=0,
@@ -322,6 +361,8 @@ class LiveRankingPolicyResolver:
                 activation.canary_policy_signature if activation is not None else None
             ),
             activation=activation,
+            safety_binding=binding,
+            termination_event=termination,
             promotion_approval=approval,
             used_analysis_run_count=used,
             max_analysis_runs=(
@@ -351,6 +392,7 @@ class LiveRankingPolicyResolver:
 
 __all__ = [
     "CanaryRuntimeBusyError",
+    "BASELINE_STOPPED",
     "LiveRankingPolicyLease",
     "LiveRankingPolicyResolution",
     "LiveRankingPolicyResolver",

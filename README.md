@@ -1260,9 +1260,9 @@ python -m scripts.approve_shadow_policy_promotion \
   --apply
 ```
 
-### Limited LIVE Canary v1-A
+### Limited LIVE Canary v1-B
 
-Limited LIVE Canary v1-A는 Human-approved Promotion만 source로 받아, 사람이 exact
+Limited LIVE Canary v1-B는 Human-approved Promotion만 source로 받아, 사람이 exact
 Approval signature를 다시 확인한 뒤 승인된 Candidate의 component weights를 DYNAMIC
 Market Universe ranking에만 제한적으로 연결합니다. Activation은 48시간과 최대 6회의
 MarketUniverse 시도로 코드에 고정되며, 각 시도는 ranking 전에 AnalysisRun과 연결된
@@ -1271,8 +1271,16 @@ immutable Canary Run으로 예약됩니다. 실패한 분석 시도도 한도에
 active Canary가 없으면 기존 `HeuristicMarketRankingPolicy()`를 그대로 사용합니다. Canary
 metadata/provenance가 잘못됐거나 만료·소진되면 Candidate를 사용하지 않고 Baseline으로
 fail closed하며, PostgreSQL 조회·잠금 같은 core DB 오류는 조용히 숨기지 않고 pipeline을
-실패시킵니다. 이 기능은 AI Recommendation이나 주문 실행을 변경하지 않습니다.
+실패시킵니다.
 
-v1-A에는 Canary 전용 주문당/일일 BUY cap, stop/termination, Recommendation/Order lineage가
-없습니다. 따라서 Production에서는 v1-B의 금전 한도와 종료 안전장치가 완성되기 전
-Activation `--apply`를 실행하지 않습니다. 배포와 Canary 활성화는 서로 다른 작업입니다.
+v1-B는 기존 v1-A Activation signature를 변경하지 않고 activation별 immutable Safety
+Binding을 생성합니다. Canary run에서 생성된 recommendation은 현재 activation이 이후
+STOPPED/EXPIRED/EXHAUSTED가 되어도 generation provenance에 따라 BUY 10,000원/건,
+30,000원/일 cap을 적용합니다. Baseline recommendation에는 Canary cap을 적용하지 않습니다.
+SELL은 Canary 금액 cap에서 제외되며 기존 LIVE safety, Order Chance, reconciliation을 그대로
+통과해야 합니다. cap 초과 금액은 자동 축소하지 않고 신규 Upbit POST를 차단합니다.
+
+Manual Stop은 activation UPDATE가 아닌 immutable termination event입니다. 이후
+MarketUniverse는 `BASELINE_STOPPED`가 되지만 기존 Canary recommendation이나 Upbit 주문을
+취소하지 않습니다. 배포와 Canary 활성화는 서로 다른 작업이며 배포만으로 자동 시작되지
+않습니다.

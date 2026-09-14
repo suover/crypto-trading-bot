@@ -684,6 +684,128 @@ class LivePolicyCanaryRun(Base):
     )
 
 
+class LivePolicyCanarySafetyBinding(Base):
+    __tablename__ = "live_policy_canary_safety_bindings"
+    __table_args__ = (
+        UniqueConstraint(
+            "canary_activation_id", name="uq_live_canary_safety_binding_activation"
+        ),
+        CheckConstraint(
+            "max_buy_order_amount_krw > 0",
+            name="ck_live_canary_safety_binding_order_cap_positive",
+        ),
+        CheckConstraint(
+            "daily_max_buy_amount_krw > 0",
+            name="ck_live_canary_safety_binding_daily_cap_positive",
+        ),
+        CheckConstraint(
+            "daily_max_buy_amount_krw >= max_buy_order_amount_krw",
+            name="ck_live_canary_safety_binding_cap_order",
+        ),
+        Index(
+            "ix_live_canary_safety_binding_context",
+            "user_id",
+            "exchange",
+            "quote_asset",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    binding_schema_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    canary_activation_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_activations.id"), nullable=False
+    )
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    order_safety_policy_schema_version: Mapped[str] = mapped_column(
+        String(60), nullable=False
+    )
+    order_safety_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    order_safety_policy_signature: Mapped[str] = mapped_column(
+        String(110), nullable=False
+    )
+    max_buy_order_amount_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    daily_max_buy_amount_krw: Mapped[Decimal] = mapped_column(
+        Numeric(30, 10), nullable=False
+    )
+    bound_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    binding_signature: Mapped[str] = mapped_column(String(110), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LivePolicyCanaryTerminationEvent(Base):
+    __tablename__ = "live_policy_canary_termination_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "canary_activation_id", name="uq_live_canary_termination_activation"
+        ),
+        CheckConstraint(
+            "termination_source = 'MANUAL_CLI'",
+            name="ck_live_canary_termination_source_manual",
+        ),
+        CheckConstraint(
+            "termination_reason = 'MANUAL_STOP'",
+            name="ck_live_canary_termination_reason_manual_stop",
+        ),
+        Index(
+            "ix_live_canary_termination_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "terminated_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    termination_schema_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    canary_activation_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_activations.id"), nullable=False
+    )
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    safety_binding_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_safety_bindings.id"), nullable=False
+    )
+    safety_binding_signature: Mapped[str] = mapped_column(String(110), nullable=False)
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    termination_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    termination_reason: Mapped[str] = mapped_column(String(30), nullable=False)
+    terminated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    termination_signature: Mapped[str] = mapped_column(String(110), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ShadowPolicyEvaluation(Base):
     __tablename__ = "shadow_policy_evaluations"
     __table_args__ = (
@@ -1405,7 +1527,9 @@ class OperationalAlert(Base):
     __table_args__ = (
         UniqueConstraint("dedup_key", name="uq_operational_alerts_dedup_key"),
         CheckConstraint(
-            "alert_type IN ('PIPELINE_FAILURE', 'STALE_LIVE_ORDER')",
+            "alert_type IN ('PIPELINE_FAILURE', 'STALE_LIVE_ORDER', "
+            "'LIVE_CANARY_STARTED', 'LIVE_CANARY_STOPPED', "
+            "'LIVE_CANARY_BUY_LIMIT_BLOCKED', 'LIVE_CANARY_PROVENANCE_INVALID')",
             name="ck_operational_alerts_type",
         ),
         CheckConstraint(

@@ -15,6 +15,7 @@ from crypto_trading_bot.services.live_policy_canary_service import (
     LivePolicyCanaryError,
 )
 from crypto_trading_bot.services.live_ranking_policy_resolver import (
+    BASELINE_STOPPED,
     CanaryRuntimeBusyError,
     LiveRankingPolicyResolver,
 )
@@ -75,6 +76,18 @@ def resolver(monkeypatch, rows, *, used=0, lock=None):
     monkeypatch.setattr(
         "crypto_trading_bot.services.live_ranking_policy_resolver.validate_stored_canary_activation",
         lambda *_: (SimpleNamespace(row=approval), MagicMock(), candidate_policy),
+    )
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.live_ranking_policy_resolver.load_and_validate_canary_safety_binding",
+        lambda *_: SimpleNamespace(
+            id=4,
+            max_buy_order_amount_krw=10_000,
+            daily_max_buy_amount_krw=30_000,
+        ),
+    )
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.live_ranking_policy_resolver.load_and_validate_canary_termination",
+        lambda *_: None,
     )
     monkeypatch.setattr(
         "crypto_trading_bot.services.live_ranking_policy_resolver.canary_run_count",
@@ -143,6 +156,18 @@ def test_invalid_and_multiple_canaries_fail_closed(monkeypatch):
     result = value.inspect()
     assert result.mode == BASELINE_INVALID_CANARY
     assert result.active_canary_count == 2
+
+
+def test_valid_manual_termination_uses_baseline_stopped(monkeypatch):
+    value, _, _, _ = resolver(monkeypatch, [activation()])
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.live_ranking_policy_resolver.load_and_validate_canary_termination",
+        lambda *_: SimpleNamespace(id=9, termination_reason="MANUAL_STOP"),
+    )
+    result = value.inspect()
+    assert result.mode == BASELINE_STOPPED
+    assert result.canary_policy_selected is False
+    assert result.fallback_reason == "CANARY_MANUALLY_STOPPED"
 
 
 def test_database_failure_propagates(monkeypatch):

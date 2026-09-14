@@ -15,6 +15,8 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     LivePolicyCanaryActivation,
     LivePolicyCanaryRun,
+    LivePolicyCanarySafetyBinding,
+    OperationalAlert,
     OrderLog,
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
@@ -2903,6 +2905,16 @@ def test_postgresql_limited_live_canary_concurrent_activation_has_one_row():
     finally:
         with SessionLocal() as cleanup_session:
             cleanup_session.execute(
+                delete(LivePolicyCanarySafetyBinding).where(
+                    LivePolicyCanarySafetyBinding.canary_activation_id.in_(
+                        select(LivePolicyCanaryActivation.id).where(
+                            LivePolicyCanaryActivation.promotion_approval_id
+                            == approval_id
+                        )
+                    )
+                )
+            )
+            cleanup_session.execute(
                 delete(LivePolicyCanaryActivation).where(
                     LivePolicyCanaryActivation.promotion_approval_id == approval_id
                 )
@@ -2951,6 +2963,9 @@ def test_postgresql_limited_live_canary_concurrent_activation_has_one_row():
             )
             cleanup_session.execute(
                 delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+            )
+            cleanup_session.execute(
+                delete(OperationalAlert).where(OperationalAlert.user_id == user_id)
             )
             cleanup_session.execute(delete(User).where(User.id == user_id))
             cleanup_session.commit()
@@ -3077,6 +3092,11 @@ def test_postgresql_limited_live_canary_concurrent_sixth_run_is_capped():
                 )
             )
             cleanup_session.execute(
+                delete(LivePolicyCanarySafetyBinding).where(
+                    LivePolicyCanarySafetyBinding.canary_activation_id == activation_id
+                )
+            )
+            cleanup_session.execute(
                 delete(LivePolicyCanaryActivation).where(
                     LivePolicyCanaryActivation.id == activation_id
                 )
@@ -3125,6 +3145,9 @@ def test_postgresql_limited_live_canary_concurrent_sixth_run_is_capped():
             )
             cleanup_session.execute(
                 delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+            )
+            cleanup_session.execute(
+                delete(OperationalAlert).where(OperationalAlert.user_id == user_id)
             )
             cleanup_session.execute(delete(User).where(User.id == user_id))
             cleanup_session.commit()

@@ -205,6 +205,30 @@ def test_canary_reservation_failure_prevents_ranking_and_market_calls() -> None:
     service.provider.get_tickers.assert_not_called()
 
 
+def test_canary_buy_cap_applies_only_after_actual_run_reservation() -> None:
+    def build():
+        value = build_service(
+            markets=[descriptor("KRW-BTC")],
+            tickers=[ticker("KRW-BTC", "1000")],
+            balances={"KRW": balance("100000")},
+        )
+        value.registry.calculate_default_max_order_amount.return_value = Decimal(
+            "50000"
+        )
+        value.canary_max_buy_order_amount_krw = Decimal("10000")
+        return value
+
+    baseline = build()
+    baseline.canary_run_reserver = lambda _: None
+    baseline_row = baseline.build_and_persist().candidates[0]
+    assert baseline_row.feature_data["max_order_amount_krw"] == "50000"
+
+    canary = build()
+    canary.canary_run_reserver = lambda _: SimpleNamespace(id=1)
+    canary_row = canary.build_and_persist().candidates[0]
+    assert canary_row.feature_data["max_order_amount_krw"] == "10000"
+
+
 def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding() -> (
     None
 ):

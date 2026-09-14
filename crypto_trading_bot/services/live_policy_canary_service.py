@@ -16,9 +16,14 @@ from crypto_trading_bot.config.settings import Settings, get_settings
 from crypto_trading_bot.db.models import (
     LivePolicyCanaryActivation,
     LivePolicyCanaryRun,
+    LivePolicyCanarySafetyBinding,
 )
 from crypto_trading_bot.db.postgres_advisory_lock import PostgresAdvisoryLock
 from crypto_trading_bot.services.offline_strategy_replay_service import ReplayInputError
+from crypto_trading_bot.services.live_order_safety import MIN_UPBIT_ORDER_AMOUNT_KRW
+from crypto_trading_bot.services.operational_alert_service import (
+    OperationalAlertService,
+)
 from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     SCHEMA_VERSION as SCENARIO_SCHEMA_VERSION,
     parse_scenario_document,
@@ -37,6 +42,7 @@ REPORT_TYPE = "LIMITED_LIVE_CANARY_V1A_ACTIVATION"
 STATUS_REPORT_TYPE = "LIMITED_LIVE_CANARY_V1A_STATUS"
 ACTIVATION_SOURCE = "MANUAL_CLI"
 RUN_SCHEMA_VERSION = "limited-live-canary-run-v1a"
+BINDING_SCHEMA_VERSION = "limited-live-canary-safety-binding-v1b"
 
 NO_PROMOTION_APPROVAL = "NO_PROMOTION_APPROVAL"
 APPROVAL_SIGNATURE_CHANGED = "APPROVAL_SIGNATURE_CHANGED"
@@ -65,6 +71,20 @@ LIMITED_LIVE_CANARY_V1A = LimitedLiveCanaryPolicy(
     schema_version="limited-live-canary-v1a",
     max_duration_hours=48,
     max_analysis_runs=6,
+)
+
+
+@dataclass(frozen=True)
+class LimitedLiveCanaryOrderSafetyPolicy:
+    schema_version: str
+    max_buy_order_amount_krw: int
+    daily_max_buy_amount_krw: int
+
+
+LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B = LimitedLiveCanaryOrderSafetyPolicy(
+    schema_version="limited-live-canary-order-safety-v1b",
+    max_buy_order_amount_krw=10_000,
+    daily_max_buy_amount_krw=30_000,
 )
 
 
@@ -128,6 +148,39 @@ def canary_policy_definition_signature(
 ) -> str:
     encoded = json.dumps(
         canary_policy_definition(policy), sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return f"{policy.schema_version}:{sha256(encoded).hexdigest()}"
+
+
+def validate_canary_order_safety_policy(
+    policy: LimitedLiveCanaryOrderSafetyPolicy = (LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B),
+) -> None:
+    if (
+        policy.schema_version != "limited-live-canary-order-safety-v1b"
+        or isinstance(policy.max_buy_order_amount_krw, bool)
+        or not isinstance(policy.max_buy_order_amount_krw, int)
+        or policy.max_buy_order_amount_krw < MIN_UPBIT_ORDER_AMOUNT_KRW
+        or isinstance(policy.daily_max_buy_amount_krw, bool)
+        or not isinstance(policy.daily_max_buy_amount_krw, int)
+        or policy.daily_max_buy_amount_krw < policy.max_buy_order_amount_krw
+    ):
+        raise LivePolicyCanaryError("Canary order safety policy is invalid")
+
+
+def canary_order_safety_policy_definition(
+    policy: LimitedLiveCanaryOrderSafetyPolicy = (LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B),
+) -> dict:
+    validate_canary_order_safety_policy(policy)
+    return _canonicalize(asdict(policy))
+
+
+def canary_order_safety_policy_signature(
+    policy: LimitedLiveCanaryOrderSafetyPolicy = (LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B),
+) -> str:
+    encoded = json.dumps(
+        canary_order_safety_policy_definition(policy),
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode("utf-8")
     return f"{policy.schema_version}:{sha256(encoded).hexdigest()}"
 
@@ -232,6 +285,135 @@ def canary_run_signature(value) -> str:
     return f"{RUN_SCHEMA_VERSION}:{sha256(encoded).hexdigest()}"
 
 
+_BINDING_SIGNATURE_FIELDS = (
+    "binding_schema_version",
+    "canary_activation_id",
+    "activation_signature",
+    "promotion_approval_id",
+    "promotion_approval_signature",
+    "candidate_id",
+    "user_id",
+    "exchange",
+    "quote_asset",
+    "order_safety_policy_schema_version",
+    "order_safety_policy_definition",
+    "order_safety_policy_signature",
+    "max_buy_order_amount_krw",
+    "daily_max_buy_amount_krw",
+    "bound_at",
+)
+
+
+def canary_safety_binding_signature(value) -> str:
+    payload = _canonicalize(
+        {name: getattr(value, name) for name in _BINDING_SIGNATURE_FIELDS}
+    )
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"{BINDING_SCHEMA_VERSION}:{sha256(encoded).hexdigest()}"
+
+
+def build_canary_safety_binding(activation, *, bound_at):
+    if activation.id is None:
+        raise LivePolicyCanaryError(
+            "Canary Activation must be persisted before binding"
+        )
+    policy = LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B
+    validate_canary_order_safety_policy(policy)
+    binding = LivePolicyCanarySafetyBinding(
+        binding_schema_version=BINDING_SCHEMA_VERSION,
+        canary_activation_id=activation.id,
+        activation_signature=activation.activation_signature,
+        promotion_approval_id=activation.promotion_approval_id,
+        promotion_approval_signature=activation.promotion_approval_signature,
+        candidate_id=activation.candidate_id,
+        user_id=activation.user_id,
+        exchange=activation.exchange,
+        quote_asset=activation.quote_asset,
+        order_safety_policy_schema_version=policy.schema_version,
+        order_safety_policy_definition=canary_order_safety_policy_definition(policy),
+        order_safety_policy_signature=canary_order_safety_policy_signature(policy),
+        max_buy_order_amount_krw=Decimal(policy.max_buy_order_amount_krw),
+        daily_max_buy_amount_krw=Decimal(policy.daily_max_buy_amount_krw),
+        bound_at=_utc(bound_at, "Canary safety binding clock"),
+        binding_signature="",
+    )
+    binding.binding_signature = canary_safety_binding_signature(binding)
+    return binding
+
+
+def load_and_validate_canary_safety_binding(session: Session, activation):
+    binding = session.scalar(
+        select(LivePolicyCanarySafetyBinding)
+        .where(LivePolicyCanarySafetyBinding.canary_activation_id == activation.id)
+        .execution_options(autoflush=False)
+    )
+    if binding is None:
+        raise LivePolicyCanaryError("CANARY_SAFETY_BINDING_MISSING")
+    policy = LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B
+    expected = {
+        "binding_schema_version": BINDING_SCHEMA_VERSION,
+        "activation_signature": activation.activation_signature,
+        "promotion_approval_id": activation.promotion_approval_id,
+        "promotion_approval_signature": activation.promotion_approval_signature,
+        "candidate_id": activation.candidate_id,
+        "user_id": activation.user_id,
+        "exchange": activation.exchange,
+        "quote_asset": activation.quote_asset,
+        "order_safety_policy_schema_version": policy.schema_version,
+        "order_safety_policy_definition": canary_order_safety_policy_definition(policy),
+        "order_safety_policy_signature": canary_order_safety_policy_signature(policy),
+        "max_buy_order_amount_krw": Decimal(policy.max_buy_order_amount_krw),
+        "daily_max_buy_amount_krw": Decimal(policy.daily_max_buy_amount_krw),
+    }
+    if (
+        binding.canary_activation_id != activation.id
+        or any(
+            _canonicalize(getattr(binding, name)) != _canonicalize(value)
+            for name, value in expected.items()
+        )
+        or binding.binding_signature != canary_safety_binding_signature(binding)
+    ):
+        raise LivePolicyCanaryError("stored Canary safety binding is invalid")
+    return binding
+
+
+def load_and_validate_live_policy_canary_run(
+    session: Session, analysis_run_id: int, settings: Settings
+):
+    run = session.scalar(
+        select(LivePolicyCanaryRun)
+        .where(LivePolicyCanaryRun.analysis_run_id == analysis_run_id)
+        .execution_options(autoflush=False)
+    )
+    if run is None:
+        return None
+    activation = session.get(LivePolicyCanaryActivation, run.canary_activation_id)
+    if activation is None:
+        raise LivePolicyCanaryError("Canary Run Activation does not exist")
+    validated, _, _ = validate_stored_canary_activation(session, activation, settings)
+    binding = load_and_validate_canary_safety_binding(session, activation)
+    expected = {
+        "run_schema_version": RUN_SCHEMA_VERSION,
+        "activation_signature": activation.activation_signature,
+        "promotion_approval_id": activation.promotion_approval_id,
+        "promotion_approval_signature": activation.promotion_approval_signature,
+        "candidate_id": activation.candidate_id,
+        "user_id": activation.user_id,
+        "exchange": activation.exchange,
+        "quote_asset": activation.quote_asset,
+        "baseline_policy_signature": activation.baseline_policy_signature,
+        "canary_policy_signature": activation.canary_policy_signature,
+        "used_canary_policy": True,
+    }
+    if (
+        run.analysis_run_id != analysis_run_id
+        or any(getattr(run, name) != value for name, value in expected.items())
+        or run.run_signature != canary_run_signature(run)
+    ):
+        raise LivePolicyCanaryError("stored Canary Run provenance is invalid")
+    return run, activation, binding, validated.row
+
+
 def canary_run_count(session: Session, activation_id: int) -> int:
     return int(
         session.scalar(
@@ -302,6 +484,7 @@ class LivePolicyCanaryActivationResult:
     safe_reason: str | None
     approval: object | None
     activation: LivePolicyCanaryActivation | None
+    safety_binding: LivePolicyCanarySafetyBinding | None
     expected_approval_signature: str | None
     approval_signature_matched: bool
     canary_policy_schema_version: str
@@ -310,6 +493,11 @@ class LivePolicyCanaryActivationResult:
     proposed_started_at: datetime | None
     proposed_expires_at: datetime | None
     max_analysis_runs: int
+    order_safety_policy_schema_version: str
+    order_safety_policy_definition: dict
+    order_safety_policy_signature: str
+    max_buy_order_amount_krw: Decimal
+    daily_max_buy_amount_krw: Decimal
     database_write: bool
     external_calls: bool
     ranking_runtime_activation_record_created: bool
@@ -361,10 +549,14 @@ class LivePolicyCanaryActivationService:
             existing = self._existing_activation(approval.id)
             if existing is not None:
                 validate_stored_canary_activation(self.session, existing, self.settings)
+                binding = load_and_validate_canary_safety_binding(
+                    self.session, existing
+                )
                 return self._result(
                     ALREADY_ACTIVATED,
                     approval=approval,
                     activation=existing,
+                    safety_binding=binding,
                     expected=expected,
                 )
             started_at = _utc(self.now_fn(), "Canary activation clock")
@@ -428,10 +620,14 @@ class LivePolicyCanaryActivationService:
                     validate_stored_canary_activation(
                         self.session, existing, self.settings
                     )
+                    binding = load_and_validate_canary_safety_binding(
+                        self.session, existing
+                    )
                     return self._result(
                         ALREADY_ACTIVATED,
                         approval=approval,
                         activation=existing,
+                        safety_binding=binding,
                         expected=expected,
                     )
                 started_at = _utc(self.now_fn(), "Canary activation clock")
@@ -452,11 +648,24 @@ class LivePolicyCanaryActivationService:
                 )
                 self.session.add(activation)
                 self.session.flush()
+                binding = build_canary_safety_binding(activation, bound_at=started_at)
+                self.session.add(binding)
+                self.session.flush()
+                OperationalAlertService(self.session).create_canary_alert(
+                    alert_type="LIVE_CANARY_STARTED",
+                    dedup_key=f"CANARY_STARTED:{activation.id}",
+                    safe_message=(
+                        "Limited LIVE Canary가 수동으로 시작되었습니다. "
+                        f"activation_id={activation.id}"
+                    ),
+                    user_id=activation.user_id,
+                )
                 self.session.commit()
                 return self._result(
                     CREATED,
                     approval=approval,
                     activation=activation,
+                    safety_binding=binding,
                     expected=expected,
                     created=True,
                 )
@@ -561,6 +770,7 @@ class LivePolicyCanaryActivationService:
         *,
         approval=None,
         activation=None,
+        safety_binding=None,
         expected=None,
         reason=None,
         started_at=None,
@@ -572,6 +782,7 @@ class LivePolicyCanaryActivationService:
             safe_reason=reason,
             approval=approval,
             activation=activation,
+            safety_binding=safety_binding,
             expected_approval_signature=expected,
             approval_signature_matched=(
                 expected is not None
@@ -584,11 +795,22 @@ class LivePolicyCanaryActivationService:
             proposed_started_at=started_at,
             proposed_expires_at=expires_at,
             max_analysis_runs=LIMITED_LIVE_CANARY_V1A.max_analysis_runs,
+            order_safety_policy_schema_version=(
+                LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B.schema_version
+            ),
+            order_safety_policy_definition=canary_order_safety_policy_definition(),
+            order_safety_policy_signature=canary_order_safety_policy_signature(),
+            max_buy_order_amount_krw=Decimal(
+                LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B.max_buy_order_amount_krw
+            ),
+            daily_max_buy_amount_krw=Decimal(
+                LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B.daily_max_buy_amount_krw
+            ),
             database_write=created,
             external_calls=False,
             ranking_runtime_activation_record_created=created,
             order_behavior_changed=False,
-            canary_order_cap_enabled=False,
+            canary_order_cap_enabled=safety_binding is not None,
         )
 
 
@@ -607,6 +829,8 @@ __all__ = [
     "DRY_RUN",
     "INVALID_CANARY_ACTIVATION",
     "LIMITED_LIVE_CANARY_V1A",
+    "LIMITED_LIVE_CANARY_ORDER_SAFETY_V1B",
+    "LimitedLiveCanaryOrderSafetyPolicy",
     "LivePolicyCanaryActivationResult",
     "LivePolicyCanaryActivationService",
     "LivePolicyCanaryError",
@@ -619,8 +843,14 @@ __all__ = [
     "canary_context_lock_key",
     "canary_policy_definition",
     "canary_policy_definition_signature",
+    "canary_order_safety_policy_definition",
+    "canary_order_safety_policy_signature",
+    "build_canary_safety_binding",
     "canary_ranking_policy",
     "canary_run_count",
     "canary_run_signature",
+    "load_and_validate_canary_safety_binding",
+    "load_and_validate_live_policy_canary_run",
+    "validate_canary_order_safety_policy",
     "validate_stored_canary_activation",
 ]

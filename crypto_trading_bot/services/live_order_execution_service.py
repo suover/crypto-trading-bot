@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
+from hashlib import sha256
 from time import sleep
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -12,10 +13,12 @@ from sqlalchemy.orm import Session
 from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.models import (
     AnalysisRun,
+    LivePolicyCanaryRun,
     MarketUniverseCandidate,
     OrderLog,
     TradeRecommendation,
 )
+from crypto_trading_bot.db.postgres_advisory_lock import PostgresAdvisoryLock
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
@@ -35,6 +38,15 @@ from crypto_trading_bot.services.live_order_safety import (
 )
 from crypto_trading_bot.services.live_execution_ledger_service import (
     LiveExecutionLedgerService,
+)
+from crypto_trading_bot.services.canary_trade_provenance_service import (
+    CANARY_RECOMMENDATION,
+    INVALID_CANARY_PROVENANCE,
+    CanaryTradeProvenance,
+    CanaryTradeProvenanceService,
+)
+from crypto_trading_bot.services.operational_alert_service import (
+    OperationalAlertService,
 )
 from crypto_trading_bot.services.upbit_order_chance_service import (
     UpbitOrderChancePreflightService,
@@ -60,10 +72,24 @@ COUNTED_DAILY_LIVE_ORDER_STATUSES = (
     LIVE_ORDER_UNKNOWN_STATUS,
 )
 KST = ZoneInfo("Asia/Seoul")
+CANARY_BUY_BUDGET_LOCK_NAMESPACE = "limited-live-canary-buy-budget-v1b"
+
+
+def canary_buy_budget_lock_key(activation_id: int, kst_date: str) -> int:
+    if activation_id < 1 or not kst_date:
+        raise ValueError("Canary budget lock identity is invalid")
+    digest = sha256(
+        f"{CANARY_BUY_BUDGET_LOCK_NAMESPACE}:{activation_id}:{kst_date}".encode()
+    ).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
 class LiveOrderExecutionError(ValueError):
     """실거래 주문 검증 또는 실행 준비 문제."""
+
+
+class CanaryOrderSafetyError(LiveOrderExecutionError):
+    """Canary BUY 신규 주문이 고정된 자금 안전 정책을 통과하지 못함."""
 
 
 @dataclass(frozen=True)
@@ -151,12 +177,16 @@ class LiveOrderExecutionService:
         reconciliation_attempts: int = 3,
         retry_delay_seconds: float = 1.0,
         sleep_fn: Callable[[float], None] = sleep,
+        lock_factory: Callable[[int], PostgresAdvisoryLock] | None = None,
+        now_fn: Callable[[], datetime] | None = None,
     ) -> None:
         self.session = session
         self.upbit_client = upbit_client or UpbitClient()
         self.reconciliation_attempts = max(1, reconciliation_attempts)
         self.retry_delay_seconds = retry_delay_seconds
         self.sleep_fn = sleep_fn
+        self.lock_factory = lock_factory or PostgresAdvisoryLock
+        self.now_fn = now_fn or (lambda: datetime.now(UTC))
 
     def build_execution_plan(self, recommendation_id: int) -> LiveOrderExecutionPlan:
         recommendation = self._get_recommendation(recommendation_id)
@@ -224,6 +254,7 @@ class LiveOrderExecutionService:
 
         if existing_exchange_order is not None:
             recovery_plan = self._build_recovery_plan(recommendation)
+            provenance = self._resolve_canary_provenance_for_audit(recommendation)
             return self._persist_exchange_order(
                 recommendation=recommendation,
                 plan=recovery_plan,
@@ -232,6 +263,7 @@ class LiveOrderExecutionService:
                 order_response=existing_exchange_order,
                 recovered=True,
                 create_response=None,
+                canary=self._canary_audit(provenance),
                 commit=commit,
             )
 
@@ -258,9 +290,107 @@ class LiveOrderExecutionService:
                 reason_code=error.reason_code,
                 commit=commit,
             )
+        provenance = CanaryTradeProvenanceService(self.session).resolve(recommendation)
+        if plan.action == "BUY" and provenance.mode == INVALID_CANARY_PROVENANCE:
+            self._block_canary_buy(
+                recommendation,
+                reason_code="INVALID_CANARY_PROVENANCE",
+                detail=provenance.safe_reason,
+                commit=commit,
+            )
+        if plan.action == "BUY" and provenance.mode == CANARY_RECOMMENDATION:
+            if plan.amount_krw is None or provenance.per_order_buy_cap is None:
+                self._block_canary_buy(
+                    recommendation,
+                    reason_code="INVALID_CANARY_PROVENANCE",
+                    detail="Canary BUY cap is missing",
+                    commit=commit,
+                )
+            if plan.amount_krw > provenance.per_order_buy_cap:
+                self._block_canary_buy(
+                    recommendation,
+                    reason_code="PER_ORDER_LIMIT",
+                    detail=(
+                        f"amount_krw={plan.amount_krw}, "
+                        f"max_buy_order_amount_krw={provenance.per_order_buy_cap}"
+                    ),
+                    commit=commit,
+                )
+
+        return self._execute_new_order(
+            recommendation=recommendation,
+            plan=plan,
+            approval_request_id=approval_request_id,
+            identifier=identifier,
+            preflight_audit=preflight_audit,
+            provenance=provenance,
+            commit=commit,
+        )
+
+    def _execute_new_order(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        identifier: str,
+        preflight_audit: dict[str, Any] | None,
+        provenance: CanaryTradeProvenance,
+        commit: bool,
+    ) -> LiveOrderExecutionResult:
+        budget_lock = None
+        if plan.action == "BUY" and provenance.mode == CANARY_RECOMMENDATION:
+            if provenance.activation is None:
+                self._block_canary_buy(
+                    recommendation,
+                    reason_code="INVALID_CANARY_PROVENANCE",
+                    detail="Canary activation is missing",
+                    commit=commit,
+                )
+            day = self.now_fn().astimezone(KST).date()
+            budget_lock = self.lock_factory(
+                canary_buy_budget_lock_key(provenance.activation.id, day.isoformat())
+            )
+            if not budget_lock.acquire():
+                self._block_canary_buy(
+                    recommendation,
+                    reason_code="BUDGET_LOCK_BUSY",
+                    detail=f"canary_activation_id={provenance.activation.id}",
+                    commit=commit,
+                )
+
+        try:
+            return self._submit_new_order(
+                recommendation=recommendation,
+                plan=plan,
+                approval_request_id=approval_request_id,
+                identifier=identifier,
+                preflight_audit=preflight_audit,
+                provenance=provenance,
+                commit=commit,
+            )
+        finally:
+            if budget_lock is not None:
+                budget_lock.release()
+
+    def _submit_new_order(
+        self,
+        *,
+        recommendation: TradeRecommendation,
+        plan: LiveOrderExecutionPlan,
+        approval_request_id: int | None,
+        identifier: str,
+        preflight_audit: dict[str, Any] | None,
+        provenance: CanaryTradeProvenance,
+        commit: bool,
+    ) -> LiveOrderExecutionResult:
         self._validate_daily_live_order_limit(recommendation.user_id, plan)
         self._validate_sell_balance(plan)
-
+        daily_used = None
+        if plan.action == "BUY" and provenance.mode == CANARY_RECOMMENDATION:
+            daily_used = self._validate_canary_daily_buy_limit(
+                provenance, plan, commit=commit
+            )
         try:
             create_response = self._place_live_order(plan, identifier)
         except UpbitOrderRejectedError as error:
@@ -275,6 +405,7 @@ class LiveOrderExecutionService:
                     identifier=identifier,
                     safe_error=error.safe_error.as_dict(),
                     preflight=preflight_audit,
+                    canary=self._canary_audit(provenance, daily_used),
                 ),
                 error_message=str(error),
                 commit=commit,
@@ -287,6 +418,7 @@ class LiveOrderExecutionService:
                 identifier=identifier,
                 create_error=error,
                 preflight=preflight_audit,
+                canary=self._canary_audit(provenance, daily_used),
                 commit=commit,
             )
 
@@ -309,6 +441,7 @@ class LiveOrderExecutionService:
                     create_response=create_response,
                     safe_error=error.safe_error.as_dict(),
                     preflight=preflight_audit,
+                    canary=self._canary_audit(provenance, daily_used),
                 ),
                 error_message=str(error),
                 commit=commit,
@@ -323,6 +456,7 @@ class LiveOrderExecutionService:
             recovered=False,
             create_response=create_response,
             preflight=preflight_audit,
+            canary=self._canary_audit(provenance, daily_used),
             commit=commit,
         )
 
@@ -335,6 +469,7 @@ class LiveOrderExecutionService:
         identifier: str,
         create_error: UpbitOrderAmbiguousError,
         preflight: dict[str, Any] | None,
+        canary: dict[str, Any] | None,
         commit: bool,
     ) -> LiveOrderExecutionResult:
         last_error: UpbitOrderOperationError = create_error
@@ -355,6 +490,7 @@ class LiveOrderExecutionService:
                 recovered=True,
                 create_response=None,
                 preflight=preflight,
+                canary=canary,
                 commit=commit,
             )
         return self._persist_result(
@@ -368,6 +504,7 @@ class LiveOrderExecutionService:
                 identifier=identifier,
                 safe_error=last_error.safe_error.as_dict(),
                 preflight=preflight,
+                canary=canary,
             ),
             error_message=str(last_error),
             commit=commit,
@@ -384,6 +521,7 @@ class LiveOrderExecutionService:
         recovered: bool,
         create_response: dict[str, Any] | None,
         preflight: dict[str, Any] | None = None,
+        canary: dict[str, Any] | None = None,
         commit: bool,
     ) -> LiveOrderExecutionResult:
         return self._persist_result(
@@ -401,6 +539,7 @@ class LiveOrderExecutionService:
                 create_response=create_response,
                 order_status_response=order_response,
                 preflight=preflight,
+                canary=canary,
             ),
             error_message=None,
             recovered=recovered,
@@ -480,6 +619,7 @@ class LiveOrderExecutionService:
         order_status_response: dict[str, Any] | None = None,
         safe_error: dict[str, Any] | None = None,
         preflight: dict[str, Any] | None = None,
+        canary: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         audit = {
             "actual_order_executed": executed,
@@ -491,6 +631,8 @@ class LiveOrderExecutionService:
         }
         if preflight is not None:
             audit["preflight"] = preflight
+        if canary is not None:
+            audit["canary"] = canary
         return audit
 
     def _run_order_chance_preflight(
@@ -582,7 +724,7 @@ class LiveOrderExecutionService:
             )
 
     def _get_today_live_order_amount_krw(self, user_id: int) -> Decimal:
-        start_utc, end_utc = self._get_today_range_in_utc()
+        start_utc, end_utc = self._get_today_range_in_utc(self.now_fn())
         statement = select(func.coalesce(func.sum(OrderLog.amount_krw), 0)).where(
             OrderLog.user_id == user_id,
             OrderLog.trading_mode == "LIVE",
@@ -603,12 +745,141 @@ class LiveOrderExecutionService:
         return Decimal(str(plan.amount_krw))
 
     @staticmethod
-    def _get_today_range_in_utc() -> tuple[datetime, datetime]:
-        today_kst = datetime.now(KST).date()
+    def _get_today_range_in_utc(
+        now: datetime | None = None,
+    ) -> tuple[datetime, datetime]:
+        today_kst = (now or datetime.now(UTC)).astimezone(KST).date()
         start_kst = datetime.combine(today_kst, time.min, tzinfo=KST)
         return start_kst.astimezone(UTC), (start_kst + timedelta(days=1)).astimezone(
             UTC
         )
+
+    def _get_today_canary_buy_amount_krw(self, activation_id: int) -> Decimal:
+        start_utc, end_utc = self._get_today_range_in_utc(self.now_fn())
+        statement = (
+            select(func.coalesce(func.sum(OrderLog.amount_krw), 0))
+            .join(
+                TradeRecommendation,
+                TradeRecommendation.id == OrderLog.recommendation_id,
+            )
+            .join(
+                MarketUniverseCandidate,
+                MarketUniverseCandidate.id == TradeRecommendation.universe_candidate_id,
+            )
+            .join(
+                AnalysisRun,
+                AnalysisRun.id == MarketUniverseCandidate.analysis_run_id,
+            )
+            .join(
+                LivePolicyCanaryRun,
+                LivePolicyCanaryRun.analysis_run_id == AnalysisRun.id,
+            )
+            .where(
+                LivePolicyCanaryRun.canary_activation_id == activation_id,
+                OrderLog.trading_mode == "LIVE",
+                OrderLog.side == "BUY",
+                OrderLog.status.in_(COUNTED_DAILY_LIVE_ORDER_STATUSES),
+                OrderLog.amount_krw.is_not(None),
+                OrderLog.created_at >= start_utc,
+                OrderLog.created_at < end_utc,
+            )
+        )
+        return Decimal(str(self.session.scalar(statement) or 0))
+
+    def _validate_canary_daily_buy_limit(
+        self,
+        provenance: CanaryTradeProvenance,
+        plan: LiveOrderExecutionPlan,
+        *,
+        commit: bool,
+    ) -> Decimal:
+        if (
+            provenance.activation is None
+            or provenance.daily_buy_cap is None
+            or plan.amount_krw is None
+        ):
+            raise CanaryOrderSafetyError(
+                "Canary order was not executed: invalid Canary provenance"
+            )
+        used = self._get_today_canary_buy_amount_krw(provenance.activation.id)
+        if used + plan.amount_krw > provenance.daily_buy_cap:
+            self._block_canary_buy(
+                self._get_recommendation(plan.recommendation_id),
+                reason_code="DAILY_LIMIT",
+                detail=(
+                    f"today_canary_buy_amount_krw={used}, "
+                    f"new_order_amount_krw={plan.amount_krw}, "
+                    f"daily_max_buy_amount_krw={provenance.daily_buy_cap}"
+                ),
+                commit=commit,
+            )
+        return used
+
+    def _block_canary_buy(
+        self,
+        recommendation: TradeRecommendation,
+        *,
+        reason_code: str,
+        detail: str | None,
+        commit: bool,
+    ) -> None:
+        provenance_invalid = reason_code == "INVALID_CANARY_PROVENANCE"
+        alert_type = (
+            "LIVE_CANARY_PROVENANCE_INVALID"
+            if provenance_invalid
+            else "LIVE_CANARY_BUY_LIMIT_BLOCKED"
+        )
+        dedup_reason = "PROVENANCE" if provenance_invalid else reason_code
+        OperationalAlertService(self.session).create_canary_alert(
+            alert_type=alert_type,
+            dedup_key=(
+                f"CANARY_PROVENANCE_INVALID:{recommendation.id}"
+                if provenance_invalid
+                else f"CANARY_BUY_LIMIT_BLOCKED:{recommendation.id}:{dedup_reason}"
+            ),
+            safe_message=(
+                f"Canary BUY was not submitted to Upbit. reason_code={reason_code}"
+            ),
+            user_id=recommendation.user_id,
+            recommendation_id=recommendation.id,
+        )
+        if commit:
+            self.session.commit()
+        raise CanaryOrderSafetyError(
+            "Canary 주문 제한으로 실제 Upbit 주문은 실행되지 않았습니다. "
+            f"reason_code={reason_code}; detail={detail or 'unavailable'}"
+        )
+
+    def _resolve_canary_provenance_for_audit(
+        self, recommendation: TradeRecommendation
+    ) -> CanaryTradeProvenance | None:
+        try:
+            return CanaryTradeProvenanceService(self.session).resolve(recommendation)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _canary_audit(
+        provenance: CanaryTradeProvenance | None,
+        daily_used_before_order: Decimal | None = None,
+    ) -> dict[str, Any] | None:
+        if provenance is None or provenance.mode != CANARY_RECOMMENDATION:
+            return None
+        return {
+            "mode": provenance.mode,
+            "canary_activation_id": getattr(provenance.activation, "id", None),
+            "canary_run_id": getattr(provenance.canary_run, "id", None),
+            "promotion_approval_id": getattr(provenance.promotion_approval, "id", None),
+            "activation_signature": provenance.activation_signature,
+            "safety_binding_signature": provenance.safety_binding_signature,
+            "max_buy_order_amount_krw": str(provenance.per_order_buy_cap),
+            "daily_max_buy_amount_krw": str(provenance.daily_buy_cap),
+            "daily_used_before_order_krw": (
+                str(daily_used_before_order)
+                if daily_used_before_order is not None
+                else None
+            ),
+        }
 
     def _validate_sell_balance(self, plan: LiveOrderExecutionPlan) -> None:
         if plan.action != "SELL" or get_settings().live_order_chance_preflight_enabled:

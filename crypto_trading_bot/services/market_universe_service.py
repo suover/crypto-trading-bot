@@ -72,6 +72,7 @@ class MarketUniverseService:
         candle_service: MarketCandleService | None = None,
         ranking_policy: MarketRankingPolicy | None = None,
         canary_run_reserver: Callable[[AnalysisRun], object | None] | None = None,
+        canary_max_buy_order_amount_krw: Decimal | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
@@ -84,6 +85,7 @@ class MarketUniverseService:
         )
         self.ranking_policy = ranking_policy or HeuristicMarketRankingPolicy()
         self.canary_run_reserver = canary_run_reserver
+        self.canary_max_buy_order_amount_krw = canary_max_buy_order_amount_krw
 
     def build_and_persist(
         self,
@@ -111,14 +113,20 @@ class MarketUniverseService:
         self.session.flush()
         self.session.commit()
         try:
+            reserved_canary_run = None
             if self.canary_run_reserver is not None:
-                self.canary_run_reserver(analysis_run)
+                reserved_canary_run = self.canary_run_reserver(analysis_run)
             result = self._build(
                 analysis_run=analysis_run,
                 user=user,
                 exchange=exchange,
                 quote_asset=quote_asset,
                 pipeline_run_id=pipeline_id,
+                canary_buy_cap=(
+                    self.canary_max_buy_order_amount_krw
+                    if reserved_canary_run is not None
+                    else None
+                ),
             )
             analysis_run.status = "SUCCESS"
             analysis_run.finished_at = datetime.now(UTC)
@@ -142,6 +150,7 @@ class MarketUniverseService:
         exchange: str,
         quote_asset: str,
         pipeline_run_id: str | None,
+        canary_buy_cap: Decimal | None,
     ) -> MarketUniverseBuildResult:
         balances = self._load_balances(user.id, exchange, pipeline_run_id)
         excluded_assets = self.settings.portfolio_excluded_asset_set
@@ -330,10 +339,15 @@ class MarketUniverseService:
             candidate["coingecko_id"] = (
                 registry_market.coingecko_id if registry_market is not None else None
             )
-            candidate["max_order_amount_krw"] = str(
+            existing_max_order_amount = (
                 self.registry.calculate_final_max_order_amount(registry_market)
                 if registry_market is not None
                 else self.registry.calculate_default_max_order_amount(exchange)
+            )
+            candidate["max_order_amount_krw"] = str(
+                min(existing_max_order_amount, canary_buy_cap)
+                if canary_buy_cap is not None
+                else existing_max_order_amount
             )
             candidate["minimum_order_amount_krw"] = str(
                 MIN_RECOMMENDED_ORDER_AMOUNT_KRW

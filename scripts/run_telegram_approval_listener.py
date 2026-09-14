@@ -352,16 +352,28 @@ def append_live_order_result_message(
             )
 
     elif live_order_error is not None:
-        message_lines.extend(
-            [
-                "처리 결과: 승인 완료",
-                "주문 실행 모드: LIVE",
-                "주문 상태: 실거래 주문 처리 오류",
-                f"오류 사유: {live_order_error}",
-                "",
-                "※ 실거래 주문은 완료되지 않았습니다.",
-            ]
-        )
+        if live_order_error.startswith("Canary 주문 제한으로"):
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 실행 모드: LIVE",
+                    "주문 상태: Canary 주문 제한으로 미실행",
+                    f"오류 사유: {live_order_error}",
+                    "",
+                    "※ 실제 Upbit 주문은 실행되지 않았습니다.",
+                ]
+            )
+        else:
+            message_lines.extend(
+                [
+                    "처리 결과: 승인 완료",
+                    "주문 실행 모드: LIVE",
+                    "주문 상태: 실거래 주문 처리 오류",
+                    f"오류 사유: {live_order_error}",
+                    "",
+                    "※ 실거래 주문은 완료되지 않았습니다.",
+                ]
+            )
     else:
         message_lines.extend(
             [
