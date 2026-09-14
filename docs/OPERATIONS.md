@@ -1136,6 +1136,41 @@ Apply는 Review Gate를 다시 평가합니다. Shadow evidence가 추가되거�
 
 현재 Production Candidate 1/2는 `NO_SHADOW_ENROLLMENT`이므로 승인 대상이 아닙니다. Approval row 생성은 LIVE policy activation, ranking runtime 변경, 주문 변경 또는 Limited LIVE Canary 시작이 아닙니다.
 
+## Limited LIVE Canary v1-A
+
+상태 확인은 DB/settings만 읽고 run slot을 예약하거나 외부 API를 호출하지 않습니다.
+
+```bash
+python -m scripts.check_live_policy_canary
+```
+
+현재 Human-approved Promotion을 Activation 후보로 검증하는 Preview도 read-only입니다.
+
+```bash
+python -m scripts.start_live_policy_canary \
+  --promotion-approval-id <ID>
+```
+
+기술적으로 Apply는 Preview에서 확인한 exact Approval signature를 요구합니다.
+
+```bash
+python -m scripts.start_live_policy_canary \
+  --promotion-approval-id <ID> \
+  --expected-approval-signature "<EXACT_SIGNATURE>" \
+  --apply
+```
+
+그러나 v1-A Production rollout에서는 위 `--apply` 명령을 실행하지 않습니다. v1-A는
+ranking 연결만 제공하고 Canary 전용 BUY cap과 stop/termination은 제공하지 않으므로,
+실제 Activation은 v1-B 배포와 별도 운영 승인이 끝난 뒤에만 수행합니다.
+
+배포 직후 정상 smoke 결과는 `mode=BASELINE_NO_CANARY`, `active_canary_count=0`,
+`database_write=false`, `external_calls=false`입니다. 그 뒤 기존
+`bash scripts/check_server_runtime_safety.sh --production-live`도 그대로 통과해야 합니다.
+Canary metadata 오류는 Baseline fallback이지만 DB infrastructure 오류는 pipeline failure이며,
+ACTIVE Canary는 정확히 48시간 또는 6회 MarketUniverse 시도 중 먼저 도달하는 경계까지만
+사용됩니다. 실패한 분석도 이미 예약된 시도이면 횟수에 포함됩니다.
+
 기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
 
 ```bash

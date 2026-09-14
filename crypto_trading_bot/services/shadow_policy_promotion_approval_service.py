@@ -51,6 +51,13 @@ class ShadowPolicyPromotionApprovalError(ValueError):
 
 
 @dataclass(frozen=True)
+class ValidatedShadowPolicyPromotionApproval:
+    row: ShadowPolicyPromotionApproval
+    enrollment: object
+    candidate: object
+
+
+@dataclass(frozen=True)
 class ShadowPolicyPromotionApprovalResult:
     candidate_id: int
     approval: ShadowPolicyPromotionApproval | None
@@ -286,7 +293,7 @@ class ShadowPolicyPromotionApprovalService:
                     raise ShadowPolicyPromotionApprovalError(
                         "stored approval has no Shadow enrollment"
                     )
-                self._validate_existing(existing, validated)
+                self.validate_stored_approval(existing, validated)
                 if apply and expected != existing.review_decision_signature:
                     return self._result(
                         candidate_id,
@@ -366,7 +373,7 @@ class ShadowPolicyPromotionApprovalService:
                     raise ShadowPolicyPromotionApprovalError(
                         "concurrent approval has no enrollment"
                     )
-                self._validate_existing(concurrent, validated)
+                self.validate_stored_approval(concurrent, validated)
                 if concurrent.review_decision_signature != expected:
                     return self._result(
                         candidate_id,
@@ -536,7 +543,8 @@ class ShadowPolicyPromotionApprovalService:
             approval_signature="",
         )
 
-    def _validate_existing(self, row, validated) -> None:
+    @staticmethod
+    def validate_stored_approval(row, validated) -> None:
         enrollment = validated.row
         candidate = validated.candidate
         expected_identity = {
@@ -718,6 +726,37 @@ class ShadowPolicyPromotionApprovalService:
         )
 
 
+def load_and_validate_shadow_policy_promotion_approval(
+    session: Session, approval_id: int
+) -> ValidatedShadowPolicyPromotionApproval | None:
+    if (
+        isinstance(approval_id, bool)
+        or not isinstance(approval_id, int)
+        or approval_id < 1
+    ):
+        raise ShadowPolicyPromotionApprovalError(
+            "promotion approval ID must be a positive integer"
+        )
+    row = session.scalar(
+        select(ShadowPolicyPromotionApproval)
+        .where(ShadowPolicyPromotionApproval.id == approval_id)
+        .execution_options(autoflush=False)
+    )
+    if row is None:
+        return None
+    validated = load_and_validate_shadow_policy_enrollment(session, row.candidate_id)
+    if validated is None:
+        raise ShadowPolicyPromotionApprovalError(
+            "stored approval has no Shadow enrollment"
+        )
+    ShadowPolicyPromotionApprovalService.validate_stored_approval(row, validated)
+    return ValidatedShadowPolicyPromotionApproval(
+        row=row,
+        enrollment=validated.row,
+        candidate=validated.candidate,
+    )
+
+
 __all__ = [
     "ALREADY_APPROVED",
     "APPROVAL_SCHEMA_VERSION",
@@ -732,6 +771,8 @@ __all__ = [
     "ShadowPolicyPromotionApprovalError",
     "ShadowPolicyPromotionApprovalResult",
     "ShadowPolicyPromotionApprovalService",
+    "ValidatedShadowPolicyPromotionApproval",
+    "load_and_validate_shadow_policy_promotion_approval",
     "promotion_approval_payload",
     "promotion_approval_signature",
     "review_checks_definition",

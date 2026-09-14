@@ -359,6 +359,18 @@ UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고
 
 필요하면 기존 수동 명령으로 fallback할 수 있지만 반드시 DB와 `.env` 백업, fast-forward-only Git 업데이트, 전체 profile image build, migration, health check 순서를 유지합니다.
 
+## Limited LIVE Canary v1-A
+
+Canary v1-A 코드의 배포는 Canary 활성화가 아닙니다. active Canary가 0개이면 Market
+Universe는 기존 Baseline ranking을 사용하고 AI Recommendation과 주문 실행도 기존 동작을
+유지합니다. 현재 운영 확인은 `python -m scripts.check_live_policy_canary`의
+`mode=BASELINE_NO_CANARY`, `active_canary_count=0`, `database_write=false`,
+`external_calls=false`입니다.
+
+v1-A에는 Canary 전용 BUY cap과 stop/termination이 없으므로 Production에서
+`scripts.start_live_policy_canary --apply`를 실행하지 않습니다. 실제 Activation은 v1-B의
+금전 한도·종료 안전장치와 별도 운영 승인이 완료된 뒤에만 수행합니다.
+
 ## 절대 금지
 
 Production에서 다음 명령을 실행하지 않습니다.

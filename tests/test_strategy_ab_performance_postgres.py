@@ -13,6 +13,8 @@ from crypto_trading_bot.config.settings import Settings
 from crypto_trading_bot.db.database import SessionLocal, engine
 from crypto_trading_bot.db.models import (
     AnalysisRun,
+    LivePolicyCanaryActivation,
+    LivePolicyCanaryRun,
     OrderLog,
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
@@ -88,6 +90,20 @@ from crypto_trading_bot.services.shadow_policy_promotion_approval_service import
     REVIEW_DECISION_CHANGED as PROMOTION_REVIEW_CHANGED,
     REVIEW_NOT_ELIGIBLE as PROMOTION_REVIEW_NOT_ELIGIBLE,
     ShadowPolicyPromotionApprovalService,
+)
+from crypto_trading_bot.services.live_policy_canary_service import (
+    ALREADY_ACTIVATED as CANARY_ALREADY_ACTIVATED,
+    CANARY_CONTEXT_BUSY,
+    CREATED as CANARY_ACTIVATION_CREATED,
+    BASELINE_EXHAUSTED as CANARY_BASELINE_EXHAUSTED,
+    BASELINE_INVALID_CANARY,
+    BASELINE_NO_CANARY,
+    CANARY,
+    LivePolicyCanaryActivationService,
+)
+from crypto_trading_bot.services.live_ranking_policy_resolver import (
+    CanaryRuntimeBusyError,
+    LiveRankingPolicyResolver,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
     OUTCOME_INCOMPLETE,
@@ -2672,6 +2688,446 @@ def test_postgresql_shadow_promotion_concurrent_different_signatures():
         )
         verify_session.execute(delete(User).where(User.id == user_id))
         verify_session.commit()
+
+
+def test_postgresql_limited_live_canary_lineage_exhaustion_and_fallback():
+    with engine.connect() as connection:
+        outer_transaction = connection.begin()
+        isolated_sessions = sessionmaker(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            with isolated_sessions() as session:
+                user = User(name=f"limited-live-canary-{uuid4()}")
+                session.add(user)
+                session.flush()
+                candidate, review, evidence_as_of = (
+                    _create_fully_eligible_shadow_review(session, user, year=2099)
+                )
+                runtime_settings = Settings(
+                    _env_file=None,
+                    database_url="postgresql://test:test@localhost/test",
+                    market_universe_mode="DYNAMIC",
+                    market_universe_top_n=2,
+                    market_universe_prefilter_n=3,
+                )
+
+                assert (
+                    LiveRankingPolicyResolver(
+                        session,
+                        settings=runtime_settings,
+                        now_fn=lambda: evidence_as_of,
+                    )
+                    .inspect(user_name=user.name)
+                    .mode
+                    == BASELINE_NO_CANARY
+                )
+                promotion = ShadowPolicyPromotionApprovalService(
+                    session,
+                    review_service=MagicMock(evaluate=MagicMock(return_value=review)),
+                    now_fn=lambda: evidence_as_of,
+                ).approve(
+                    candidate_id=candidate.id,
+                    expected_review_decision_signature=review.review_decision_signature,
+                )
+                assert promotion.approval_status == PROMOTION_CREATED
+                session.commit()
+
+                started_at = evidence_as_of + timedelta(minutes=1)
+                activated = LivePolicyCanaryActivationService(
+                    session,
+                    settings=runtime_settings,
+                    now_fn=lambda: started_at,
+                ).activate(
+                    promotion_approval_id=promotion.approval.id,
+                    expected_approval_signature=promotion.approval.approval_signature,
+                )
+                assert activated.activation_status == CANARY_ACTIVATION_CREATED
+                assert activated.activation.expires_at == started_at + timedelta(
+                    hours=48
+                )
+                expired = LiveRankingPolicyResolver(
+                    session,
+                    settings=runtime_settings,
+                    now_fn=lambda: activated.activation.expires_at,
+                ).inspect(user_name=user.name)
+                assert expired.mode == "BASELINE_EXPIRED"
+                assert (
+                    session.scalar(
+                        select(func.count()).select_from(LivePolicyCanaryRun)
+                    )
+                    == 0
+                )
+
+                run_rows = []
+                for ordinal in range(1, 7):
+                    with LiveRankingPolicyResolver(
+                        session,
+                        settings=runtime_settings,
+                        now_fn=lambda: started_at + timedelta(minutes=2),
+                    ).resolve(user_name=user.name) as lease:
+                        assert lease.resolution.mode == CANARY
+                        analysis_run = AnalysisRun(
+                            user_id=user.id,
+                            pipeline_run_id=str(uuid4()),
+                            run_type="MARKET_UNIVERSE",
+                            trading_mode="AI_APPROVAL",
+                            status="FAILED" if ordinal == 1 else "STARTED",
+                        )
+                        session.add(analysis_run)
+                        session.flush()
+                        session.commit()
+                        run = lease.reserve_run(analysis_run)
+                        assert run.run_ordinal == ordinal
+                        run_rows.append(run)
+
+                exhausted = LiveRankingPolicyResolver(
+                    session,
+                    settings=runtime_settings,
+                    now_fn=lambda: started_at + timedelta(minutes=3),
+                ).inspect(user_name=user.name)
+                assert exhausted.mode == CANARY_BASELINE_EXHAUSTED
+                assert exhausted.used_analysis_run_count == 6
+                assert (
+                    session.scalar(
+                        select(func.count())
+                        .select_from(LivePolicyCanaryRun)
+                        .where(
+                            LivePolicyCanaryRun.canary_activation_id
+                            == activated.activation.id
+                        )
+                    )
+                    == 6
+                )
+                assert all(
+                    row.analysis_run_id is not None
+                    and row.promotion_approval_id == promotion.approval.id
+                    and row.candidate_id == candidate.id
+                    and row.pipeline_run_id
+                    and row.run_signature
+                    for row in run_rows
+                )
+                assert run_rows[0].analysis_run_id is not None
+
+                activated.activation.activation_signature = "corrupt"
+                session.flush()
+                invalid = LiveRankingPolicyResolver(
+                    session,
+                    settings=runtime_settings,
+                    now_fn=lambda: started_at + timedelta(minutes=3),
+                ).inspect(user_name=user.name)
+                assert invalid.mode == BASELINE_INVALID_CANARY
+        finally:
+            outer_transaction.rollback()
+
+
+def test_postgresql_limited_live_canary_concurrent_activation_has_one_row():
+    runtime_settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        market_universe_mode="DYNAMIC",
+        market_universe_top_n=2,
+        market_universe_prefilter_n=3,
+    )
+    with SessionLocal() as setup_session:
+        user = User(name=f"limited-live-canary-activation-race-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate, review, evidence_as_of = _create_fully_eligible_shadow_review(
+            setup_session, user, year=2101
+        )
+        promotion = ShadowPolicyPromotionApprovalService(
+            setup_session,
+            review_service=MagicMock(evaluate=MagicMock(return_value=review)),
+            now_fn=lambda: evidence_as_of,
+        ).approve(
+            candidate_id=candidate.id,
+            expected_review_decision_signature=review.review_decision_signature,
+        )
+        setup_session.commit()
+        approval_id = promotion.approval.id
+        approval_signature = promotion.approval.approval_signature
+        candidate_id = candidate.id
+        user_id = user.id
+        started_at = evidence_as_of + timedelta(minutes=1)
+
+    barrier = Barrier(2)
+    results = []
+    errors = []
+
+    def activate_once():
+        try:
+            with SessionLocal() as session:
+                barrier.wait()
+                result = LivePolicyCanaryActivationService(
+                    session,
+                    settings=runtime_settings,
+                    now_fn=lambda: started_at,
+                ).activate(
+                    promotion_approval_id=approval_id,
+                    expected_approval_signature=approval_signature,
+                )
+                results.append(result.activation_status)
+        except Exception as error:
+            errors.append(error)
+
+    threads = (Thread(target=activate_once), Thread(target=activate_once))
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    try:
+        assert not errors
+        assert results.count(CANARY_ACTIVATION_CREATED) == 1
+        assert set(results).issubset(
+            {
+                CANARY_ACTIVATION_CREATED,
+                CANARY_ALREADY_ACTIVATED,
+                CANARY_CONTEXT_BUSY,
+            }
+        )
+        with SessionLocal() as verify_session:
+            assert (
+                verify_session.scalar(
+                    select(func.count())
+                    .select_from(LivePolicyCanaryActivation)
+                    .where(
+                        LivePolicyCanaryActivation.promotion_approval_id == approval_id
+                    )
+                )
+                == 1
+            )
+    finally:
+        with SessionLocal() as cleanup_session:
+            cleanup_session.execute(
+                delete(LivePolicyCanaryActivation).where(
+                    LivePolicyCanaryActivation.promotion_approval_id == approval_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyPromotionApproval).where(
+                    ShadowPolicyPromotionApproval.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyEvaluation).where(
+                    ShadowPolicyEvaluation.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyEnrollment).where(
+                    ShadowPolicyEnrollment.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ResearchPolicyCandidate).where(
+                    ResearchPolicyCandidate.id == candidate_id
+                )
+            )
+            snapshot_ids = select(StrategyReplaySnapshot.id).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+            cleanup_session.execute(
+                delete(StrategyReplayCandidateOutcome).where(
+                    StrategyReplayCandidateOutcome.strategy_replay_snapshot_id.in_(
+                        snapshot_ids
+                    )
+                )
+            )
+            cleanup_session.execute(
+                delete(StrategyReplayCandidate).where(
+                    StrategyReplayCandidate.strategy_replay_snapshot_id.in_(
+                        snapshot_ids
+                    )
+                )
+            )
+            cleanup_session.execute(
+                delete(StrategyReplaySnapshot).where(
+                    StrategyReplaySnapshot.user_id == user_id
+                )
+            )
+            cleanup_session.execute(
+                delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+            )
+            cleanup_session.execute(delete(User).where(User.id == user_id))
+            cleanup_session.commit()
+
+
+def test_postgresql_limited_live_canary_concurrent_sixth_run_is_capped():
+    runtime_settings = Settings(
+        _env_file=None,
+        database_url="postgresql://test:test@localhost/test",
+        market_universe_mode="DYNAMIC",
+        market_universe_top_n=2,
+        market_universe_prefilter_n=3,
+    )
+    with SessionLocal() as setup_session:
+        user = User(name=f"limited-live-canary-race-{uuid4()}")
+        setup_session.add(user)
+        setup_session.flush()
+        candidate, review, evidence_as_of = _create_fully_eligible_shadow_review(
+            setup_session, user, year=2100
+        )
+        promotion = ShadowPolicyPromotionApprovalService(
+            setup_session,
+            review_service=MagicMock(evaluate=MagicMock(return_value=review)),
+            now_fn=lambda: evidence_as_of,
+        ).approve(
+            candidate_id=candidate.id,
+            expected_review_decision_signature=review.review_decision_signature,
+        )
+        setup_session.commit()
+        started_at = evidence_as_of + timedelta(minutes=1)
+        activated = LivePolicyCanaryActivationService(
+            setup_session,
+            settings=runtime_settings,
+            now_fn=lambda: started_at,
+        ).activate(
+            promotion_approval_id=promotion.approval.id,
+            expected_approval_signature=promotion.approval.approval_signature,
+        )
+        activation_id = activated.activation.id
+        candidate_id = candidate.id
+        user_id = user.id
+        user_name = user.name
+        for _ in range(5):
+            with LiveRankingPolicyResolver(
+                setup_session,
+                settings=runtime_settings,
+                now_fn=lambda: started_at + timedelta(minutes=2),
+            ).resolve(user_name=user_name) as lease:
+                analysis_run = AnalysisRun(
+                    user_id=user_id,
+                    pipeline_run_id=str(uuid4()),
+                    run_type="MARKET_UNIVERSE",
+                    trading_mode="AI_APPROVAL",
+                    status="STARTED",
+                )
+                setup_session.add(analysis_run)
+                setup_session.flush()
+                setup_session.commit()
+                lease.reserve_run(analysis_run)
+
+    barrier = Barrier(2)
+    results = []
+    errors = []
+
+    def reserve_competing_run():
+        try:
+            with SessionLocal() as session:
+                barrier.wait()
+                try:
+                    lease = LiveRankingPolicyResolver(
+                        session,
+                        settings=runtime_settings,
+                        now_fn=lambda: started_at + timedelta(minutes=3),
+                    ).resolve(user_name=user_name)
+                except CanaryRuntimeBusyError:
+                    results.append("BUSY")
+                    return
+                with lease:
+                    if lease.resolution.mode != CANARY:
+                        results.append(lease.resolution.mode)
+                        return
+                    analysis_run = AnalysisRun(
+                        user_id=user_id,
+                        pipeline_run_id=str(uuid4()),
+                        run_type="MARKET_UNIVERSE",
+                        trading_mode="AI_APPROVAL",
+                        status="STARTED",
+                    )
+                    session.add(analysis_run)
+                    session.flush()
+                    session.commit()
+                    lease.reserve_run(analysis_run)
+                    results.append("RESERVED")
+        except Exception as error:
+            errors.append(error)
+
+    threads = (
+        Thread(target=reserve_competing_run),
+        Thread(target=reserve_competing_run),
+    )
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    try:
+        assert not errors
+        assert results.count("RESERVED") == 1
+        assert set(results).issubset({"RESERVED", "BUSY", CANARY_BASELINE_EXHAUSTED})
+        with SessionLocal() as verify_session:
+            assert (
+                verify_session.scalar(
+                    select(func.count())
+                    .select_from(LivePolicyCanaryRun)
+                    .where(LivePolicyCanaryRun.canary_activation_id == activation_id)
+                )
+                == 6
+            )
+    finally:
+        with SessionLocal() as cleanup_session:
+            cleanup_session.execute(
+                delete(LivePolicyCanaryRun).where(
+                    LivePolicyCanaryRun.canary_activation_id == activation_id
+                )
+            )
+            cleanup_session.execute(
+                delete(LivePolicyCanaryActivation).where(
+                    LivePolicyCanaryActivation.id == activation_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyPromotionApproval).where(
+                    ShadowPolicyPromotionApproval.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyEvaluation).where(
+                    ShadowPolicyEvaluation.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ShadowPolicyEnrollment).where(
+                    ShadowPolicyEnrollment.candidate_id == candidate_id
+                )
+            )
+            cleanup_session.execute(
+                delete(ResearchPolicyCandidate).where(
+                    ResearchPolicyCandidate.id == candidate_id
+                )
+            )
+            snapshot_ids = select(StrategyReplaySnapshot.id).where(
+                StrategyReplaySnapshot.user_id == user_id
+            )
+            cleanup_session.execute(
+                delete(StrategyReplayCandidateOutcome).where(
+                    StrategyReplayCandidateOutcome.strategy_replay_snapshot_id.in_(
+                        snapshot_ids
+                    )
+                )
+            )
+            cleanup_session.execute(
+                delete(StrategyReplayCandidate).where(
+                    StrategyReplayCandidate.strategy_replay_snapshot_id.in_(
+                        snapshot_ids
+                    )
+                )
+            )
+            cleanup_session.execute(
+                delete(StrategyReplaySnapshot).where(
+                    StrategyReplaySnapshot.user_id == user_id
+                )
+            )
+            cleanup_session.execute(
+                delete(AnalysisRun).where(AnalysisRun.user_id == user_id)
+            )
+            cleanup_session.execute(delete(User).where(User.id == user_id))
+            cleanup_session.commit()
 
 
 def test_postgresql_shadow_performance_ceiling_defers_new_evaluation():

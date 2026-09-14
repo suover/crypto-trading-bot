@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,6 +71,7 @@ class MarketUniverseService:
         registry_service: ExchangeMarketRegistryService | None = None,
         candle_service: MarketCandleService | None = None,
         ranking_policy: MarketRankingPolicy | None = None,
+        canary_run_reserver: Callable[[AnalysisRun], object | None] | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
@@ -82,6 +83,7 @@ class MarketUniverseService:
             session, market_data_provider=self.provider
         )
         self.ranking_policy = ranking_policy or HeuristicMarketRankingPolicy()
+        self.canary_run_reserver = canary_run_reserver
 
     def build_and_persist(
         self,
@@ -109,6 +111,8 @@ class MarketUniverseService:
         self.session.flush()
         self.session.commit()
         try:
+            if self.canary_run_reserver is not None:
+                self.canary_run_reserver(analysis_run)
             result = self._build(
                 analysis_run=analysis_run,
                 user=user,

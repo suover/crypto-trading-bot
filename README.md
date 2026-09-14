@@ -1259,3 +1259,20 @@ python -m scripts.approve_shadow_policy_promotion \
   --expected-review-decision-signature "<EXACT_SIGNATURE_FROM_PREVIEW>" \
   --apply
 ```
+
+### Limited LIVE Canary v1-A
+
+Limited LIVE Canary v1-A는 Human-approved Promotion만 source로 받아, 사람이 exact
+Approval signature를 다시 확인한 뒤 승인된 Candidate의 component weights를 DYNAMIC
+Market Universe ranking에만 제한적으로 연결합니다. Activation은 48시간과 최대 6회의
+MarketUniverse 시도로 코드에 고정되며, 각 시도는 ranking 전에 AnalysisRun과 연결된
+immutable Canary Run으로 예약됩니다. 실패한 분석 시도도 한도에 포함됩니다.
+
+active Canary가 없으면 기존 `HeuristicMarketRankingPolicy()`를 그대로 사용합니다. Canary
+metadata/provenance가 잘못됐거나 만료·소진되면 Candidate를 사용하지 않고 Baseline으로
+fail closed하며, PostgreSQL 조회·잠금 같은 core DB 오류는 조용히 숨기지 않고 pipeline을
+실패시킵니다. 이 기능은 AI Recommendation이나 주문 실행을 변경하지 않습니다.
+
+v1-A에는 Canary 전용 주문당/일일 BUY cap, stop/termination, Recommendation/Order lineage가
+없습니다. 따라서 Production에서는 v1-B의 금전 한도와 종료 안전장치가 완성되기 전
+Activation `--apply`를 실행하지 않습니다. 배포와 Canary 활성화는 서로 다른 작업입니다.

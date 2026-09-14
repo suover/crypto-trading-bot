@@ -542,6 +542,148 @@ class ShadowPolicyPromotionApproval(Base):
     )
 
 
+class LivePolicyCanaryActivation(Base):
+    __tablename__ = "live_policy_canary_activations"
+    __table_args__ = (
+        UniqueConstraint(
+            "promotion_approval_id", name="uq_live_canary_activation_approval"
+        ),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_live_canary_activation_top_n_positive"
+        ),
+        CheckConstraint(
+            "max_analysis_runs > 0",
+            name="ck_live_canary_activation_max_runs_positive",
+        ),
+        CheckConstraint(
+            "activation_source = 'MANUAL_CLI'",
+            name="ck_live_canary_activation_source_manual",
+        ),
+        CheckConstraint(
+            "expires_at > started_at", name="ck_live_canary_activation_time_order"
+        ),
+        Index(
+            "ix_live_canary_activation_context_started",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    canary_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    canary_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    canary_policy_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    component_weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    canary_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    activation_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    max_analysis_runs: Mapped[int] = mapped_column(Integer, nullable=False)
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class LivePolicyCanaryRun(Base):
+    __tablename__ = "live_policy_canary_runs"
+    __table_args__ = (
+        UniqueConstraint("analysis_run_id", name="uq_live_canary_run_analysis"),
+        UniqueConstraint(
+            "canary_activation_id",
+            "pipeline_run_id",
+            name="uq_live_canary_run_activation_pipeline",
+        ),
+        UniqueConstraint(
+            "canary_activation_id",
+            "run_ordinal",
+            name="uq_live_canary_run_activation_ordinal",
+        ),
+        CheckConstraint("run_ordinal > 0", name="ck_live_canary_run_ordinal_positive"),
+        CheckConstraint(
+            "used_canary_policy = true", name="ck_live_canary_run_policy_used"
+        ),
+        Index(
+            "ix_live_canary_run_activation_reserved",
+            "canary_activation_id",
+            "reserved_at",
+        ),
+        Index(
+            "ix_live_canary_run_context_reserved",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "reserved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    run_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    canary_activation_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_activations.id"), nullable=False
+    )
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=False
+    )
+    pipeline_run_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    run_ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    canary_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    used_canary_policy: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reserved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    run_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ShadowPolicyEvaluation(Base):
     __tablename__ = "shadow_policy_evaluations"
     __table_args__ = (

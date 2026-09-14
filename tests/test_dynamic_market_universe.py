@@ -5,12 +5,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from crypto_trading_bot.config.settings import Settings
-from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
+from crypto_trading_bot.analysis.market_ranking import (
+    HeuristicMarketRankingPolicy,
+    HeuristicRankingWeights,
+)
 from crypto_trading_bot.analysis.market_ranking import MarketRankingPolicy
 from crypto_trading_bot.exchange.market_data import ExchangeMarketInfo, ExchangeTicker
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
 from crypto_trading_bot.services.strategy_replay_dataset_service import (
     StrategyReplayDatasetService,
+    build_policy_data,
+    policy_signature,
 )
 
 
@@ -164,6 +169,42 @@ def balance(value: str) -> dict[str, Decimal]:
     }
 
 
+def test_canary_run_reservation_happens_before_market_discovery() -> None:
+    service = build_service(
+        markets=[descriptor("KRW-BTC")],
+        tickers=[ticker("KRW-BTC", "1000")],
+        balances={"KRW": balance("100000")},
+    )
+    events: list[str] = []
+    service.canary_run_reserver = lambda _: events.append("reserved")
+    service.provider.list_markets.side_effect = lambda **_: (
+        events.append("market_discovery") or [descriptor("KRW-BTC")]
+    )
+
+    service.build_and_persist(pipeline_run_id="00000000-0000-0000-0000-000000000001")
+
+    assert events[:2] == ["reserved", "market_discovery"]
+
+
+def test_canary_reservation_failure_prevents_ranking_and_market_calls() -> None:
+    service = build_service(
+        markets=[descriptor("KRW-BTC")],
+        tickers=[ticker("KRW-BTC", "1000")],
+        balances={"KRW": balance("100000")},
+    )
+    service.canary_run_reserver = MagicMock(
+        side_effect=RuntimeError("reservation failed")
+    )
+
+    with pytest.raises(RuntimeError, match="reservation failed"):
+        service.build_and_persist(
+            pipeline_run_id="00000000-0000-0000-0000-000000000001"
+        )
+
+    service.provider.list_markets.assert_not_called()
+    service.provider.get_tickers.assert_not_called()
+
+
 def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding() -> (
     None
 ):
@@ -274,6 +315,36 @@ def test_replay_dataset_uses_existing_pipeline_data_without_extra_provider_calls
         row.market for row in disabled_result.candidates
     ]
     assert len(enabled_result.candidates) == 3
+
+
+def test_injected_canary_policy_signature_reaches_replay_capture(monkeypatch) -> None:
+    candidate_policy = HeuristicMarketRankingPolicy(
+        HeuristicRankingWeights(liquidity=Decimal("0.99"))
+    )
+    captured_signatures: list[str] = []
+
+    def capture(self, **kwargs):
+        captured_signatures.append(
+            policy_signature(
+                build_policy_data(kwargs["settings"], kwargs["ranking_policy"])
+            )
+        )
+        return None
+
+    monkeypatch.setattr(StrategyReplayDatasetService, "capture", capture)
+    service = build_service(
+        markets=[descriptor("KRW-BTC")],
+        tickers=[ticker("KRW-BTC", "1000")],
+        balances={"KRW": balance("10000")},
+        ranking_policy=candidate_policy,
+        strategy_replay_dataset_enabled=True,
+    )
+
+    service.build_and_persist()
+
+    assert captured_signatures == [
+        policy_signature(build_policy_data(service.settings, candidate_policy))
+    ]
 
 
 def test_replay_persistence_failure_does_not_fail_existing_universe(
