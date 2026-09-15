@@ -80,44 +80,6 @@ class OperationalAlertService:
         self.session.flush()
         return alert
 
-    def create_canary_alert(
-        self,
-        *,
-        alert_type: str,
-        dedup_key: str,
-        safe_message: str,
-        user_id: int,
-        recommendation_id: int | None = None,
-        error_code: str | None = None,
-    ) -> OperationalAlert:
-        allowed = {
-            "LIVE_CANARY_STARTED",
-            "LIVE_CANARY_STOPPED",
-            "LIVE_CANARY_BUY_LIMIT_BLOCKED",
-            "LIVE_CANARY_PROVENANCE_INVALID",
-        }
-        if alert_type not in allowed:
-            raise ValueError(f"Unsupported Canary alert type. alert_type={alert_type}")
-        existing = self.session.scalar(
-            select(OperationalAlert).where(OperationalAlert.dedup_key == dedup_key)
-        )
-        if existing is not None:
-            return existing
-        alert = OperationalAlert(
-            alert_type=alert_type,
-            severity="WARNING" if alert_type.endswith("STARTED") else "CRITICAL",
-            user_id=user_id,
-            recommendation_id=recommendation_id,
-            error_code=error_code,
-            safe_message=safe_message,
-            dedup_key=dedup_key,
-            delivery_status="PENDING",
-            delivery_attempt_count=0,
-        )
-        self.session.add(alert)
-        self.session.flush()
-        return alert
-
     def find_stale_live_orders(
         self, *, stale_after_seconds: int, now: datetime | None = None
     ) -> tuple[StaleLiveOrderCandidate, ...]:

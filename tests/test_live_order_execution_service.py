@@ -1,16 +1,10 @@
 from decimal import Decimal
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import (
-    OperationalAlert,
-    OrderFill,
-    OrderLog,
-    TradeRecommendation,
-)
+from crypto_trading_bot.db.models import OrderFill, OrderLog, TradeRecommendation
 from crypto_trading_bot.services.live_order_execution_service import (
     COUNTED_DAILY_LIVE_ORDER_STATUSES,
     LIVE_ORDER_CANCELLED_STATUS,
@@ -21,15 +15,9 @@ from crypto_trading_bot.services.live_order_execution_service import (
     LIVE_ORDER_WAIT_STATUS,
     LiveOrderExecutionError,
     LiveOrderExecutionService,
-    CanaryOrderSafetyError,
     map_upbit_order_state,
     outcome_for_live_order_status,
     recommendation_status_for_live_order,
-)
-from crypto_trading_bot.services.canary_trade_provenance_service import (
-    CANARY_RECOMMENDATION,
-    INVALID_CANARY_PROVENANCE,
-    CanaryTradeProvenance,
 )
 from crypto_trading_bot.exchange.upbit_order_exceptions import (
     UpbitOrderAmbiguousError,
@@ -138,9 +126,6 @@ class FakeSession:
 
         if "order_logs" in statement_text:
             return self.order_log
-
-        if "operational_alerts" in statement_text:
-            return None
 
         return self.recommendation
 
@@ -1251,167 +1236,4 @@ def test_order_chance_does_not_relax_internal_daily_buy_cap(
     with pytest.raises(LiveOrderExecutionError, match="Daily live order amount"):
         LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
     assert client.order_chance_calls == ["KRW-BTC"]
-    assert client.buy_orders == []
-
-
-class FakeCanaryBudgetLock:
-    def __init__(self, acquired: bool = True):
-        self.acquired = acquired
-        self.released = False
-
-    def acquire(self):
-        return self.acquired
-
-    def release(self):
-        self.released = True
-
-
-def canary_provenance(*, valid=True):
-    return CanaryTradeProvenance(
-        mode=CANARY_RECOMMENDATION if valid else INVALID_CANARY_PROVENANCE,
-        recommendation_id=1,
-        universe_candidate=None,
-        market_universe_analysis_run=None,
-        canary_run=SimpleNamespace(id=41) if valid else SimpleNamespace(id=41),
-        activation=SimpleNamespace(id=42) if valid else None,
-        safety_binding=SimpleNamespace(id=43) if valid else None,
-        promotion_approval=SimpleNamespace(id=44) if valid else None,
-        activation_signature="activation" if valid else None,
-        safety_binding_signature="binding" if valid else None,
-        per_order_buy_cap=Decimal("10000") if valid else None,
-        daily_buy_cap=Decimal("30000") if valid else None,
-        valid=valid,
-        safe_reason=None if valid else "corrupt binding",
-    )
-
-
-@pytest.mark.parametrize("amount", (Decimal("5000"), Decimal("10000")))
-def test_canary_buy_at_or_below_per_order_cap_is_allowed_and_audited(
-    monkeypatch, amount
-):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(),
-    )
-    lock = FakeCanaryBudgetLock()
-    session = FakeSession(build_recommendation(recommended_amount_krw=amount))
-    client = FakeUpbitClient()
-    result = LiveOrderExecutionService(
-        session=session,
-        upbit_client=client,
-        lock_factory=lambda _: lock,
-    ).execute(1)
-    assert client.buy_orders[0]["amount_krw"] == amount
-    assert result.order_log.raw_response["canary"]["canary_activation_id"] == 42
-    assert result.order_log.raw_response["canary"]["daily_used_before_order_krw"] == "0"
-    assert lock.released is True
-
-
-def test_canary_buy_over_per_order_cap_is_blocked_without_clamp_or_post(monkeypatch):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setenv("MAX_ORDER_AMOUNT_KRW", "100000")
-    monkeypatch.setenv("DAILY_MAX_ORDER_AMOUNT_KRW", "100000")
-    clear_settings_cache()
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(),
-    )
-    session = FakeSession(build_recommendation(recommended_amount_krw=Decimal("10001")))
-    client = FakeUpbitClient()
-    with pytest.raises(CanaryOrderSafetyError, match="PER_ORDER_LIMIT"):
-        LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
-    assert client.buy_orders == []
-    assert (
-        next(
-            row for row in session.added_objects if isinstance(row, OperationalAlert)
-        ).error_code
-        == "PER_ORDER_LIMIT"
-    )
-
-
-def test_canary_daily_buy_cap_is_activation_scoped_and_blocks_post(monkeypatch):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setenv("DAILY_MAX_ORDER_AMOUNT_KRW", "100000")
-    clear_settings_cache()
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(),
-    )
-    session = FakeSession(
-        build_recommendation(recommended_amount_krw=Decimal("10000")),
-        today_live_order_amount_krw=Decimal("25000"),
-    )
-    client = FakeUpbitClient()
-    lock = FakeCanaryBudgetLock()
-    with pytest.raises(CanaryOrderSafetyError, match="DAILY_LIMIT"):
-        LiveOrderExecutionService(
-            session=session,
-            upbit_client=client,
-            lock_factory=lambda _: lock,
-        ).execute(1)
-    assert client.buy_orders == []
-    assert lock.released is True
-    assert (
-        next(
-            row for row in session.added_objects if isinstance(row, OperationalAlert)
-        ).error_code
-        == "DAILY_LIMIT"
-    )
-
-
-def test_canary_budget_lock_busy_persists_structured_error_code(monkeypatch):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(),
-    )
-    session = FakeSession(build_recommendation())
-    client = FakeUpbitClient()
-    lock = FakeCanaryBudgetLock(acquired=False)
-    with pytest.raises(CanaryOrderSafetyError, match="BUDGET_LOCK_BUSY"):
-        LiveOrderExecutionService(
-            session=session,
-            upbit_client=client,
-            lock_factory=lambda _: lock,
-        ).execute(1)
-    assert client.buy_orders == []
-    assert (
-        next(
-            row for row in session.added_objects if isinstance(row, OperationalAlert)
-        ).error_code
-        == "BUDGET_LOCK_BUSY"
-    )
-
-
-def test_invalid_canary_buy_provenance_never_falls_back_to_baseline(monkeypatch):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(valid=False),
-    )
-    client = FakeUpbitClient()
-    session = FakeSession(build_recommendation())
-    with pytest.raises(CanaryOrderSafetyError, match="INVALID_CANARY_PROVENANCE"):
-        LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
-    assert client.buy_orders == []
-    assert (
-        next(
-            row for row in session.added_objects if isinstance(row, OperationalAlert)
-        ).error_code
-        == "INVALID_CANARY_PROVENANCE"
-    )
-
-
-def test_existing_remote_canary_order_recovery_precedes_new_post_safety(monkeypatch):
-    set_live_order_env(monkeypatch)
-    monkeypatch.setattr(
-        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
-        lambda *_: canary_provenance(valid=False),
-    )
-    client = FakeUpbitClient(remote_order={"uuid": "existing", "state": "done"})
-    result = LiveOrderExecutionService(
-        session=FakeSession(build_recommendation()), upbit_client=client
-    ).execute(1)
-    assert result.recovered is True
     assert client.buy_orders == []

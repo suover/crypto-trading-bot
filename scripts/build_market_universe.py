@@ -1,32 +1,15 @@
-from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.database import SessionLocal
-from crypto_trading_bot.services.live_ranking_policy_resolver import (
-    LiveRankingPolicyResolver,
-)
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
 
 
 def build_market_universe() -> None:
     with SessionLocal() as session:
-        settings = get_settings()
-        with LiveRankingPolicyResolver(session, settings=settings).resolve() as lease:
-            result = MarketUniverseService(
-                session,
-                settings=settings,
-                ranking_policy=lease.ranking_policy,
-                canary_run_reserver=lease.reserve_run,
-                canary_max_buy_order_amount_krw=(
-                    lease.resolution.safety_binding.max_buy_order_amount_krw
-                    if lease.resolution.safety_binding is not None
-                    else None
-                ),
-            ).build_and_persist()
+        result = MarketUniverseService(session).build_and_persist()
         print(
             "Market universe saved. "
             f"analysis_run_id={result.analysis_run.id}, "
             f"pipeline_run_id={result.analysis_run.pipeline_run_id}, "
-            f"candidate_count={len(result.candidates)}, "
-            f"ranking_policy_mode={lease.resolution.mode}"
+            f"candidate_count={len(result.candidates)}"
         )
 
 

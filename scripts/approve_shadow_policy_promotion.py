@@ -77,7 +77,6 @@ def report(result: ShadowPolicyPromotionApprovalResult) -> list[str]:
         f"live_order_change={_bool(result.live_order_change)}",
         f"ranking_runtime_changed={_bool(result.ranking_runtime_changed)}",
         f"shadow_runtime_changed={_bool(result.shadow_runtime_changed)}",
-        f"canary_started={_bool(result.canary_started)}",
         f"safe_reason={result.safe_reason}",
     ]
 

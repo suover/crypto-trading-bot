@@ -1134,57 +1134,17 @@ python -m scripts.approve_shadow_policy_promotion \
 
 Apply는 Review Gate를 다시 평가합니다. Shadow evidence가 추가되거나 decision이 달라져 signature가 불일치하면 `REVIEW_DECISION_CHANGED`가 정상이며 INSERT하지 않습니다. 새 Preview부터 다시 확인해야 하며 `--force`, horizon/cost/as-of/ceiling override는 없습니다. Candidate와 Enrollment당 하나의 immutable approval만 허용하고 동일 승인 재실행은 `ALREADY_APPROVED`입니다.
 
-현재 Production Candidate 1/2는 `NO_SHADOW_ENROLLMENT`이므로 승인 대상이 아닙니다. Approval row 생성은 LIVE policy activation, ranking runtime 변경, 주문 변경 또는 Limited LIVE Canary 시작이 아닙니다.
+현재 Production Candidate 1/2는 `NO_SHADOW_ENROLLMENT`이므로 승인 대상이 아닙니다. Approval row 생성은 최종 사람 감사 기록일 뿐 LIVE policy activation, ranking runtime 변경 또는 주문 변경이 아닙니다.
 
-## Limited LIVE Canary v1-B
+승격 절차는 이 immutable Shadow 승인 기록에서 종료됩니다. 폐기된 제한 LIVE
+중간 승격 및 Full LIVE 승인 경로는 운영 명령이나 runtime fallback으로 남아 있지
+않습니다. 새로운 Full LIVE 활성화는 별도 변경·검토·명시적 승인 없이는 수행할 수
+없습니다.
 
-상태 확인은 DB/settings만 읽고 run slot을 예약하거나 외부 API를 호출하지 않습니다.
-
-```bash
-python -m scripts.check_live_policy_canary
-```
-
-현재 Human-approved Promotion을 Activation 후보로 검증하는 Preview도 read-only입니다.
-
-```bash
-python -m scripts.start_live_policy_canary \
-  --promotion-approval-id <ID>
-```
-
-기술적으로 Apply는 Preview에서 확인한 exact Approval signature를 요구합니다.
-
-```bash
-python -m scripts.start_live_policy_canary \
-  --promotion-approval-id <ID> \
-  --expected-approval-signature "<EXACT_SIGNATURE>" \
-  --apply
-```
-
-Apply 성공 시 기존 v1-A Activation과 v1-B immutable Safety Binding이 한 transaction에서
-생성됩니다. 고정 BUY cap은 10,000원/건, 30,000원/일이며 CLI/env override가 없습니다.
-SELL은 이 cap에서 제외됩니다. 주문 분류는 현재 Canary 상태가 아니라 recommendation 생성
-당시 persisted lineage를 사용합니다.
-
-중지 preview와 apply:
-
-```bash
-python -m scripts.stop_live_policy_canary --canary-activation-id <ID>
-python -m scripts.stop_live_policy_canary \
-  --canary-activation-id <ID> \
-  --expected-activation-signature "<EXACT_SIGNATURE>" \
-  --apply
-```
-
-Stop은 immutable termination event만 만들며 기존 주문을 취소하지 않습니다. 다음
-MarketUniverse부터 `BASELINE_STOPPED`를 사용하고, 이미 생성된 Canary recommendation에는
-계속 Canary BUY cap을 적용합니다.
-
-배포 직후 정상 smoke 결과는 `mode=BASELINE_NO_CANARY`, `active_canary_count=0`,
-`database_write=false`, `external_calls=false`입니다. 그 뒤 기존
-`bash scripts/check_server_runtime_safety.sh --production-live`도 그대로 통과해야 합니다.
-Canary metadata 오류는 Baseline fallback이지만 DB infrastructure 오류는 pipeline failure이며,
-ACTIVE Canary는 정확히 48시간 또는 6회 MarketUniverse 시도 중 먼저 도달하는 경계까지만
-사용됩니다. 실패한 분석도 이미 예약된 시도이면 횟수에 포함됩니다.
+폐기 스키마 cleanup migration은 관련 테이블과 그 데이터를 제거합니다. 운영
+migration 전에 반드시 DB 백업을 만들고, `alembic current`를 기록하며, 감사상
+필요하면 폐기 대상 테이블의 row count도 기록하십시오. downgrade는 schema만
+재생성하며 삭제된 row를 복원하지 않습니다.
 
 기존 worker를 `--once`로 실행하는 명령은 다음과 같습니다.
 
@@ -1194,62 +1154,3 @@ docker compose run --rm recommendation-outcome-worker \
 ```
 
 주의: `--once`는 현재 활성화된 Recommendation, Research, Shadow cycle을 각각 한 번 실행합니다. Shadow-only cycle은 DB-only이고 price resolver나 Upbit/OpenAI/Telegram/CoinGecko를 호출하지 않지만, 다른 두 analytics flag가 true면 해당 public-price cycle도 함께 실행됩니다.
-
-## LIVE Canary Evidence v1
-
-다음 on-demand 명령은 지정한 Activation의 persisted Evidence를 읽기 전용으로 출력합니다.
-
-```bash
-python -m scripts.evaluate_live_canary_evidence \
-  --canary-activation-id <ID>
-```
-
-CLI에는 `--apply`, `--as-of`, `--ceiling`, `--promote` 옵션이 없습니다. 전용
-PostgreSQL `REPEATABLE READ READ ONLY` snapshot 안에서 SELECT만 수행하며 DB row,
-ranking policy, Canary state 또는 주문을 변경하지 않습니다. Upbit/OpenAI/Telegram 등
-외부 API도 호출하지 않습니다. 출력의 Bot PnL과 Portfolio delta는 account-wide context로만
-해석하고, Recommendation Outcome은 actual execution PnL로 해석하지 않습니다.
-
-## LIVE Canary Review Gate v1
-
-다음 on-demand 명령은 지정한 Activation의 fresh Evidence v1을 먼저 생성하고 immutable
-Review policy를 read-only로 적용합니다.
-
-```bash
-python -m scripts.evaluate_live_canary_review_gate \
-  --canary-activation-id <ID>
-```
-
-CLI에는 `--apply`, threshold/min-run override, `--as-of`, `--ceiling`, `--force`,
-`--promote`가 없습니다. Upbit/OpenAI/Telegram/CoinGecko 호출, DB write, policy/order/Canary
-state 변경, Promotion을 수행하지 않습니다.
-
-상태는 `NO_CANARY`, `INVALID_CANARY_DATA`, `INSUFFICIENT_DATA`, `NOT_ELIGIBLE`,
-`ELIGIBLE_FOR_FULL_LIVE_REVIEW`입니다. Known safety failure가 sample insufficiency에 가려지지
-않도록 `INVALID > FAIL > INSUFFICIENT > PASS` 순서로 판정합니다. 마지막 상태도 사람의 Full
-LIVE 검토 후보일 뿐 자동 Promotion 또는 activation이 아닙니다.
-
-## Human-approved Full LIVE Promotion v1
-
-먼저 read-only Preview로 현재 fresh Review를 확인합니다.
-
-```bash
-python -m scripts.approve_full_live_policy_promotion \
-  --canary-activation-id <ID>
-```
-
-Preview signature는 informational only이며 다음 Apply invocation의 입력으로 재사용하지
-않습니다. 실제 승인 시 같은 process가 fresh Review를 정확히 한 번 평가하고 summary와 exact
-`review_decision_signature`를 출력한 뒤 TTY에서 그 signature를 직접 입력받습니다.
-
-```bash
-python -m scripts.approve_full_live_policy_promotion \
-  --canary-activation-id <ID> \
-  --apply
-```
-
-non-interactive/EOF, signature mismatch, noneligible Review는 fail closed이며 DB write가
-없습니다. 확인이 성공하면 read-only Review Session을 종료하고 별도 write Session이
-immutable provenance를 재검증해 approval audit row 하나만 INSERT합니다. 확인 뒤
-Review/Evidence 재평가는 없습니다. Approval 생성은 Full LIVE activation, ranking runtime
-변경, Canary cap 제거 또는 주문 변경이 아니며 외부 API를 호출하지 않습니다.

@@ -291,7 +291,6 @@ def test_apply_exact_signature_creates_only_approval(monkeypatch) -> None:
     assert result.live_policy_change is False
     assert result.live_order_change is False
     assert result.ranking_runtime_changed is False
-    assert result.canary_started is False
     review_service.evaluate.assert_called_once()
     session.add.assert_called_once_with(result.approval)
     session.flush.assert_called_once_with()

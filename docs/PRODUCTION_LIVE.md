@@ -359,58 +359,6 @@ UNKNOWN이 영구히 조회되지 않으면 자동 재주문/취소하지 않고
 
 필요하면 기존 수동 명령으로 fallback할 수 있지만 반드시 DB와 `.env` 백업, fast-forward-only Git 업데이트, 전체 profile image build, migration, health check 순서를 유지합니다.
 
-## Limited LIVE Canary v1-B
-
-Canary v1-B 코드의 배포는 Canary 활성화가 아닙니다. active Canary가 0개이면 Market
-Universe는 기존 Baseline ranking을 사용하고 AI Recommendation과 주문 실행도 기존 동작을
-유지합니다. 현재 운영 확인은 `python -m scripts.check_live_policy_canary`의
-`mode=BASELINE_NO_CANARY`, `active_canary_count=0`, `database_write=false`,
-`external_calls=false`입니다.
-
-실제 start는 eligible Human-approved Promotion에 대해 운영자가 별도로 exact signature apply를
-실행해야 합니다. immutable Safety Binding은 Canary BUY를 10,000원/건, 30,000원/일로
-제한하며 global limit도 계속 적용합니다. SELL은 Canary cap에서 제외되지만 기존 안전 검증은
-그대로 유지됩니다. 초과 BUY는 자동 축소하지 않습니다.
-
-Manual Stop은 future ranking exposure만 중단하고 기존 Upbit 주문을 취소하지 않습니다. 기존
-Canary recommendation은 stop 후에도 generation provenance와 cap을 유지합니다.
-
-## LIVE Canary Evidence v1
-
-Evidence 코드의 배포는 Canary 시작이 아닙니다. Evidence CLI 실행도 Canary Review Gate나
-Full LIVE Promotion이 아니며, 표본 충분성 또는 promotion eligibility를 판정하지 않습니다.
-지정된 Activation의 기존 DB 기록을 frozen read-only snapshot에서 재구성할 뿐이고,
-Upbit/OpenAI/Telegram 호출과 주문·policy 상태 변경은 수행하지 않습니다.
-
-## LIVE Canary Review Gate v1
-
-Review Gate 코드 배포는 Canary를 시작하지 않습니다. 다음 read-only 명령 실행도 Full LIVE
-Promotion 또는 Full LIVE policy activation이 아닙니다.
-
-```bash
-python -m scripts.evaluate_live_canary_review_gate \
-  --canary-activation-id <ID>
-```
-
-Gate는 exact signed Evidence v1을 factual source로 사용하며 별도 DB snapshot을 만들거나 외부
-API를 호출하지 않습니다. `ELIGIBLE_FOR_FULL_LIVE_REVIEW`는 오직 human review candidate를
-뜻합니다. 향후 별도 Human-approved Full LIVE Promotion 단계에서 사람이 exact
-`review_decision_signature`를 다시 확인해야 하며, 그 이후 별도 activation 단계 전에는 Full
-LIVE가 활성화되지 않습니다.
-
-## Human-approved Full LIVE Promotion v1
-
-이 기능의 배포와 approval row 생성은 모두 Full LIVE activation이 아닙니다. Preview
-signature는 참고용이며 별도 Apply 실행에 재사용하지 않습니다. `--apply`는 같은 process에서
-fresh Review를 정확히 한 번 평가하고 사람이 exact `review_decision_signature`를 직접
-입력해야 하며, non-interactive 실행은 fail closed입니다.
-
-승인 성공 시 immutable 감사 row만 생성됩니다. ranking policy는 전환되지 않고 Canary cap도
-제거되지 않으며 주문 안전장치와 LIVE execution은 바뀌지 않습니다. 실제 Full LIVE 전환은
-향후 별도 `Full LIVE Policy Activation v1`에서 validated approval ID와 exact approval
-signature를 source로 구현합니다. Production smoke를 위해 synthetic Canary나 approval을
-만들지 않습니다.
-
 ## 절대 금지
 
 Production에서 다음 명령을 실행하지 않습니다.
