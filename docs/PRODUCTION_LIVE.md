@@ -375,6 +375,13 @@ Universe는 기존 Baseline ranking을 사용하고 AI Recommendation과 주문 
 Manual Stop은 future ranking exposure만 중단하고 기존 Upbit 주문을 취소하지 않습니다. 기존
 Canary recommendation은 stop 후에도 generation provenance와 cap을 유지합니다.
 
+## LIVE Canary Evidence v1
+
+Evidence 코드의 배포는 Canary 시작이 아닙니다. Evidence CLI 실행도 Canary Review Gate나
+Full LIVE Promotion이 아니며, 표본 충분성 또는 promotion eligibility를 판정하지 않습니다.
+지정된 Activation의 기존 DB 기록을 frozen read-only snapshot에서 재구성할 뿐이고,
+Upbit/OpenAI/Telegram 호출과 주문·policy 상태 변경은 수행하지 않습니다.
+
 ## 절대 금지
 
 Production에서 다음 명령을 실행하지 않습니다.

@@ -659,6 +659,7 @@ class LivePolicyCanaryActivationService:
                         f"activation_id={activation.id}"
                     ),
                     user_id=activation.user_id,
+                    error_code="CANARY_STARTED",
                 )
                 self.session.commit()
                 return self._result(

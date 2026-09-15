@@ -1284,3 +1284,18 @@ Manual Stop은 activation UPDATE가 아닌 immutable termination event입니다.
 MarketUniverse는 `BASELINE_STOPPED`가 되지만 기존 Canary recommendation이나 Upbit 주문을
 취소하지 않습니다. 배포와 Canary 활성화는 서로 다른 작업이며 배포만으로 자동 시작되지
 않습니다.
+
+### LIVE Canary Evidence v1
+
+`python -m scripts.evaluate_live_canary_evidence --canary-activation-id <ID>`는
+하나의 Canary Activation에 연결된 실제 persisted selection, generation-time
+recommendation provenance, 승인 요청, safety block, LIVE order/fill, operational alert,
+stored recommendation outcome과 계좌 재무 context를 한 번의 frozen DB snapshot에서
+재구성합니다.
+
+이 평가는 PostgreSQL `REPEATABLE READ READ ONLY` transaction에서 SELECT만 수행하며
+Upbit, OpenAI, Telegram, CoinGecko를 호출하지 않습니다. 직접 execution funds/quantity/fee는
+Canary 사실로 집계하지만, Bot PnL과 Portfolio delta는 account-wide context이며 Canary
+PnL이 아닙니다. Recommendation Outcome도 추천 후 시장 성과이지 실제 execution PnL이
+아닙니다. Evidence는 표본 충분성, Canary Review Gate 또는 Full LIVE eligibility를
+판정하거나 policy/order 상태를 변경하지 않습니다.

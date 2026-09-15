@@ -842,6 +842,7 @@ class LiveOrderExecutionService:
             ),
             user_id=recommendation.user_id,
             recommendation_id=recommendation.id,
+            error_code=reason_code,
         )
         if commit:
             self.session.commit()

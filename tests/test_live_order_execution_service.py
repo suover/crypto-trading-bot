@@ -5,7 +5,12 @@ from typing import Any
 import pytest
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import OrderFill, OrderLog, TradeRecommendation
+from crypto_trading_bot.db.models import (
+    OperationalAlert,
+    OrderFill,
+    OrderLog,
+    TradeRecommendation,
+)
 from crypto_trading_bot.services.live_order_execution_service import (
     COUNTED_DAILY_LIVE_ORDER_STATUSES,
     LIVE_ORDER_CANCELLED_STATUS,
@@ -133,6 +138,9 @@ class FakeSession:
 
         if "order_logs" in statement_text:
             return self.order_log
+
+        if "operational_alerts" in statement_text:
+            return None
 
         return self.recommendation
 
@@ -1314,6 +1322,12 @@ def test_canary_buy_over_per_order_cap_is_blocked_without_clamp_or_post(monkeypa
     with pytest.raises(CanaryOrderSafetyError, match="PER_ORDER_LIMIT"):
         LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
     assert client.buy_orders == []
+    assert (
+        next(
+            row for row in session.added_objects if isinstance(row, OperationalAlert)
+        ).error_code
+        == "PER_ORDER_LIMIT"
+    )
 
 
 def test_canary_daily_buy_cap_is_activation_scoped_and_blocks_post(monkeypatch):
@@ -1338,6 +1352,36 @@ def test_canary_daily_buy_cap_is_activation_scoped_and_blocks_post(monkeypatch):
         ).execute(1)
     assert client.buy_orders == []
     assert lock.released is True
+    assert (
+        next(
+            row for row in session.added_objects if isinstance(row, OperationalAlert)
+        ).error_code
+        == "DAILY_LIMIT"
+    )
+
+
+def test_canary_budget_lock_busy_persists_structured_error_code(monkeypatch):
+    set_live_order_env(monkeypatch)
+    monkeypatch.setattr(
+        "crypto_trading_bot.services.live_order_execution_service.CanaryTradeProvenanceService.resolve",
+        lambda *_: canary_provenance(),
+    )
+    session = FakeSession(build_recommendation())
+    client = FakeUpbitClient()
+    lock = FakeCanaryBudgetLock(acquired=False)
+    with pytest.raises(CanaryOrderSafetyError, match="BUDGET_LOCK_BUSY"):
+        LiveOrderExecutionService(
+            session=session,
+            upbit_client=client,
+            lock_factory=lambda _: lock,
+        ).execute(1)
+    assert client.buy_orders == []
+    assert (
+        next(
+            row for row in session.added_objects if isinstance(row, OperationalAlert)
+        ).error_code
+        == "BUDGET_LOCK_BUSY"
+    )
 
 
 def test_invalid_canary_buy_provenance_never_falls_back_to_baseline(monkeypatch):
@@ -1347,11 +1391,16 @@ def test_invalid_canary_buy_provenance_never_falls_back_to_baseline(monkeypatch)
         lambda *_: canary_provenance(valid=False),
     )
     client = FakeUpbitClient()
+    session = FakeSession(build_recommendation())
     with pytest.raises(CanaryOrderSafetyError, match="INVALID_CANARY_PROVENANCE"):
-        LiveOrderExecutionService(
-            session=FakeSession(build_recommendation()), upbit_client=client
-        ).execute(1)
+        LiveOrderExecutionService(session=session, upbit_client=client).execute(1)
     assert client.buy_orders == []
+    assert (
+        next(
+            row for row in session.added_objects if isinstance(row, OperationalAlert)
+        ).error_code
+        == "INVALID_CANARY_PROVENANCE"
+    )
 
 
 def test_existing_remote_canary_order_recovery_precedes_new_post_safety(monkeypatch):

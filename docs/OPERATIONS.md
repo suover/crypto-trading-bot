@@ -1194,3 +1194,18 @@ docker compose run --rm recommendation-outcome-worker \
 ```
 
 주의: `--once`는 현재 활성화된 Recommendation, Research, Shadow cycle을 각각 한 번 실행합니다. Shadow-only cycle은 DB-only이고 price resolver나 Upbit/OpenAI/Telegram/CoinGecko를 호출하지 않지만, 다른 두 analytics flag가 true면 해당 public-price cycle도 함께 실행됩니다.
+
+## LIVE Canary Evidence v1
+
+다음 on-demand 명령은 지정한 Activation의 persisted Evidence를 읽기 전용으로 출력합니다.
+
+```bash
+python -m scripts.evaluate_live_canary_evidence \
+  --canary-activation-id <ID>
+```
+
+CLI에는 `--apply`, `--as-of`, `--ceiling`, `--promote` 옵션이 없습니다. 전용
+PostgreSQL `REPEATABLE READ READ ONLY` snapshot 안에서 SELECT만 수행하며 DB row,
+ranking policy, Canary state 또는 주문을 변경하지 않습니다. Upbit/OpenAI/Telegram 등
+외부 API도 호출하지 않습니다. 출력의 Bot PnL과 Portfolio delta는 account-wide context로만
+해석하고, Recommendation Outcome은 actual execution PnL로 해석하지 않습니다.

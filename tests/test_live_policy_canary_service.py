@@ -195,6 +195,7 @@ def test_activation_exact_signature_creates_and_commits_under_lock(monkeypatch):
     assert result.database_write is True
     assert session.add.call_args_list[0].args[0] is result.activation
     assert session.add.call_args_list[1].args[0] is result.safety_binding
+    assert session.add.call_args_list[2].args[0].error_code == "CANARY_STARTED"
     assert session.flush.call_count == 3
     session.commit.assert_called_once()
     assert lock.released is True

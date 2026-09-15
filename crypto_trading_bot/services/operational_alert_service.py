@@ -88,6 +88,7 @@ class OperationalAlertService:
         safe_message: str,
         user_id: int,
         recommendation_id: int | None = None,
+        error_code: str | None = None,
     ) -> OperationalAlert:
         allowed = {
             "LIVE_CANARY_STARTED",
@@ -107,6 +108,7 @@ class OperationalAlertService:
             severity="WARNING" if alert_type.endswith("STARTED") else "CRITICAL",
             user_id=user_id,
             recommendation_id=recommendation_id,
+            error_code=error_code,
             safe_message=safe_message,
             dedup_key=dedup_key,
             delivery_status="PENDING",

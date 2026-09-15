@@ -198,6 +198,7 @@ def test_manual_stop_preview_is_read_only_and_apply_creates_immutable_event(
     assert stopped.termination_event.termination_signature == (
         canary_termination_signature(stopped.termination_event)
     )
+    assert session.added[1].error_code == "MANUAL_STOP"
     assert session.commits == 1
     assert lock.released is True
 

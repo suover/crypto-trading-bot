@@ -254,6 +254,7 @@ class LivePolicyCanaryTerminationService:
                         f"activation_id={activation.id}"
                     ),
                     user_id=activation.user_id,
+                    error_code="MANUAL_STOP",
                 )
                 self.session.commit()
                 return self._result(
