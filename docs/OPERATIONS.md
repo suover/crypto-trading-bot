@@ -1228,3 +1228,28 @@ state 변경, Promotion을 수행하지 않습니다.
 `ELIGIBLE_FOR_FULL_LIVE_REVIEW`입니다. Known safety failure가 sample insufficiency에 가려지지
 않도록 `INVALID > FAIL > INSUFFICIENT > PASS` 순서로 판정합니다. 마지막 상태도 사람의 Full
 LIVE 검토 후보일 뿐 자동 Promotion 또는 activation이 아닙니다.
+
+## Human-approved Full LIVE Promotion v1
+
+먼저 read-only Preview로 현재 fresh Review를 확인합니다.
+
+```bash
+python -m scripts.approve_full_live_policy_promotion \
+  --canary-activation-id <ID>
+```
+
+Preview signature는 informational only이며 다음 Apply invocation의 입력으로 재사용하지
+않습니다. 실제 승인 시 같은 process가 fresh Review를 정확히 한 번 평가하고 summary와 exact
+`review_decision_signature`를 출력한 뒤 TTY에서 그 signature를 직접 입력받습니다.
+
+```bash
+python -m scripts.approve_full_live_policy_promotion \
+  --canary-activation-id <ID> \
+  --apply
+```
+
+non-interactive/EOF, signature mismatch, noneligible Review는 fail closed이며 DB write가
+없습니다. 확인이 성공하면 read-only Review Session을 종료하고 별도 write Session이
+immutable provenance를 재검증해 approval audit row 하나만 INSERT합니다. 확인 뒤
+Review/Evidence 재평가는 없습니다. Approval 생성은 Full LIVE activation, ranking runtime
+변경, Canary cap 제거 또는 주문 변경이 아니며 외부 API를 호출하지 않습니다.

@@ -398,6 +398,19 @@ API를 호출하지 않습니다. `ELIGIBLE_FOR_FULL_LIVE_REVIEW`는 오직 huma
 `review_decision_signature`를 다시 확인해야 하며, 그 이후 별도 activation 단계 전에는 Full
 LIVE가 활성화되지 않습니다.
 
+## Human-approved Full LIVE Promotion v1
+
+이 기능의 배포와 approval row 생성은 모두 Full LIVE activation이 아닙니다. Preview
+signature는 참고용이며 별도 Apply 실행에 재사용하지 않습니다. `--apply`는 같은 process에서
+fresh Review를 정확히 한 번 평가하고 사람이 exact `review_decision_signature`를 직접
+입력해야 하며, non-interactive 실행은 fail closed입니다.
+
+승인 성공 시 immutable 감사 row만 생성됩니다. ranking policy는 전환되지 않고 Canary cap도
+제거되지 않으며 주문 안전장치와 LIVE execution은 바뀌지 않습니다. 실제 Full LIVE 전환은
+향후 별도 `Full LIVE Policy Activation v1`에서 validated approval ID와 exact approval
+signature를 source로 구현합니다. Production smoke를 위해 synthetic Canary나 approval을
+만들지 않습니다.
+
 ## 절대 금지
 
 Production에서 다음 명령을 실행하지 않습니다.

@@ -806,6 +806,117 @@ class LivePolicyCanaryTerminationEvent(Base):
     )
 
 
+class FullLivePolicyPromotionApproval(Base):
+    __tablename__ = "full_live_policy_promotion_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "canary_activation_id", name="uq_full_live_promotion_canary_activation"
+        ),
+        UniqueConstraint(
+            "review_decision_signature", name="uq_full_live_promotion_review_decision"
+        ),
+        CheckConstraint(
+            "approval_source = 'MANUAL_CLI'",
+            name="ck_full_live_promotion_source_manual",
+        ),
+        CheckConstraint(
+            "review_status = 'ELIGIBLE_FOR_FULL_LIVE_REVIEW'",
+            name="ck_full_live_promotion_review_eligible",
+        ),
+        CheckConstraint(
+            "human_approved_at >= review_evaluated_at",
+            name="ck_full_live_promotion_time_after_review",
+        ),
+        CheckConstraint(
+            "review_evaluated_at >= evidence_as_of",
+            name="ck_full_live_promotion_review_after_evidence",
+        ),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_full_live_promotion_top_n_positive"
+        ),
+        Index(
+            "ix_full_live_promotion_candidate_approved",
+            "candidate_id",
+            "human_approved_at",
+        ),
+        Index(
+            "ix_full_live_promotion_context_approved",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "human_approved_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    approval_schema_version: Mapped[str] = mapped_column(String(60), nullable=False)
+    canary_activation_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_activations.id"), nullable=False
+    )
+    canary_activation_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    safety_binding_id: Mapped[int] = mapped_column(
+        ForeignKey("live_policy_canary_safety_bindings.id"), nullable=False
+    )
+    safety_binding_signature: Mapped[str] = mapped_column(String(110), nullable=False)
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    canary_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    termination_event_id: Mapped[int | None] = mapped_column(
+        ForeignKey("live_policy_canary_termination_events.id"), nullable=True
+    )
+    termination_signature: Mapped[str | None] = mapped_column(
+        String(110), nullable=True
+    )
+    evidence_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    evidence_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    evidence_as_of: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    review_result_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    review_policy_schema_version: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )
+    review_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    review_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    review_status: Mapped[str] = mapped_column(String(50), nullable=False)
+    review_evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    review_decision_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    review_decision_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    review_checks: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    approval_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    human_approved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    approval_signature: Mapped[str] = mapped_column(String(110), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ShadowPolicyEvaluation(Base):
     __tablename__ = "shadow_policy_evaluations"
     __table_args__ = (

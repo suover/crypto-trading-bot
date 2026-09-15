@@ -1320,3 +1320,27 @@ Outcome/Bot PnL/Portfolio delta는 hard failure가 아닙니다.
 알려진 safety failure가 있으면 `NOT_ELIGIBLE`입니다. 결과
 `ELIGIBLE_FOR_FULL_LIVE_REVIEW`는 사람 검토 후보라는 뜻일 뿐 Full LIVE Promotion이나
 activation을 수행하지 않습니다.
+
+### Human-approved Full LIVE Promotion v1
+
+오직 `ELIGIBLE_FOR_FULL_LIVE_REVIEW` decision만 다음 명령으로 승인할 수 있습니다.
+
+```bash
+python -m scripts.approve_full_live_policy_promotion \
+  --canary-activation-id <ID>
+
+python -m scripts.approve_full_live_policy_promotion \
+  --canary-activation-id <ID> \
+  --apply
+```
+
+Preview는 read-only 참고 정보입니다. Preview의 `review_decision_signature`는 나중
+`--apply`에 재사용하지 않습니다. Apply는 한 process 안에서 fresh Review를 정확히 한 번
+평가하고 그 exact signature를 사람이 직접 입력해야 합니다. 확인 뒤 Review/Evidence를 다시
+평가하지 않으며, read-only Review Session을 닫은 다음 별도 write Session에서 immutable
+Candidate, 기존 Human Promotion, Canary Activation, Safety Binding 및 termination
+provenance를 재검증하고 audit row 하나만 생성합니다.
+
+이 approval은 immutable 감사 기록일 뿐 Full LIVE activation이나 ranking policy switch,
+Canary cap 제거, 주문 안전장치 변경이 아닙니다. 외부 API 호출, ranking/runtime/order
+mutation은 없으며 Full LIVE Policy Activation은 별도 단계입니다.

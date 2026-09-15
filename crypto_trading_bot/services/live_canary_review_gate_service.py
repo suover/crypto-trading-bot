@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -170,7 +171,7 @@ def _canonicalize(value):
         return _decimal_text(value)
     if isinstance(value, datetime):
         return _utc(value, "signature timestamp").isoformat()
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {str(key): _canonicalize(item) for key, item in sorted(value.items())}
     if isinstance(value, (tuple, list)):
         return [_canonicalize(item) for item in value]
@@ -1121,12 +1122,25 @@ def live_canary_review_decision_payload(result: LiveCanaryReviewGateResult) -> d
 
 
 def live_canary_review_decision_signature(result: LiveCanaryReviewGateResult) -> str:
+    return live_canary_review_decision_signature_from_payload(
+        live_canary_review_decision_payload(result)
+    )
+
+
+def live_canary_review_decision_signature_from_payload(payload: Mapping) -> str:
+    if not isinstance(payload, Mapping):
+        raise LiveCanaryReviewGateError("Review decision payload must be a mapping")
+    if (
+        payload.get("review_policy_schema_version")
+        != LIVE_CANARY_REVIEW_GATE_V1.schema_version
+    ):
+        raise LiveCanaryReviewGateError("Review decision payload schema is invalid")
     encoded = json.dumps(
-        live_canary_review_decision_payload(result),
+        _canonicalize(payload),
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
-    return f"{result.review_policy_schema_version}:{sha256(encoded).hexdigest()}"
+    return f"{LIVE_CANARY_REVIEW_GATE_V1.schema_version}:{sha256(encoded).hexdigest()}"
 
 
 __all__ = [
@@ -1148,6 +1162,7 @@ __all__ = [
     "RESULT_TYPE",
     "live_canary_review_decision_payload",
     "live_canary_review_decision_signature",
+    "live_canary_review_decision_signature_from_payload",
     "live_canary_review_policy_definition",
     "live_canary_review_policy_signature",
     "validate_live_canary_review_policy",
