@@ -382,6 +382,22 @@ Full LIVE Promotion이 아니며, 표본 충분성 또는 promotion eligibility�
 지정된 Activation의 기존 DB 기록을 frozen read-only snapshot에서 재구성할 뿐이고,
 Upbit/OpenAI/Telegram 호출과 주문·policy 상태 변경은 수행하지 않습니다.
 
+## LIVE Canary Review Gate v1
+
+Review Gate 코드 배포는 Canary를 시작하지 않습니다. 다음 read-only 명령 실행도 Full LIVE
+Promotion 또는 Full LIVE policy activation이 아닙니다.
+
+```bash
+python -m scripts.evaluate_live_canary_review_gate \
+  --canary-activation-id <ID>
+```
+
+Gate는 exact signed Evidence v1을 factual source로 사용하며 별도 DB snapshot을 만들거나 외부
+API를 호출하지 않습니다. `ELIGIBLE_FOR_FULL_LIVE_REVIEW`는 오직 human review candidate를
+뜻합니다. 향후 별도 Human-approved Full LIVE Promotion 단계에서 사람이 exact
+`review_decision_signature`를 다시 확인해야 하며, 그 이후 별도 activation 단계 전에는 Full
+LIVE가 활성화되지 않습니다.
+
 ## 절대 금지
 
 Production에서 다음 명령을 실행하지 않습니다.

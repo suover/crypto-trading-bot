@@ -1299,3 +1299,24 @@ Canary 사실로 집계하지만, Bot PnL과 Portfolio delta는 account-wide con
 PnL이 아닙니다. Recommendation Outcome도 추천 후 시장 성과이지 실제 execution PnL이
 아닙니다. Evidence는 표본 충분성, Canary Review Gate 또는 Full LIVE eligibility를
 판정하거나 policy/order 상태를 변경하지 않습니다.
+
+### LIVE Canary Review Gate v1
+
+`python -m scripts.evaluate_live_canary_review_gate --canary-activation-id <ID>`는
+exact LIVE Canary Evidence v1 report만 factual input으로 사용해 Full LIVE 사람 검토
+대상 여부를 결정합니다. Gate는 Evidence를 먼저 `REPEATABLE READ READ ONLY` snapshot으로
+생성한 뒤 별도 DB 재조회 없이 code-frozen policy를 적용합니다. DB mutation이나 외부 API
+호출, Promotion, Canary/주문/ranking runtime 변경은 없습니다.
+
+v1은 48시간/6-run Canary contract, 36시간 이상 관찰 span, 6회 성공, successful-run
+recommendation coverage 100%, submitted BUY와 terminal positive-execution BUY 각각 1건 이상을
+요구합니다. approval/cap bypass, invalid provenance, pipeline failure, `LIVE_FAILED`,
+`LIVE_UNKNOWN`, terminal pending order, unresolved stale order, alert delivery failure, legacy
+unstructured Canary alert, ledger mismatch는 허용하지 않습니다. 반면 정상적으로 차단된
+`PER_ORDER_LIMIT`, `DAILY_LIMIT`, `BUDGET_LOCK_BUSY` 자체와 negative Recommendation
+Outcome/Bot PnL/Portfolio delta는 hard failure가 아닙니다.
+
+결정 우선순위는 `INVALID > FAIL > INSUFFICIENT > PASS`입니다. 따라서 표본이 부족해도
+알려진 safety failure가 있으면 `NOT_ELIGIBLE`입니다. 결과
+`ELIGIBLE_FOR_FULL_LIVE_REVIEW`는 사람 검토 후보라는 뜻일 뿐 Full LIVE Promotion이나
+activation을 수행하지 않습니다.

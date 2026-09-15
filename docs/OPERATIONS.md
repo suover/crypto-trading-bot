@@ -1209,3 +1209,22 @@ PostgreSQL `REPEATABLE READ READ ONLY` snapshot 안에서 SELECT만 수행하며
 ranking policy, Canary state 또는 주문을 변경하지 않습니다. Upbit/OpenAI/Telegram 등
 외부 API도 호출하지 않습니다. 출력의 Bot PnL과 Portfolio delta는 account-wide context로만
 해석하고, Recommendation Outcome은 actual execution PnL로 해석하지 않습니다.
+
+## LIVE Canary Review Gate v1
+
+다음 on-demand 명령은 지정한 Activation의 fresh Evidence v1을 먼저 생성하고 immutable
+Review policy를 read-only로 적용합니다.
+
+```bash
+python -m scripts.evaluate_live_canary_review_gate \
+  --canary-activation-id <ID>
+```
+
+CLI에는 `--apply`, threshold/min-run override, `--as-of`, `--ceiling`, `--force`,
+`--promote`가 없습니다. Upbit/OpenAI/Telegram/CoinGecko 호출, DB write, policy/order/Canary
+state 변경, Promotion을 수행하지 않습니다.
+
+상태는 `NO_CANARY`, `INVALID_CANARY_DATA`, `INSUFFICIENT_DATA`, `NOT_ELIGIBLE`,
+`ELIGIBLE_FOR_FULL_LIVE_REVIEW`입니다. Known safety failure가 sample insufficiency에 가려지지
+않도록 `INVALID > FAIL > INSUFFICIENT > PASS` 순서로 판정합니다. 마지막 상태도 사람의 Full
+LIVE 검토 후보일 뿐 자동 Promotion 또는 activation이 아닙니다.
