@@ -42,9 +42,10 @@ def test_inspect_returns_canonical_baseline_without_database_activity() -> None:
     settings = _settings()
     resolver = LiveRankingPolicyResolver(session, settings=settings)
 
-    resolution = resolver.inspect()
+    resolution = resolver.inspect(user_id=1)
 
     expected_policy = HeuristicMarketRankingPolicy()
+    assert resolution.user_id == 1
     assert resolution.mode == BASELINE
     assert isinstance(resolution.ranking_policy, HeuristicMarketRankingPolicy)
     assert resolution.baseline_policy_signature == policy_signature(
@@ -62,7 +63,7 @@ def test_resolved_policy_matches_existing_baseline_ranking() -> None:
     resolver = LiveRankingPolicyResolver(MagicMock(), settings=_settings())
     candidates = _candidates()
 
-    actual = resolver.inspect().ranking_policy.rank(deepcopy(candidates))
+    actual = resolver.inspect(user_id=1).ranking_policy.rank(deepcopy(candidates))
     expected = HeuristicMarketRankingPolicy().rank(deepcopy(candidates))
 
     assert actual == expected
@@ -72,7 +73,7 @@ def test_resolve_lease_is_baseline_only_and_has_no_run_reservation() -> None:
     session = MagicMock()
     resolver = LiveRankingPolicyResolver(session, settings=_settings())
 
-    with resolver.resolve() as lease:
+    with resolver.resolve(user_id=1) as lease:
         assert lease.resolution.mode == BASELINE
         assert isinstance(lease.ranking_policy, HeuristicMarketRankingPolicy)
         assert not hasattr(lease, "reserve_run")

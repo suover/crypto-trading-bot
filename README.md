@@ -608,6 +608,17 @@ PostgreSQL은 별도로 로컬에 설치하지 않아도 됩니다. 개발용 Po
 
 예시 환경 변수 파일을 복사해서 `.env`를 만듭니다.
 
+The current deployment selects one active trading user explicitly with
+`TRADING_USER_ID`. `User.id` is the system identity and `User.name` is a display
+value. Core application services receive an explicit `user_id`, so a future Web/API
+can pass an authenticated user ID through the same service boundary. Upbit, OpenAI,
+and Telegram credentials remain deployment-level; multi-tenant credential storage is
+not implemented.
+
+Before deploying to an existing Production database, find the current active
+`users.id` and set `TRADING_USER_ID=<existing active users.id>` in `.env`.
+Missing, unknown, or inactive IDs fail closed without guessing another user.
+
 ```powershell
 Copy-Item .env.example .env
 ```
@@ -616,6 +627,7 @@ Copy-Item .env.example .env
 
 ```env
 APP_ENV=local
+TRADING_USER_ID=<existing active users.id>
 
 SECRET_DIR=.secrets
 
@@ -1118,8 +1130,8 @@ KRW 가치를 만들지 않습니다.
 
 ```powershell
 python -m scripts.check_upbit_account_activity_access
-python -m scripts.sync_account_activities --start-at 2026-08-01T00:00:00+09:00
-python -m scripts.sync_account_activities --start-at 2026-08-01T00:00:00+09:00 --apply
+python -m scripts.sync_account_activities --user-id <ID> --start-at 2026-08-01T00:00:00+09:00
+python -m scripts.sync_account_activities --user-id <ID> --start-at 2026-08-01T00:00:00+09:00 --apply
 ```
 
 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false`가 기본입니다. Ledger는 기존 OrderLog,

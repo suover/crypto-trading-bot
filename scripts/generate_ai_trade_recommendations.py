@@ -1,6 +1,8 @@
 from decimal import Decimal
 
+from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.database import SessionLocal
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 from crypto_trading_bot.services.ai_trade_recommendation_service import (
     AiTradeRecommendationService,
 )
@@ -15,9 +17,11 @@ def format_decimal(value: Decimal | None, digit_count: int = 4) -> str:
 
 def generate_ai_trade_recommendations() -> None:
     with SessionLocal() as session:
+        user = RuntimeUserResolver(session).resolve_configured(
+            get_settings().trading_user_id
+        )
         service = AiTradeRecommendationService(session)
-
-        analysis_run, recommendations = service.create_ai_recommendations()
+        analysis_run, recommendations = service.create_ai_recommendations(user.id)
 
         print(
             f"AI trade recommendations saved. "

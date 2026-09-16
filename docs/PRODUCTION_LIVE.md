@@ -37,6 +37,14 @@ cd /home/ubuntu/apps/crypto-trading-bot
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
 
+Before deployment, query the existing Production `users` table and set
+`TRADING_USER_ID=<existing active users.id>` in `.env` while preserving mode 600.
+The safety check requires a positive ID and verifies that the referenced row exists
+and is active. Missing, unknown, or inactive IDs fail closed.
+
+This remains a single-user deployment with deployment-level exchange credentials.
+Core services use explicit `user_id`; per-user credential storage is not implemented.
+
 점검 대상은 다음과 같습니다.
 
 - 저장소 루트, `.env`, Compose 구성

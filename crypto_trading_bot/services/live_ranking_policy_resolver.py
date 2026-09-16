@@ -12,6 +12,7 @@ from crypto_trading_bot.services.strategy_replay_dataset_service import (
     policy_signature,
 )
 
+from crypto_trading_bot.services.runtime_user_resolver import validate_user_id
 
 BASELINE = "BASELINE"
 
@@ -20,6 +21,7 @@ BASELINE = "BASELINE"
 class LiveRankingPolicyResolution:
     """Baseline-only runtime policy selection result."""
 
+    user_id: int
     mode: str
     ranking_policy: MarketRankingPolicy
     baseline_policy_signature: str
@@ -57,15 +59,15 @@ class LiveRankingPolicyResolver:
         self.session = session
         self.settings = settings or get_settings()
 
-    def resolve(self, *, user_name: str = "Minsu") -> LiveRankingPolicyLease:
-        del user_name
-        return LiveRankingPolicyLease(self.inspect())
+    def resolve(self, *, user_id: int) -> LiveRankingPolicyLease:
+        return LiveRankingPolicyLease(self.inspect(user_id=user_id))
 
-    def inspect(self, *, user_name: str = "Minsu") -> LiveRankingPolicyResolution:
-        del user_name
+    def inspect(self, *, user_id: int) -> LiveRankingPolicyResolution:
+        normalized_user_id = validate_user_id(user_id)
         ranking_policy = HeuristicMarketRankingPolicy()
         signature = policy_signature(build_policy_data(self.settings, ranking_policy))
         return LiveRankingPolicyResolution(
+            user_id=normalized_user_id,
             mode=BASELINE,
             ranking_policy=ranking_policy,
             baseline_policy_signature=signature,

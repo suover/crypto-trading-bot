@@ -274,9 +274,7 @@ def test_market_candle_service_uses_registry_markets() -> None:
 
 def test_market_snapshot_service_uses_registry_markets() -> None:
     session = MagicMock()
-    session.query.return_value.filter.return_value.first.return_value = SimpleNamespace(
-        id=1
-    )
+    session.get.return_value = SimpleNamespace(id=1, is_active=True)
     upbit_client = MagicMock()
     upbit_client.get_tickers.return_value = [
         {
@@ -296,7 +294,7 @@ def test_market_snapshot_service_uses_registry_markets() -> None:
         session,
         upbit_client=upbit_client,
         registry_service=registry,
-    ).collect_market_snapshots()
+    ).collect_market_snapshots(1)
 
     registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
     upbit_client.get_tickers.assert_called_once_with(["KRW-BTC"])

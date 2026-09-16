@@ -64,7 +64,7 @@ def session_factory():
     engine.dispose()
 
 
-def add_user(session, name: str = "Minsu") -> User:
+def add_user(session, name: str = "Test User") -> User:
     user = User(name=name)
     session.add(user)
     session.flush()

@@ -99,7 +99,7 @@ def settings() -> Settings:
 
 
 def add_user(session) -> User:
-    user = User(name="Minsu")
+    user = User(name="Test User")
     session.add(user)
     session.commit()
     return user
@@ -228,7 +228,9 @@ def test_complete_portfolio_uses_available_and_locked_balances(
             [{"market": "KRW-BTC", "base_asset": "BTC", "price": "120000000"}],
         )
 
-        result = build_service(session, settings).capture(pipeline_run_id=PIPELINE_A)
+        result = build_service(session, settings).capture(
+            user.id, pipeline_run_id=PIPELINE_A
+        )
         snapshot = result.portfolio_snapshot
         (position,) = result.positions
 
@@ -264,7 +266,7 @@ def test_cash_only_portfolio_is_complete_with_zero_position_pnl(
 
         snapshot = (
             build_service(session, settings)
-            .capture(pipeline_run_id=PIPELINE_A)
+            .capture(user.id, pipeline_run_id=PIPELINE_A)
             .portfolio_snapshot
         )
 
@@ -307,7 +309,7 @@ def test_unpriced_holding_is_preserved_and_total_is_null(
         )
 
         result = build_service(session, settings, coingecko_client=coingecko).capture(
-            pipeline_run_id=PIPELINE_A
+            user.id, pipeline_run_id=PIPELINE_A
         )
         snapshot = result.portfolio_snapshot
         (position,) = result.positions
@@ -374,7 +376,7 @@ def test_explicit_coingecko_fallback_prices_unlisted_assets_and_keeps_upbit_prio
         )
 
         result = build_service(session, configured, coingecko_client=coingecko).capture(
-            pipeline_run_id=PIPELINE_A
+            user.id, pipeline_run_id=PIPELINE_A
         )
 
         positions = {position.currency: position for position in result.positions}
@@ -449,7 +451,7 @@ def test_excluded_assets_remain_auditable_but_do_not_affect_nav_or_coingecko(
         )
 
         result = build_service(session, configured, coingecko_client=coingecko).capture(
-            pipeline_run_id=PIPELINE_A
+            user.id, pipeline_run_id=PIPELINE_A
         )
 
         positions = {position.currency: position for position in result.positions}
@@ -514,7 +516,7 @@ def test_excluded_only_fallback_candidates_do_not_call_coingecko(
         )
 
         result = build_service(session, configured, coingecko_client=coingecko).capture(
-            pipeline_run_id=PIPELINE_A
+            user.id, pipeline_run_id=PIPELINE_A
         )
 
         coingecko.get_markets.assert_not_called()
@@ -557,7 +559,7 @@ def test_coingecko_missing_invalid_or_error_remains_unpriced(
         add_universe_source(session, user, PIPELINE_A, [])
 
         result = build_service(session, configured, coingecko_client=coingecko).capture(
-            pipeline_run_id=PIPELINE_A
+            user.id, pipeline_run_id=PIPELINE_A
         )
 
         assert result.positions[0].valuation_status == "UNPRICED"
@@ -594,7 +596,7 @@ def test_missing_cost_basis_does_not_make_complete_valuation_partial(
 
         snapshot = (
             build_service(session, settings)
-            .capture(pipeline_run_id=PIPELINE_A)
+            .capture(user.id, pipeline_run_id=PIPELINE_A)
             .portfolio_snapshot
         )
 
@@ -637,7 +639,7 @@ def test_same_pipeline_price_is_used_and_newer_pipeline_is_ignored(
 
         position = (
             build_service(session, settings)
-            .capture(pipeline_run_id=PIPELINE_A)
+            .capture(user.id, pipeline_run_id=PIPELINE_A)
             .positions[0]
         )
 
@@ -674,7 +676,9 @@ def test_missing_same_pipeline_price_does_not_fall_back_to_other_pipeline(
             [{"market": "KRW-BTC", "base_asset": "BTC", "price": "999"}],
         )
 
-        result = build_service(session, settings).capture(pipeline_run_id=PIPELINE_A)
+        result = build_service(session, settings).capture(
+            user.id, pipeline_run_id=PIPELINE_A
+        )
 
         assert result.positions[0].mark_price is None
         assert result.portfolio_snapshot.valuation_status == "PARTIAL"
@@ -716,7 +720,7 @@ def test_trading_unsupported_holding_with_persisted_ticker_is_still_valued(
 
         position = (
             build_service(session, settings)
-            .capture(pipeline_run_id=PIPELINE_A)
+            .capture(user.id, pipeline_run_id=PIPELINE_A)
             .positions[0]
         )
 
@@ -755,7 +759,7 @@ def test_negative_position_balance_makes_portfolio_partial_without_fake_value(
 
         snapshot = (
             build_service(session, settings)
-            .capture(pipeline_run_id=PIPELINE_A)
+            .capture(user.id, pipeline_run_id=PIPELINE_A)
             .portfolio_snapshot
         )
 
@@ -806,8 +810,8 @@ def test_capture_is_idempotent_for_same_user_exchange_and_pipeline(
         )
         service = build_service(session, settings)
 
-        first = service.capture(pipeline_run_id=PIPELINE_A)
-        second = service.capture(pipeline_run_id=PIPELINE_A)
+        first = service.capture(user.id, pipeline_run_id=PIPELINE_A)
+        second = service.capture(user.id, pipeline_run_id=PIPELINE_A)
 
         assert first.portfolio_snapshot.id == second.portfolio_snapshot.id
         assert second.already_captured is True
@@ -843,7 +847,9 @@ def test_account_snapshot_run_types_are_supported(
             [{"market": "KRW-BTC", "base_asset": "BTC", "price": "100"}],
         )
 
-        result = build_service(session, settings).capture(pipeline_run_id=PIPELINE_A)
+        result = build_service(session, settings).capture(
+            user.id, pipeline_run_id=PIPELINE_A
+        )
 
         assert result.portfolio_snapshot.cash_total_krw == 1000
         assert result.analysis_run.run_type == "PORTFOLIO_VALUATION"
@@ -857,7 +863,9 @@ def test_missing_account_source_records_failed_run_without_partial_snapshot(
         add_universe_source(session, user, PIPELINE_A, [])
 
         with pytest.raises(ValueError, match="No account snapshots"):
-            build_service(session, settings).capture(pipeline_run_id=PIPELINE_A)
+            build_service(session, settings).capture(
+                user.id, pipeline_run_id=PIPELINE_A
+            )
 
         failed_run = session.scalar(
             select(AnalysisRun).where(AnalysisRun.run_type == "PORTFOLIO_VALUATION")
@@ -880,6 +888,10 @@ def test_new_account_collection_uses_account_snapshot_run_type(monkeypatch) -> N
     class FakeSession:
         def __init__(self) -> None:
             self.added = []
+
+        @staticmethod
+        def get(model, user_id):
+            return SimpleNamespace(id=user_id, is_active=True)
 
         @staticmethod
         def query(model):
@@ -920,6 +932,6 @@ def test_new_account_collection_uses_account_snapshot_run_type(monkeypatch) -> N
     analysis_run, _ = AccountSnapshotService(
         session,
         upbit_client=client,  # type: ignore[arg-type]
-    ).collect_account_snapshots(pipeline_run_id=PIPELINE_A)
+    ).collect_account_snapshots(1, pipeline_run_id=PIPELINE_A)
 
     assert analysis_run.run_type == "ACCOUNT_SNAPSHOT"

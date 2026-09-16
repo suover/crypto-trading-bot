@@ -19,6 +19,7 @@ from crypto_trading_bot.db.models import (
 )
 from crypto_trading_bot.market_data.coingecko_client import CoinGeckoClient
 from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 ACCOUNT_SNAPSHOT_RUN_TYPES = ("ACCOUNT_SNAPSHOT", "MANUAL")
@@ -50,7 +51,7 @@ class PortfolioValuationService:
 
     def capture(
         self,
-        user_name: str = "Minsu",
+        user_id: int,
         pipeline_run_id: str | None = None,
         *,
         exchange: str = "UPBIT",
@@ -61,9 +62,7 @@ class PortfolioValuationService:
             raise ValueError("Portfolio valuation requires pipeline_run_id")
         normalized_exchange = exchange.strip().upper()
         normalized_quote = quote_asset.strip().upper()
-        user = self.session.scalar(select(User).where(User.name == user_name))
-        if user is None:
-            raise ValueError(f"User not found. name={user_name}")
+        user = RuntimeUserResolver(self.session).resolve(user_id)
 
         existing = self._get_existing(user.id, normalized_exchange, pipeline_id)
         if existing is not None:

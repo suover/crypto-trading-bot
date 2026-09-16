@@ -1,13 +1,11 @@
 import argparse
 from datetime import datetime
 
-from sqlalchemy import select
-
 from crypto_trading_bot.db.database import SessionLocal
-from crypto_trading_bot.db.models import User
 from crypto_trading_bot.services.account_activity_sync_service import (
     AccountActivitySyncService,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 def parse_timestamp(value: str) -> datetime:
@@ -21,12 +19,24 @@ def parse_timestamp(value: str) -> datetime:
     return parsed
 
 
+def parse_positive_user_id(value: str) -> int:
+    try:
+        user_id = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "user ID must be a positive integer"
+        ) from error
+    if user_id <= 0:
+        raise argparse.ArgumentTypeError("user ID must be a positive integer")
+    return user_id
+
+
 def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Read Upbit account activity. Dry-run unless --apply is supplied."
     )
     parser.add_argument("--apply", action="store_true")
-    parser.add_argument("--user-name", default="Minsu")
+    parser.add_argument("--user-id", type=parse_positive_user_id, required=True)
     parser.add_argument("--start-at", type=parse_timestamp)
     parser.add_argument("--end-at", type=parse_timestamp)
     return parser.parse_args(args)
@@ -35,10 +45,7 @@ def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
 def run(args: list[str] | None = None) -> int:
     namespace = parse_arguments(args)
     with SessionLocal() as session:
-        user = session.scalar(select(User).where(User.name == namespace.user_name))
-        if user is None:
-            print("Account activity sync failed. error_type=UserNotFound")
-            return 1
+        user = RuntimeUserResolver(session).resolve(namespace.user_id)
         result = AccountActivitySyncService(session).run(
             user.id,
             start_at=namespace.start_at,

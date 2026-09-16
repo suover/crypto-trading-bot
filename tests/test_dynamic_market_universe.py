@@ -127,7 +127,7 @@ def build_service(
         **setting_values,
     )
     session = MagicMock()
-    session.scalar.return_value = SimpleNamespace(id=1)
+    session.get.return_value = SimpleNamespace(id=1, is_active=True)
     provider = MagicMock()
     provider.exchange_code = "UPBIT"
     provider.list_markets.return_value = markets
@@ -182,7 +182,7 @@ def test_dynamic_discovers_krw_uses_quote_trade_value_and_keeps_warning_holding(
         balances={"KRW": balance("10000"), "ETH": balance("2")},
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     assert result.total_market_count == 3
     assert result.warning_excluded_count == 1
@@ -236,7 +236,7 @@ def test_replay_dataset_uses_existing_pipeline_data_without_extra_provider_calls
         market_universe_top_n=2,
         strategy_replay_dataset_enabled=False,
     )
-    disabled_result = disabled.build_and_persist()
+    disabled_result = disabled.build_and_persist(1)
     disabled_calls = (
         disabled.provider.list_markets.call_count,
         disabled.provider.get_tickers.call_count,
@@ -255,7 +255,7 @@ def test_replay_dataset_uses_existing_pipeline_data_without_extra_provider_calls
         market_universe_top_n=2,
         strategy_replay_dataset_enabled=True,
     )
-    enabled_result = enabled.build_and_persist()
+    enabled_result = enabled.build_and_persist(1)
     enabled_calls = (
         enabled.provider.list_markets.call_count,
         enabled.provider.get_tickers.call_count,
@@ -290,7 +290,7 @@ def test_replay_persistence_failure_does_not_fail_existing_universe(
         strategy_replay_dataset_enabled=True,
     )
     with caplog.at_level("ERROR"):
-        result = service.build_and_persist()
+        result = service.build_and_persist(1)
     assert [row.market for row in result.candidates] == ["KRW-BTC"]
     assert result.analysis_run.status == "SUCCESS"
     assert "universe remains valid" in caplog.text
@@ -304,7 +304,7 @@ def test_portfolio_coingecko_mapping_does_not_affect_universe_ranking() -> None:
         portfolio_coingecko_asset_mapping="APENFT=apenft,QI=qiswap",
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     assert [candidate.market for candidate in result.candidates] == ["KRW-BTC"]
     assert result.candidates[0].selection_source == "RANKED"
@@ -319,7 +319,7 @@ def test_portfolio_excluded_asset_is_not_ranked_or_added_as_held() -> None:
         portfolio_excluded_assets="qi",
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     assert [candidate.market for candidate in result.candidates] == ["KRW-BTC"]
     collected_markets = (
@@ -355,7 +355,7 @@ def test_holding_outside_prefilter_is_collected_but_not_ranked() -> None:
         ranking_policy=ranking,
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     rows = {row.market: row for row in result.candidates}
     assert ranking.seen_markets == ["KRW-BTC", "KRW-XRP"]
@@ -407,7 +407,7 @@ def test_ranking_requires_any_sufficient_timeframe_but_keeps_holding() -> None:
         analysis_timeframes="15m,1d",
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     rows = {row.market: row for row in result.candidates}
     assert ranking.seen_markets == ["KRW-XRP"]
@@ -427,7 +427,7 @@ def test_trading_unsupported_holding_stays_held_and_ineligible() -> None:
         balances={"KRW": balance("10000"), "DELISTED": balance("2")},
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     rows = {row.market: row for row in result.candidates}
     unsupported = rows["KRW-DELISTED"]
@@ -456,7 +456,7 @@ def test_dynamic_filters_caution_blocklist_and_minimum_quote_trade_value() -> No
         market_blocklist="KRW-ADA",
     )
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     assert [row.market for row in result.candidates] == ["KRW-BTC"]
     assert result.caution_excluded_count == 1
@@ -481,7 +481,7 @@ def test_static_mode_uses_allowed_registry_markets_without_discovery(
         strategy_replay_dataset_enabled=True,
     )
     session = MagicMock()
-    session.scalar.return_value = SimpleNamespace(id=1)
+    session.get.return_value = SimpleNamespace(id=1, is_active=True)
     provider = MagicMock()
     provider.exchange_code = "UPBIT"
     provider.get_tickers.return_value = [
@@ -520,7 +520,7 @@ def test_static_mode_uses_allowed_registry_markets_without_discovery(
     )
     service.balances = {"KRW": balance("10000")}
 
-    result = service.build_and_persist()
+    result = service.build_and_persist(1)
 
     provider.list_markets.assert_not_called()
     provider.get_tickers.assert_called_once_with(markets=["KRW-BTC", "KRW-ETH"])

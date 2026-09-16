@@ -912,7 +912,7 @@ Production rollout 순서:
 1. 배포와 migration 후 `ACCOUNT_ACTIVITY_SYNC_ENABLED=false`를 확인합니다.
 2. runtime safety를 실행합니다.
 3. `python -m scripts.check_upbit_account_activity_access`로 세 조회 권한을 확인합니다.
-4. `python -m scripts.sync_account_activities --start-at <ISO-8601>` dry-run을 실행합니다.
+4. `python -m scripts.sync_account_activities --user-id <ID> --start-at <ISO-8601>` dry-run을 실행합니다.
 5. source별 count, BOT/EXTERNAL 분류, coverage와 `OUT_OF_SCOPE`를 검토합니다.
 6. DB backup 후 운영자가 같은 범위에 `--apply`를 한 번 명시합니다.
 7. DB row 수, unique key와 source별 sync state를 검증합니다.

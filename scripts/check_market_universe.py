@@ -1,10 +1,15 @@
+from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.database import SessionLocal
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 def check_market_universe() -> None:
     with SessionLocal() as session:
-        result = MarketUniverseService(session).build_and_persist()
+        user = RuntimeUserResolver(session).resolve_configured(
+            get_settings().trading_user_id
+        )
+        result = MarketUniverseService(session).build_and_persist(user.id)
         print(f"exchange={result.exchange}")
         print(f"quote_asset={result.quote_asset}")
         print(f"total_market_count={result.total_market_count}")

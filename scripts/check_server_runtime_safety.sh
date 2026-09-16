@@ -140,6 +140,20 @@ container_running "crypto-trading-recommendation-outcome-worker" && pass_check "
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
   container_running "crypto-trading-live-order-reconciliation-worker" && pass_check "live-order-reconciliation-worker가 실행 중입니다." || fail_check "Production LIVE에서는 live-order-reconciliation-worker가 실행 중이어야 합니다."
+  TRADING_USER_ID="$(get_env_value TRADING_USER_ID)"
+  if is_positive_integer "$TRADING_USER_ID"; then
+    DATABASE_USER_VALUE="$(get_env_value DATABASE_USER)"
+    DATABASE_NAME_VALUE="$(get_env_value DATABASE_NAME)"
+    USER_STATUS="$(docker compose exec -T postgres psql -U "${DATABASE_USER_VALUE:-trading_user}" -d "${DATABASE_NAME_VALUE:-crypto_trading_bot}" -Atc "SELECT CASE WHEN is_active THEN 'active' ELSE 'inactive' END FROM users WHERE id = ${TRADING_USER_ID};" 2>/dev/null || true)"
+    if [[ "$USER_STATUS" == "active" ]]; then
+      pass_check "production-live: configured trading user exists and is active."
+    else
+      fail_check "production-live: configured trading user is missing or inactive."
+    fi
+  else
+    fail_check "production-live: TRADING_USER_ID must be a positive integer."
+  fi
+
   LIVE_ORDER_RECONCILIATION_ENABLED="$(get_env_value LIVE_ORDER_RECONCILIATION_ENABLED)"
   [[ "${LIVE_ORDER_RECONCILIATION_ENABLED:-true}" == "true" ]] && pass_check "production-live: reconciliation 설정이 활성화되어 있습니다." || fail_check "production-live: LIVE_ORDER_RECONCILIATION_ENABLED가 true가 아닙니다."
   BOT_TRADING_PNL_ENABLED="$(get_env_value BOT_TRADING_PNL_ENABLED)"

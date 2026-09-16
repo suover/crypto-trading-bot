@@ -15,6 +15,8 @@ from scripts.run_bot_trading_pnl_worker import BOT_TRADING_PNL_WORKER_LOCK_KEY
 from scripts.run_live_order_reconciliation_worker import (
     LIVE_ORDER_RECONCILIATION_WORKER_LOCK_KEY,
 )
+from scripts.seed_default_user import parse_arguments as parse_seed_arguments
+from scripts.sync_account_activities import parse_arguments as parse_sync_arguments
 from scripts.run_operational_alert_worker import OPERATIONAL_ALERT_WORKER_LOCK_KEY
 
 
@@ -113,7 +115,7 @@ class SessionContext:
 
 def test_enabled_worker_cycle_runs_apply_with_configured_overlap() -> None:
     session = Mock()
-    session.scalar.return_value = SimpleNamespace(id=7)
+    session.get.return_value = SimpleNamespace(id=7, is_active=True)
     service = Mock()
     expected = SimpleNamespace(sources=())
     service.run.return_value = expected
@@ -121,7 +123,7 @@ def test_enabled_worker_cycle_runs_apply_with_configured_overlap() -> None:
     overlap = timedelta(hours=24)
 
     result = worker_script.run_cycle(
-        lambda: SessionContext(session), service_factory, overlap=overlap
+        lambda: SessionContext(session), service_factory, user_id=7, overlap=overlap
     )
 
     assert result is expected
@@ -131,12 +133,33 @@ def test_enabled_worker_cycle_runs_apply_with_configured_overlap() -> None:
 
 def test_worker_cycle_propagates_sync_failure() -> None:
     session = Mock()
-    session.scalar.return_value = SimpleNamespace(id=7)
+    session.get.return_value = SimpleNamespace(id=7, is_active=True)
     service = Mock()
     service.run.side_effect = RuntimeError("sync failed")
     with pytest.raises(RuntimeError, match="sync failed"):
         worker_script.run_cycle(
             lambda: SessionContext(session),
             Mock(return_value=service),
+            user_id=7,
             overlap=timedelta(hours=24),
         )
+
+
+def test_account_activity_cli_requires_positive_user_id() -> None:
+    parsed = parse_sync_arguments(["--user-id", "7"])
+    assert parsed.user_id == 7
+
+    for invalid in ("0", "-1", "false"):
+        with pytest.raises(SystemExit):
+            parse_sync_arguments(["--user-id", invalid])
+
+    with pytest.raises(SystemExit):
+        parse_sync_arguments([])
+
+
+def test_seed_user_cli_requires_explicit_display_name() -> None:
+    parsed = parse_seed_arguments(["--name", "Primary User"])
+    assert parsed.name == "Primary User"
+
+    with pytest.raises(SystemExit):
+        parse_seed_arguments([])

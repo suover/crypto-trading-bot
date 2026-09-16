@@ -5,9 +5,10 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
-from crypto_trading_bot.db.models import AccountSnapshot, AnalysisRun, User
+from crypto_trading_bot.db.models import AccountSnapshot, AnalysisRun
 from crypto_trading_bot.exchange.upbit_client import UpbitClient
 from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 def to_decimal(value: Any) -> Decimal | None:
@@ -28,15 +29,11 @@ class AccountSnapshotService:
 
     def collect_account_snapshots(
         self,
-        user_name: str = "Minsu",
+        user_id: int,
         pipeline_run_id: str | None = None,
     ) -> tuple[AnalysisRun, list[AccountSnapshot]]:
         settings = get_settings()
-
-        user = self.session.query(User).filter(User.name == user_name).first()
-
-        if user is None:
-            raise ValueError(f"User not found. name={user_name}")
+        user = RuntimeUserResolver(self.session).resolve(user_id)
 
         analysis_run = AnalysisRun(
             user_id=user.id,

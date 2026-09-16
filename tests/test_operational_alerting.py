@@ -515,6 +515,10 @@ def test_pipeline_failure_notification_does_not_replace_original_error(
     def fail_step(_step, _pipeline_run_id):
         raise original
 
+    monkeypatch.setattr(
+        "scripts.run_ai_trade_analysis.resolve_pipeline_user_id",
+        lambda: 1,
+    )
     monkeypatch.setattr("scripts.run_ai_trade_analysis.run_step", fail_step)
     monkeypatch.setattr(
         "scripts.run_ai_trade_analysis.send_failure_notification",

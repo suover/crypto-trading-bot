@@ -33,6 +33,7 @@ from crypto_trading_bot.services.exchange_market_registry_service import (
     ExchangeMarketRegistryService,
 )
 from crypto_trading_bot.services.market_candle_service import MarketCandleService
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 from crypto_trading_bot.services.market_data_context_service import (
     MarketDataContextService,
 )
@@ -85,13 +86,11 @@ class MarketUniverseService:
 
     def build_and_persist(
         self,
-        user_name: str = "Minsu",
+        user_id: int,
         pipeline_run_id: str | None = None,
     ) -> MarketUniverseBuildResult:
         pipeline_id = get_pipeline_run_id(pipeline_run_id)
-        user = self.session.scalar(select(User).where(User.name == user_name))
-        if user is None:
-            raise ValueError(f"User not found. name={user_name}")
+        user = RuntimeUserResolver(self.session).resolve(user_id)
         exchange = self.settings.market_universe_exchange.strip().upper()
         quote_asset = self.settings.market_universe_quote_asset.strip().upper()
         if exchange != self.provider.exchange_code:

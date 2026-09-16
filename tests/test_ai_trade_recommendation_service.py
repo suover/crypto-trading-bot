@@ -80,9 +80,6 @@ class StubRecommendationService(AiTradeRecommendationService):
     candles_by_market: dict[str, list[MarketCandle]]
     balances_by_currency: dict[str, Decimal]
 
-    def _get_user(self, user_name: str) -> SimpleNamespace:
-        return SimpleNamespace(id=1)
-
     def _get_recent_candles(
         self,
         market: str,
@@ -117,6 +114,7 @@ def build_service(
     maximums: dict[str, Decimal] | None = None,
 ) -> tuple[StubRecommendationService, MagicMock, MagicMock, MagicMock]:
     session = MagicMock()
+    session.get.return_value = SimpleNamespace(id=1, is_active=True)
     session.scalar.return_value = Decimal("0")
     advisor = MagicMock()
     advisor.model = "test-model"
@@ -190,7 +188,7 @@ def test_builds_registry_candidates_and_calls_advisor_once() -> None:
         },
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
     advisor.create_advice.assert_called_once()
@@ -228,7 +226,7 @@ def test_ai_context_and_enrichment_contain_only_allowed_market() -> None:
         advice=build_advice(action="HOLD", market="KRW-BTC"),
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     registry.load_allowed_active_markets_for_exchange.assert_called_once_with("UPBIT")
     enrichment_candidates = (
@@ -264,7 +262,7 @@ def test_unavailable_external_source_does_not_prevent_advisor_call() -> None:
 
     market_data.enrich_candidates.side_effect = unavailable
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     advisor.create_advice.assert_called_once()
     assert (
@@ -283,7 +281,7 @@ def test_market_not_in_candidates_is_overridden_to_hold() -> None:
         advice=build_advice(action="BUY", market="KRW-DOGE"),
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     assert advisor.create_advice.call_count == 1
     recommendation = recommendations[0]
@@ -311,7 +309,7 @@ def test_buy_ineligible_candidate_is_overridden_to_hold() -> None:
 
     service.market_data_context_service.enrich_candidates.side_effect = mark_ineligible
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     assert recommendations[0].action == "HOLD"
     assert "신규 BUY" in recommendations[0].reason
@@ -330,7 +328,7 @@ def test_sell_with_zero_selected_coin_balance_is_overridden_to_hold() -> None:
         ),
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     assert recommendations[0].action == "HOLD"
     assert recommendations[0].recommended_quantity is None
@@ -356,7 +354,7 @@ def test_all_candidates_without_enough_candles_create_system_guard_hold() -> Non
         advice=build_advice(action="BUY", market="KRW-BTC"),
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     advisor.create_advice.assert_not_called()
     assert len(recommendations) == 1
@@ -383,7 +381,7 @@ def test_buy_amount_is_also_capped_by_krw_balance() -> None:
         maximums={"KRW-BTC": Decimal("10000")},
     )
 
-    _, recommendations = service.create_ai_recommendations()
+    _, recommendations = service.create_ai_recommendations(1)
 
     assert recommendations[0].action == "BUY"
     assert recommendations[0].recommended_amount_krw == Decimal("7000")

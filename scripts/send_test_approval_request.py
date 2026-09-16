@@ -2,7 +2,6 @@ from argparse import ArgumentParser, ArgumentTypeError, Namespace
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.config.settings import get_settings
@@ -22,9 +21,9 @@ from crypto_trading_bot.services.approval_request_service import (
     DEFAULT_APPROVAL_EXPIRATION_MINUTES,
     ApprovalRequestService,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
-TEST_USER_NAME = "Minsu"
 TEST_MARKET = "KRW-BTC"
 TEST_CONFIDENCE = Decimal("0.7500")
 
@@ -96,26 +95,8 @@ def normalize_expiration_minutes(
     return expires_in_minutes, expires_in_minutes, False
 
 
-def get_test_user(
-    session: Session,
-    user_name: str = TEST_USER_NAME,
-) -> User:
-    statement = (
-        select(User)
-        .where(
-            User.name == user_name,
-            User.is_active.is_(True),
-        )
-        .order_by(User.id.asc())
-        .limit(1)
-    )
-
-    user = session.scalar(statement)
-
-    if user is None:
-        raise ValueError(f"Active user not found. name={user_name}")
-
-    return user
+def get_test_user(session: Session, user_id: int | None) -> User:
+    return RuntimeUserResolver(session).resolve_configured(user_id)
 
 
 def build_test_reason(action: str) -> str:
@@ -222,7 +203,7 @@ def send_test_approval_request(
     telegram_client = TelegramClient()
 
     with SessionLocal() as session:
-        user = get_test_user(session)
+        user = get_test_user(session, settings.trading_user_id)
 
         analysis_run, recommendation = create_test_trade_recommendation(
             session=session,

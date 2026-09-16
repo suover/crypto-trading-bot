@@ -172,7 +172,7 @@ class FakeClient:
 
 
 def add_user_and_bot_order(session) -> User:
-    user = User(name="Minsu")
+    user = User(name="Test User")
     session.add(user)
     session.flush()
     recommendation = TradeRecommendation(

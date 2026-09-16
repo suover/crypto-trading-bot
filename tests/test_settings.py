@@ -7,6 +7,7 @@ from crypto_trading_bot.config.settings import Settings
 
 
 SETTINGS_ENV_NAMES = (
+    "TRADING_USER_ID",
     "DATABASE_URL",
     "DATABASE_HOST",
     "DATABASE_PORT",
@@ -72,6 +73,7 @@ def test_openai_trade_defaults() -> None:
     )
 
     assert settings.openai_trade_model == "gpt-5.6-sol"
+    assert settings.trading_user_id is None
     assert settings.openai_reasoning_effort == "medium"
     assert settings.market_universe_mode == "STATIC"
     assert settings.live_dynamic_market_enabled is False

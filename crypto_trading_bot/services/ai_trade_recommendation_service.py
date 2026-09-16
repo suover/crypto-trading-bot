@@ -20,7 +20,6 @@ from crypto_trading_bot.db.models import (
     MarketUniverseCandidate,
     OrderLog,
     TradeRecommendation,
-    User,
 )
 from crypto_trading_bot.services.exchange_market_registry_service import (
     ExchangeMarketRegistryService,
@@ -28,6 +27,7 @@ from crypto_trading_bot.services.exchange_market_registry_service import (
 from crypto_trading_bot.services.market_data_context_service import (
     MarketDataContextService,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 from crypto_trading_bot.services.pipeline_identity import get_pipeline_run_id
 
 
@@ -67,14 +67,14 @@ class AiTradeRecommendationService:
 
     def create_ai_recommendations(
         self,
-        user_name: str = "Minsu",
+        user_id: int,
         candle_unit: int = 15,
         candle_count: int = 50,
         pipeline_run_id: str | None = None,
     ) -> tuple[AnalysisRun, list[TradeRecommendation]]:
         settings = get_settings()
         pipeline_id = get_pipeline_run_id(pipeline_run_id)
-        user = self._get_user(user_name)
+        user = RuntimeUserResolver(self.session).resolve(user_id)
         analysis_run = AnalysisRun(
             user_id=user.id,
             pipeline_run_id=pipeline_id,
@@ -357,12 +357,6 @@ class AiTradeRecommendationService:
             "minimum_order_amount_krw": str(MIN_RECOMMENDED_ORDER_AMOUNT_KRW),
             "max_order_amount_krw": str(max_order_amount),
         }
-
-    def _get_user(self, user_name: str) -> User:
-        user = self.session.scalar(select(User).where(User.name == user_name))
-        if user is None:
-            raise ValueError(f"User not found. name={user_name}")
-        return user
 
     def _get_persisted_candidates(
         self, user_id: int, pipeline_run_id: str | None

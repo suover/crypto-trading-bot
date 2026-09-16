@@ -15,6 +15,9 @@ def test_production_runtime_safety_mode_preserves_limited_live_policy() -> None:
     assert "--production-live" in script
     assert "MAX_ORDER_AMOUNT_KRW가 5000 이하" in script
     assert "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다" in script
+    assert "get_env_value TRADING_USER_ID" in script
+    assert "TRADING_USER_ID must be a positive integer" in script
+    assert "configured trading user exists and is active" in script
     assert 'TRADING_MODE" == "AI_APPROVAL"' in script
     assert 'LIVE_ORDER_CONFIRMATION" == "ENABLE_LIVE_UPBIT_ORDERS"' in script
     assert "DAILY_MAX_ORDER_AMOUNT_KRW가 유효한 양의 정수가 아닙니다" in script

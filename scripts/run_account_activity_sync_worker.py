@@ -14,20 +14,19 @@ def parse_arguments(args: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
-def run_cycle(session_factory, service_factory, *, overlap: timedelta):
-    from sqlalchemy import select
-
-    from crypto_trading_bot.db.models import User
+def run_cycle(session_factory, service_factory, *, user_id: int, overlap: timedelta):
+    from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
     with session_factory() as session:
-        user = session.scalar(select(User).where(User.name == "Minsu"))
-        if user is None:
-            raise RuntimeError("Configured account activity user was not found")
+        user = RuntimeUserResolver(session).resolve(user_id)
         return service_factory(session, overlap=overlap).run(user.id, apply=True)
 
 
 def run_worker(*, once: bool = False) -> None:
     from crypto_trading_bot.config.settings import get_settings
+    from crypto_trading_bot.services.runtime_user_resolver import (
+        require_trading_user_id,
+    )
 
     settings = get_settings()
     interval = settings.account_activity_sync_interval_seconds
@@ -36,6 +35,8 @@ def run_worker(*, once: bool = False) -> None:
         while not once:
             time.sleep(interval)
         return
+
+    user_id = require_trading_user_id(settings.trading_user_id)
 
     from crypto_trading_bot.db.database import SessionLocal
     from crypto_trading_bot.db.postgres_advisory_lock import PostgresAdvisoryLock
@@ -54,6 +55,7 @@ def run_worker(*, once: bool = False) -> None:
             result = run_cycle(
                 SessionLocal,
                 AccountActivitySyncService,
+                user_id=user_id,
                 overlap=timedelta(hours=settings.account_activity_sync_overlap_hours),
             )
             statuses = ",".join(

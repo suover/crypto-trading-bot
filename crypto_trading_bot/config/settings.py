@@ -12,6 +12,9 @@ from sqlalchemy import URL
 class Settings(BaseSettings):
     app_env: str = "local"
 
+    # Explicit identity for the current single-user trading deployment.
+    trading_user_id: int | None = None
+
     # Secret file location used by Docker Compose on the host.
     secret_dir: str = ".secrets"
 
@@ -145,6 +148,24 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_market_universe_mode(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("trading_user_id", mode="before")
+    @classmethod
+    def validate_trading_user_id(cls, value: object) -> object:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            raise ValueError("TRADING_USER_ID must be a positive integer")
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            if not normalized.isdecimal():
+                raise ValueError("TRADING_USER_ID must be a positive integer")
+            value = int(normalized)
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError("TRADING_USER_ID must be a positive integer")
+        return value
 
     @staticmethod
     def _read_secret_file(

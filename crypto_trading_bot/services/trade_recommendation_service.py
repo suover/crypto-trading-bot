@@ -15,8 +15,8 @@ from crypto_trading_bot.db.models import (
     AnalysisRun,
     MarketCandle,
     TradeRecommendation,
-    User,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 MIN_RECOMMENDED_ORDER_AMOUNT_KRW = Decimal("5000")
@@ -53,13 +53,13 @@ class TradeRecommendationService:
 
     def create_recommendations(
         self,
-        user_name: str = "Minsu",
+        user_id: int,
         candle_unit: int = 15,
         candle_count: int = 50,
     ) -> tuple[AnalysisRun, list[TradeRecommendation]]:
         settings = get_settings()
 
-        user = self._get_user(user_name)
+        user = RuntimeUserResolver(self.session).resolve(user_id)
 
         analysis_run = AnalysisRun(
             user_id=user.id,
@@ -129,14 +129,6 @@ class TradeRecommendationService:
             self.session.commit()
 
             raise
-
-    def _get_user(self, user_name: str) -> User:
-        user = self.session.scalar(select(User).where(User.name == user_name))
-
-        if user is None:
-            raise ValueError(f"User not found. name={user_name}")
-
-        return user
 
     def _get_recent_candles(
         self,

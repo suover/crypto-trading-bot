@@ -1,12 +1,17 @@
+from crypto_trading_bot.config.settings import get_settings
 from crypto_trading_bot.db.database import SessionLocal
 from crypto_trading_bot.services.portfolio_valuation_service import (
     PortfolioValuationService,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 
 
 def capture_portfolio_valuation() -> None:
     with SessionLocal() as session:
-        result = PortfolioValuationService(session).capture()
+        user = RuntimeUserResolver(session).resolve_configured(
+            get_settings().trading_user_id
+        )
+        result = PortfolioValuationService(session).capture(user.id)
         snapshot = result.portfolio_snapshot
         print(
             "Portfolio valuation saved. "

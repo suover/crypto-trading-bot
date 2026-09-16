@@ -12,6 +12,7 @@ from crypto_trading_bot.operational.error_reporting import (
     OPERATIONAL_ERROR_FILE_ENV,
     read_operational_error,
 )
+from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
 from crypto_trading_bot.services.pipeline_identity import PIPELINE_RUN_ID_ENV
 
 
@@ -62,6 +63,16 @@ PIPELINE_STEPS = [
         module="scripts.send_latest_ai_trade_recommendations",
     ),
 ]
+
+
+def resolve_pipeline_user_id() -> int:
+    from crypto_trading_bot.db.database import SessionLocal
+
+    settings = get_settings()
+    with SessionLocal() as session:
+        return (
+            RuntimeUserResolver(session).resolve_configured(settings.trading_user_id).id
+        )
 
 
 def run_step(step: PipelineStep, pipeline_run_id: str | None = None) -> None:
@@ -227,7 +238,10 @@ def send_failure_notification(error: PipelineStepError, pipeline_run_id: str) ->
 
 
 def run_ai_trade_analysis() -> None:
+    user_id = resolve_pipeline_user_id()
     pipeline_run_id = str(uuid4())
+    previous_user_id = os.environ.get("TRADING_USER_ID")
+    os.environ["TRADING_USER_ID"] = str(user_id)
     print(f"PIPELINE_RUN_ID: {pipeline_run_id}", flush=True)
     try:
         for step in PIPELINE_STEPS:
@@ -251,6 +265,12 @@ def run_ai_trade_analysis() -> None:
             )
 
         raise
+
+    finally:
+        if previous_user_id is None:
+            os.environ.pop("TRADING_USER_ID", None)
+        else:
+            os.environ["TRADING_USER_ID"] = previous_user_id
 
     print(
         "AI trade analysis pipeline completed successfully.",

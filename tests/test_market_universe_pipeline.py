@@ -1,8 +1,14 @@
+import os
 from types import SimpleNamespace
 from uuid import uuid4
 
 from crypto_trading_bot.services.pipeline_identity import PIPELINE_RUN_ID_ENV
-from scripts.run_ai_trade_analysis import PIPELINE_STEPS, PipelineStep, run_step
+from scripts.run_ai_trade_analysis import (
+    PIPELINE_STEPS,
+    PipelineStep,
+    run_ai_trade_analysis,
+    run_step,
+)
 
 
 def test_pipeline_run_id_is_passed_to_subprocess(monkeypatch: object) -> None:
@@ -28,3 +34,25 @@ def test_pipeline_step_order_includes_portfolio_before_ai() -> None:
         "scripts.generate_ai_trade_recommendations",
         "scripts.send_latest_ai_trade_recommendations",
     ]
+
+
+def test_pipeline_uses_one_configured_user_for_every_subprocess(
+    monkeypatch: object,
+) -> None:
+    seen_user_ids: list[str | None] = []
+    monkeypatch.delenv("TRADING_USER_ID", raising=False)
+    monkeypatch.setattr(
+        "scripts.run_ai_trade_analysis.resolve_pipeline_user_id",
+        lambda: 7,
+    )
+    monkeypatch.setattr(
+        "scripts.run_ai_trade_analysis.run_step",
+        lambda _step, _pipeline_id: seen_user_ids.append(
+            os.environ.get("TRADING_USER_ID")
+        ),
+    )
+
+    run_ai_trade_analysis()
+
+    assert seen_user_ids == ["7"] * len(PIPELINE_STEPS)
+    assert "TRADING_USER_ID" not in os.environ
