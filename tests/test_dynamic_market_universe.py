@@ -5,7 +5,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from crypto_trading_bot.config.settings import Settings
-from crypto_trading_bot.analysis.market_ranking import HeuristicMarketRankingPolicy
+from crypto_trading_bot.analysis.market_ranking import (
+    HeuristicMarketRankingPolicy,
+    HeuristicRankingWeights,
+)
 from crypto_trading_bot.analysis.market_ranking import MarketRankingPolicy
 from crypto_trading_bot.exchange.market_data import ExchangeMarketInfo, ExchangeTicker
 from crypto_trading_bot.services.market_universe_service import MarketUniverseService
@@ -596,3 +599,60 @@ def test_balance_reader_accepts_new_and_legacy_account_run_types() -> None:
     ]
     assert ["ACCOUNT_SNAPSHOT", "MANUAL"] in expanding_values
     assert balances["KRW"]["total"] == Decimal("1010")
+
+
+def test_market_universe_actual_output_changes_with_full_live_weights() -> None:
+    markets = [descriptor("KRW-BTC"), descriptor("KRW-ETH")]
+    tickers = [ticker("KRW-BTC", "200"), ticker("KRW-ETH", "100")]
+    features = {
+        "KRW-BTC": {
+            "15m": {
+                "data_quality": "SUFFICIENT",
+                "candle_count": 50,
+                "trend_label": "하락 우위",
+                "recent_change_rate": "0",
+                "volume_ratio": "0",
+                "realized_volatility": "20",
+                "max_drawdown": "30",
+            }
+        },
+        "KRW-ETH": {
+            "15m": {
+                "data_quality": "SUFFICIENT",
+                "candle_count": 50,
+                "trend_label": "상승 우위",
+                "recent_change_rate": "0",
+                "volume_ratio": "0",
+                "realized_volatility": "20",
+                "max_drawdown": "30",
+            }
+        },
+    }
+    baseline = build_service(
+        markets=markets,
+        tickers=tickers,
+        balances={"KRW": balance("10000")},
+        ranking_policy=HeuristicMarketRankingPolicy(),
+        timeframe_features_by_market=features,
+        market_universe_top_n=1,
+    ).build_and_persist(1)
+    full_live_weights = HeuristicRankingWeights(
+        liquidity=Decimal("0"),
+        trend_alignment=Decimal("1"),
+        momentum=Decimal("0"),
+        volume_confirmation=Decimal("0"),
+        spread=Decimal("0"),
+        volatility=Decimal("0"),
+        drawdown=Decimal("0"),
+    )
+    full_live = build_service(
+        markets=markets,
+        tickers=tickers,
+        balances={"KRW": balance("10000")},
+        ranking_policy=HeuristicMarketRankingPolicy(full_live_weights),
+        timeframe_features_by_market=features,
+        market_universe_top_n=1,
+    ).build_and_persist(1)
+
+    assert baseline.candidates[0].market == "KRW-BTC"
+    assert full_live.candidates[0].market == "KRW-ETH"

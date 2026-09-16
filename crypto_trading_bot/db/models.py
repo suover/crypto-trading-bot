@@ -542,6 +542,148 @@ class ShadowPolicyPromotionApproval(Base):
     )
 
 
+class FullLivePolicyActivation(Base):
+    __tablename__ = "full_live_policy_activations"
+    __table_args__ = (
+        UniqueConstraint(
+            "promotion_approval_id", name="uq_full_live_activation_approval"
+        ),
+        CheckConstraint(
+            "effective_top_n > 0", name="ck_full_live_activation_top_n_positive"
+        ),
+        CheckConstraint(
+            "activation_source = 'MANUAL_CLI'",
+            name="ck_full_live_activation_source_manual",
+        ),
+        Index(
+            "ix_full_live_activation_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "activated_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    activation_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    promotion_approval_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=False
+    )
+    promotion_approval_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id"), nullable=False
+    )
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id"), nullable=False
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    scenario_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    scenario_definition_signature: Mapped[str] = mapped_column(
+        String(100), nullable=False
+    )
+    component_weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_policy_definition: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False
+    )
+    effective_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_top_n: Mapped[int] = mapped_column(Integer, nullable=False)
+    activation_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    activated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class FullLivePolicyTerminationEvent(Base):
+    __tablename__ = "full_live_policy_termination_events"
+    __table_args__ = (
+        UniqueConstraint("activation_id", name="uq_full_live_termination_activation"),
+        CheckConstraint(
+            "termination_source = 'MANUAL_CLI'",
+            name="ck_full_live_termination_source_manual",
+        ),
+        Index(
+            "ix_full_live_termination_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "terminated_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    termination_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    activation_id: Mapped[int] = mapped_column(
+        ForeignKey("full_live_policy_activations.id"), nullable=False
+    )
+    activation_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    termination_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    termination_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    terminated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    termination_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class MarketUniversePolicyRun(Base):
+    __tablename__ = "market_universe_policy_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "mode IN ('BASELINE', 'FULL_LIVE')",
+            name="ck_market_universe_policy_run_mode",
+        ),
+        CheckConstraint(
+            "(mode = 'BASELINE' AND full_live_activation_id IS NULL "
+            "AND promotion_approval_id IS NULL) OR "
+            "(mode = 'FULL_LIVE' AND full_live_activation_id IS NOT NULL "
+            "AND promotion_approval_id IS NOT NULL)",
+            name="ck_market_universe_policy_run_provenance",
+        ),
+        Index(
+            "ix_market_universe_policy_run_context_time",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    policy_run_schema_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    analysis_run_id: Mapped[int] = mapped_column(
+        ForeignKey("analysis_runs.id"), nullable=False, unique=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    exchange: Mapped[str] = mapped_column(String(30), nullable=False)
+    quote_asset: Mapped[str] = mapped_column(String(20), nullable=False)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    effective_policy_signature: Mapped[str] = mapped_column(String(100), nullable=False)
+    full_live_activation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("full_live_policy_activations.id"), nullable=True
+    )
+    promotion_approval_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
 class ShadowPolicyEvaluation(Base):
     __tablename__ = "shadow_policy_evaluations"
     __table_args__ = (

@@ -1154,3 +1154,21 @@ docker compose run --rm recommendation-outcome-worker \
 ```
 
 주의: `--once`는 현재 활성화된 Recommendation, Research, Shadow cycle을 각각 한 번 실행합니다. Shadow-only cycle은 DB-only이고 price resolver나 Upbit/OpenAI/Telegram/CoinGecko를 호출하지 않지만, 다른 두 analytics flag가 true면 해당 public-price cycle도 함께 실행됩니다.
+
+## Full LIVE ranking policy operations
+
+1. Confirm the immutable Shadow human approval and its approval signature.
+2. Run activate_full_live_policy without --apply and review the baseline and
+   effective policy signatures.
+3. Re-run with --apply and the expected approval signature.
+4. Use check_live_ranking_policy to confirm FULL_LIVE.
+5. Observe the next MarketUniverse policy-run provenance. Activation does not
+   create orders and does not bypass OpenAI or Telegram approval.
+6. If needed, preview stop_full_live_policy, then apply it with the exact
+   activation signature and a non-empty reason.
+7. Confirm the status has returned to BASELINE.
+
+Only one active policy is allowed per (user_id, exchange, quote_asset).
+Replacing a policy requires an explicit stop, a confirmed BASELINE state, and a
+separate activation. Deploying the feature with zero activation rows preserves
+the existing baseline ranking.

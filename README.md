@@ -1280,3 +1280,34 @@ LIVE 활성화는 별도의 설계와 명시적 승인 작업으로만 도입해
 폐기 스키마 cleanup migration은 관련 테이블의 데이터를 보존하지 않습니다.
 운영 적용 전 DB 백업, 현재 Alembic revision 확인, 필요 시 폐기 대상 테이블별
 row count 기록을 완료한 뒤 `alembic upgrade head`를 실행하십시오.
+
+## Full LIVE ranking policy activation
+
+Full LIVE activation is an explicit operator action performed only after an
+immutable ShadowPolicyPromotionApproval has been human-approved. It is not a
+second human approval layer. Deploying this code does not activate a policy:
+with no active FullLivePolicyActivation, runtime resolution remains BASELINE.
+
+Activation changes only the MarketUniverse ranking policy used by the next
+analysis run. OpenAI BUY/SELL/HOLD decisions, Telegram approval, global order
+limits, Order Chance, idempotency, and reconciliation remain unchanged.
+Activation itself never creates an order.
+
+Preview and apply an exact approval:
+
+    python -m scripts.activate_full_live_policy --promotion-approval-id <ID> --user-id <USER_ID> --exchange UPBIT --quote-asset KRW
+    python -m scripts.activate_full_live_policy --promotion-approval-id <ID> --user-id <USER_ID> --exchange UPBIT --quote-asset KRW --apply --expected-approval-signature <SIGNATURE>
+
+Inspect the read-only runtime resolution:
+
+    python -m scripts.check_live_ranking_policy --user-id <USER_ID> --exchange UPBIT --quote-asset KRW
+
+Stop is explicit and append-only. It creates an immutable termination event;
+the activation row is never mutated. The next resolution returns to BASELINE.
+
+    python -m scripts.stop_full_live_policy --activation-id <ID> --user-id <USER_ID> --exchange UPBIT --quote-asset KRW
+    python -m scripts.stop_full_live_policy --activation-id <ID> --user-id <USER_ID> --exchange UPBIT --quote-asset KRW --apply --expected-activation-signature <SIGNATURE> --reason "manual rollback"
+
+Back up the production database before activation. Code deployment and policy
+activation are separate operations, and activation must never be fabricated for
+an unapproved Production candidate.

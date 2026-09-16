@@ -10,6 +10,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from crypto_trading_bot.db.models import ShadowPolicyPromotionApproval
+from crypto_trading_bot.services.forward_candidate_provenance import (
+    InvalidForwardCandidateProvenance,
+)
 from crypto_trading_bot.services.offline_strategy_replay_service import ReplayInputError
 from crypto_trading_bot.services.shadow_policy_enrollment_service import (
     ShadowPolicyEnrollmentError,
@@ -716,6 +719,56 @@ class ShadowPolicyPromotionApprovalService:
         )
 
 
+@dataclass(frozen=True)
+class ValidatedShadowPolicyPromotionApproval:
+    approval: ShadowPolicyPromotionApproval
+    enrollment: object
+    candidate: object
+    scenario: object
+
+
+def load_and_validate_shadow_policy_promotion_approval(
+    session: Session, promotion_approval_id: int
+) -> ValidatedShadowPolicyPromotionApproval:
+    if (
+        isinstance(promotion_approval_id, bool)
+        or not isinstance(promotion_approval_id, int)
+        or promotion_approval_id < 1
+    ):
+        raise ShadowPolicyPromotionApprovalError(
+            "promotion approval ID must be a positive integer"
+        )
+    approval = session.get(ShadowPolicyPromotionApproval, promotion_approval_id)
+    if approval is None:
+        raise ShadowPolicyPromotionApprovalError(
+            "stored promotion approval does not exist"
+        )
+    try:
+        validated = load_and_validate_shadow_policy_enrollment(
+            session, approval.candidate_id
+        )
+        if validated is None:
+            raise ShadowPolicyPromotionApprovalError(
+                "stored promotion approval has no Shadow enrollment"
+            )
+        ShadowPolicyPromotionApprovalService(session)._validate_existing(
+            approval, validated
+        )
+    except (
+        InvalidForwardCandidateProvenance,
+        ShadowPolicyEnrollmentError,
+    ) as error:
+        raise ShadowPolicyPromotionApprovalError(
+            f"stored promotion approval provenance is invalid: {error}"
+        ) from error
+    return ValidatedShadowPolicyPromotionApproval(
+        approval=approval,
+        enrollment=validated.row,
+        candidate=validated.candidate,
+        scenario=validated.scenario,
+    )
+
+
 __all__ = [
     "ALREADY_APPROVED",
     "APPROVAL_SCHEMA_VERSION",
@@ -730,6 +783,8 @@ __all__ = [
     "ShadowPolicyPromotionApprovalError",
     "ShadowPolicyPromotionApprovalResult",
     "ShadowPolicyPromotionApprovalService",
+    "ValidatedShadowPolicyPromotionApproval",
+    "load_and_validate_shadow_policy_promotion_approval",
     "promotion_approval_payload",
     "promotion_approval_signature",
     "review_checks_definition",

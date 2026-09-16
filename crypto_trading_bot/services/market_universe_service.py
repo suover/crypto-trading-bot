@@ -19,6 +19,7 @@ from crypto_trading_bot.db.models import (
     MarketCandle,
     MarketSnapshot,
     MarketUniverseCandidate,
+    MarketUniversePolicyRun,
     User,
 )
 from crypto_trading_bot.exchange.market_data import (
@@ -33,7 +34,16 @@ from crypto_trading_bot.services.exchange_market_registry_service import (
     ExchangeMarketRegistryService,
 )
 from crypto_trading_bot.services.market_candle_service import MarketCandleService
+from crypto_trading_bot.services.live_ranking_policy_resolver import (
+    BASELINE,
+    FULL_LIVE,
+    LiveRankingPolicyResolution,
+)
 from crypto_trading_bot.services.runtime_user_resolver import RuntimeUserResolver
+from crypto_trading_bot.services.strategy_replay_dataset_service import (
+    build_policy_data,
+    policy_signature,
+)
 from crypto_trading_bot.services.market_data_context_service import (
     MarketDataContextService,
 )
@@ -72,6 +82,7 @@ class MarketUniverseService:
         registry_service: ExchangeMarketRegistryService | None = None,
         candle_service: MarketCandleService | None = None,
         ranking_policy: MarketRankingPolicy | None = None,
+        policy_resolution: LiveRankingPolicyResolution | None = None,
     ) -> None:
         self.session = session
         self.settings = settings or get_settings()
@@ -82,7 +93,18 @@ class MarketUniverseService:
         self.candle_service = candle_service or MarketCandleService(
             session, market_data_provider=self.provider
         )
-        self.ranking_policy = ranking_policy or HeuristicMarketRankingPolicy()
+        if (
+            policy_resolution is not None
+            and ranking_policy is not None
+            and ranking_policy is not policy_resolution.ranking_policy
+        ):
+            raise ValueError("ranking policy and resolution do not align")
+        self.policy_resolution = policy_resolution
+        self.ranking_policy = (
+            policy_resolution.ranking_policy
+            if policy_resolution is not None
+            else ranking_policy or HeuristicMarketRankingPolicy()
+        )
 
     def build_and_persist(
         self,
@@ -108,6 +130,13 @@ class MarketUniverseService:
         self.session.flush()
         self.session.commit()
         try:
+            self._persist_policy_run(
+                analysis_run=analysis_run,
+                user_id=user.id,
+                exchange=exchange,
+                quote_asset=quote_asset,
+            )
+            self.session.commit()
             result = self._build(
                 analysis_run=analysis_run,
                 user=user,
@@ -128,6 +157,59 @@ class MarketUniverseService:
                 analysis_run.finished_at = datetime.now(UTC)
                 self.session.commit()
             raise
+
+    def _persist_policy_run(
+        self,
+        *,
+        analysis_run: AnalysisRun,
+        user_id: int,
+        exchange: str,
+        quote_asset: str,
+    ) -> None:
+        resolution = self.policy_resolution
+        if resolution is None:
+            policy_data = build_policy_data(self.settings, self.ranking_policy)
+            signature = policy_signature(policy_data)
+            mode = BASELINE
+            baseline_signature = signature
+            effective_signature = signature
+            activation_id = None
+            approval_id = None
+        else:
+            if (
+                resolution.user_id != user_id
+                or resolution.exchange != exchange
+                or resolution.quote_asset != quote_asset
+            ):
+                raise ValueError("ranking policy resolution context does not align")
+            mode = resolution.mode
+            baseline_signature = resolution.baseline_policy_signature
+            effective_signature = resolution.effective_policy_signature
+            activation_id = resolution.full_live_activation_id
+            approval_id = resolution.promotion_approval_id
+            if mode == BASELINE and (
+                activation_id is not None or approval_id is not None
+            ):
+                raise ValueError("baseline resolution contains Full LIVE provenance")
+            if mode == FULL_LIVE and (activation_id is None or approval_id is None):
+                raise ValueError("Full LIVE resolution lacks activation provenance")
+            if mode not in {BASELINE, FULL_LIVE}:
+                raise ValueError("ranking policy resolution mode is unsupported")
+        self.session.add(
+            MarketUniversePolicyRun(
+                policy_run_schema_version="market-universe-policy-run-v1",
+                analysis_run_id=analysis_run.id,
+                user_id=user_id,
+                exchange=exchange,
+                quote_asset=quote_asset,
+                mode=mode,
+                baseline_policy_signature=baseline_signature,
+                effective_policy_signature=effective_signature,
+                full_live_activation_id=activation_id,
+                promotion_approval_id=approval_id,
+            )
+        )
+        self.session.flush()
 
     def _build(
         self,
