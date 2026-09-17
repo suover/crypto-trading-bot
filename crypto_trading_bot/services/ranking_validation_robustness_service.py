@@ -18,6 +18,7 @@ from crypto_trading_bot.services.ranking_walk_forward_validation_service import 
     INSUFFICIENT_WALK_FORWARD_DATA,
     INVALID_WALK_FORWARD_DATA,
     RankingWalkForwardCohortResult,
+    RankingWalkForwardValidationResult,
     RankingWalkForwardValidationService,
 )
 from crypto_trading_bot.services.strategy_ab_performance_service import (
@@ -211,6 +212,14 @@ class RankingValidationRobustnessService:
             initial_research_size=initial_research_size,
             validation_size=validation_size,
         )
+        return self.evaluate_from_results(matrix, walk_forward)
+
+    def evaluate_from_results(
+        self,
+        matrix: RankingScenarioEvaluationMatrix,
+        walk_forward: RankingWalkForwardValidationResult,
+    ) -> RankingValidationRobustnessResult:
+        """Describe one already-computed matrix and walk-forward result."""
         if len(matrix.cohorts) != len(walk_forward.cohorts):
             raise RobustnessDataError("walk-forward cohort count does not match matrix")
         cohorts = tuple(

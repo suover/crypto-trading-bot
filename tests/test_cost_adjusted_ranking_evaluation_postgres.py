@@ -32,6 +32,10 @@ from crypto_trading_bot.services.cost_adjusted_validation_robustness_service imp
 from crypto_trading_bot.services.ranking_scenario_sweep_service import (
     parse_scenario_document,
 )
+from crypto_trading_bot.services.reference_bounded_historical_research_batch_service import (
+    SUCCESS as BATCH_SUCCESS,
+    ReferenceBoundedHistoricalResearchBatchService,
+)
 from crypto_trading_bot.services.strategy_replay_dataset_service import (
     DATASET_SCHEMA_VERSION,
     build_policy_data,
@@ -690,4 +694,120 @@ def test_postgresql_cost_adjusted_robustness_insufficient_is_safe_and_read_only(
         assert not session.new
         assert not session.dirty
         assert not session.deleted
+        session.rollback()
+
+
+def test_postgresql_reference_bounded_batch_is_reproducible_and_read_only():
+    with SessionLocal() as session:
+        user = User(name=f"reference-batch-{uuid4()}")
+        session.add(user)
+        session.flush()
+        snapshots = [
+            _create_snapshot(
+                session,
+                user,
+                captured_at=datetime(2026, 1, 1, hour, tzinfo=UTC),
+                sequence=hour,
+            )
+            for hour in range(4)
+        ]
+        reference = snapshots[-1]
+        session.flush()
+        before = _counts(session)
+
+        first = ReferenceBoundedHistoricalResearchBatchService(session).evaluate(
+            reference_snapshot_id=reference.id
+        )
+
+        assert (first.status, first.safe_reason) == (BATCH_SUCCESS, None)
+        assert first.generated_candidate_count == 42
+        assert first.novel_candidate_count == first.evaluated_candidate_count == 42
+        assert first.historical_timeline_snapshot_ids == tuple(
+            snapshot.id for snapshot in snapshots
+        )
+        assert first.historical_context_snapshot_ids == tuple(
+            snapshot.id for snapshot in snapshots
+        )
+        assert _counts(session) == before
+        assert not session.new
+        assert not session.dirty
+        assert not session.deleted
+
+        historical_candidates = tuple(
+            session.scalars(
+                select(StrategyReplayCandidate).where(
+                    StrategyReplayCandidate.strategy_replay_snapshot_id.in_(
+                        tuple(snapshot.id for snapshot in snapshots)
+                    )
+                )
+            )
+        )
+        snapshot_at_by_id = {
+            snapshot.id: snapshot.captured_at for snapshot in snapshots
+        }
+        for candidate in historical_candidates:
+            candidate_snapshot_at = snapshot_at_by_id[
+                candidate.strategy_replay_snapshot_id
+            ]
+            session.add(
+                StrategyReplayCandidateOutcome(
+                    strategy_replay_candidate_id=candidate.id,
+                    strategy_replay_snapshot_id=candidate.strategy_replay_snapshot_id,
+                    user_id=user.id,
+                    exchange="UPBIT",
+                    market=candidate.market,
+                    horizon_minutes=1440,
+                    snapshot_at=candidate_snapshot_at,
+                    reference_at=candidate_snapshot_at,
+                    target_at=candidate_snapshot_at + timedelta(minutes=1440),
+                    evaluated_at=candidate_snapshot_at + timedelta(minutes=1441),
+                    reference_price=Decimal("100"),
+                    reference_price_source=(
+                        "STRATEGY_REPLAY_CANDIDATE_FEATURE_LATEST_PRICE"
+                    ),
+                    end_price=Decimal("101"),
+                    end_price_at=candidate_snapshot_at + timedelta(minutes=1439),
+                    end_price_source="UPBIT_MINUTE_CANDLE_1M_CLOSE",
+                    market_return_percentage=Decimal("1"),
+                    evaluation_status="COMPLETE",
+                    safe_reason=None,
+                    created_at=reference.created_at + timedelta(seconds=1),
+                    updated_at=reference.created_at + timedelta(seconds=1),
+                )
+            )
+        session.flush()
+        future_outcome_count = len(historical_candidates)
+        future = _create_snapshot(
+            session,
+            user,
+            captured_at=datetime(2026, 1, 2, tzinfo=UTC),
+            sequence=5,
+        )
+        session.flush()
+        second = ReferenceBoundedHistoricalResearchBatchService(session).evaluate(
+            reference_snapshot_id=reference.id
+        )
+
+        assert future.id not in second.historical_timeline_snapshot_ids
+        assert (
+            second.historical_timeline_snapshot_ids
+            == first.historical_timeline_snapshot_ids
+        )
+        assert (
+            second.historical_context_snapshot_ids
+            == first.historical_context_snapshot_ids
+        )
+        assert second.candidate_results == first.candidate_results
+        after = _counts(session)
+        assert after == {
+            model: count
+            + (
+                1
+                if model is StrategyReplaySnapshot
+                else 3
+                if model is StrategyReplayCandidate
+                else 6 + future_outcome_count
+            )
+            for model, count in before.items()
+        }
         session.rollback()

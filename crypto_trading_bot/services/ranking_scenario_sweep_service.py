@@ -255,6 +255,16 @@ class RankingScenarioSweepService:
             snapshot_id=snapshot_id,
             latest=latest,
         )
+        return self.result_from_matrix(matrix)
+
+    def result_from_matrix(
+        self, matrix: RankingScenarioEvaluationMatrix
+    ) -> RankingScenarioSweepResult:
+        """Render the canonical sweep summary without repeating DB evaluation."""
+        definitions = self._validate_definitions(matrix.scenarios)
+        horizons = self._validate_horizons(matrix.horizons)
+        if definitions != matrix.scenarios or horizons != matrix.horizons:
+            raise ReplayInputError("scenario matrix metadata is invalid")
         cohorts = tuple(
             self._render_cohort(cohort, matrix.scenarios) for cohort in matrix.cohorts
         )

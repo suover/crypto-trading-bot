@@ -1172,3 +1172,23 @@ Only one active policy is allowed per (user_id, exchange, quote_asset).
 Replacing a policy requires an explicit stop, a confirmed BASELINE state, and a
 separate activation. Deploying the feature with zero activation rows preserves
 the existing baseline ranking.
+
+## Reference-bounded generated-candidate historical batch
+
+다음 명령은 저장된 reference snapshot 시점 이전의 DB evidence만 사용합니다.
+
+```bash
+python -m scripts.evaluate_generated_candidate_historical_batch \
+  --reference-snapshot-id <SNAPSHOT_ID> \
+  --step 0.05 \
+  --output /tmp/generated-candidate-historical-batch.json
+```
+
+실행 전 reference ID와 출력 경로를 확인합니다. 이 명령에는 `--apply`가 없고 생성된 전체 novel
+후보(`all_candidates`, registered 제외)를 평가하므로 기본 Generator 출력 cap 20과 독립적입니다.
+동일 reference/step 재실행은 reference 이후 snapshot과 outcome을 제외합니다. 상태가
+`NO_NOVEL_CANDIDATES`이면 정상 no-op이며, `INSUFFICIENT_*`/`NO_*`는 표본 부족을 보존한 연구
+상태입니다. `INVALID_REFERENCE_BOUNDED_HISTORICAL_RESEARCH_BATCH`는 snapshot lineage,
+policy/cohort/scenario identity 또는 upstream integrity 오류이므로 결과를 사용하지 말고 source
+row를 조사합니다. 이 배치는 후보 등록, Forward enrollment, Shadow, Full LIVE, Telegram, 주문,
+외부 API를 호출하지 않으며 DB transaction은 rollback으로 종료합니다.

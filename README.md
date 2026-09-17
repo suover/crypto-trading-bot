@@ -276,6 +276,30 @@ python -m scripts.register_research_policy_candidate \
   --reference-snapshot-id 123
 ```
 
+### Reference-bounded Historical Research Batch v1
+
+이 read-only 배치는 한 reference snapshot에서 Generator가 만든 `all_candidates` 중
+`already_registered=false`인 **모든** 후보를 canonical 순서 그대로 평가합니다. Generator의
+기본 20개 출력 cap은 scenario 파일 표시용일 뿐 이 배치의 research 대상 수를 제한하지 않습니다.
+Reference의 `created_at`을 UTC as-of로 고정하고 같은 user/exchange/quote/schema에서 ID,
+`captured_at`, `created_at`이 reference ceiling 이하인 timeline만 사용합니다. Gross matrix는
+동일 baseline signature와 TopN의 context snapshot으로 한 번 계산하며 outcome에도 같은 as-of를
+적용합니다.
+
+```bash
+python -m scripts.evaluate_generated_candidate_historical_batch \
+  --reference-snapshot-id 123 \
+  --step 0.05 \
+  --output generated-candidate-historical-batch.json
+```
+
+v1 profile은 horizon `60/240/1440`, expanding research/validation size `2/1`,
+fee/spread/slippage `0.0005/0.0005/0.001`로 고정됩니다. `--max-candidates`나 profile override는
+지원하지 않습니다. JSON은 Decimal 문자열과 timezone-aware ISO datetime을 보존해 atomic
+write하며 기존 파일 교체에는 `--force`가 필요합니다. 결과는 gross/turnover/cost-adjusted
+기술 evidence의 집계일 뿐 score, rank, winner, screening, 후보 등록, Forward/Shadow/LIVE 변경이
+아닙니다. DB write 및 Upbit/CoinGecko/Telegram/OpenAI 호출도 수행하지 않습니다.
+
 ### Temporal Ranking Holdout Validation v1
 
 Temporal Ranking Holdout Validation은 Sweep의 명시적 scenario를 동일한 common comparable
