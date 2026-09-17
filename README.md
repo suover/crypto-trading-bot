@@ -227,6 +227,55 @@ out-of-sample/holdout 검증을 사용해야 합니다. 출력은 ranking select
 movement 기술 통계이며 실제 trading PnL, 통계적 검증, 미래 수익 보장 또는 자동 LIVE 정책
 추천이 아닙니다.
 
+### Deterministic Ranking Candidate Generator v1
+
+이 도구는 성과를 보고 전략을 선택하지 않습니다. 명시적으로 지정한
+`StrategyReplaySnapshot`의 실제 `policy_data`와 signature를 검증하고, 당시 사용된 ranking
+policy를 복원한 뒤 component weight 하나에서 다른 하나로 같은 작은 Decimal step을 옮기는
+pairwise 후보만 결정론적으로 생성합니다. Reference parameter와 TopN은 변경하지 않으며,
+기본 step은 `0.05`, 기본 최대 후보 수는 20입니다. Valid 후보가 최대 수를 넘으면 canonical 앞
+N개를 단순 절단하지 않고, canonical component 순서의 donor group별 deterministic round-robin으로
+선택해 특정 donor 방향 편향을 줄입니다. 후보가 없는 donor는 건너뜁니다.
+
+기본 모드에서는 기존 등록 signature를 표시한 뒤 novel pool에서 최대 후보 수를 적용하므로 등록된
+후보가 novel 자리를 소모하지 않습니다. `--include-registered`에서는 registered와 novel을 합친
+전체 pool에 동일한 balanced cap을 적용합니다.
+
+생성 결과는 research scenario일 뿐입니다. CLI는 snapshot과 같은 user/exchange/quote asset,
+baseline policy signature, TopN context의 기존 `ResearchPolicyCandidate` signature를 조회해
+중복 등록 여부만 표시하며 DB write나 자동 candidate 등록을 하지 않습니다. Outcome, PnL,
+Forward/Shadow/Full LIVE 결과를 읽지 않고 OpenAI 또는 외부 API도 호출하지 않습니다. AI candidate
+proposal은 아직 구현하지 않았습니다.
+
+```bash
+python -m scripts.generate_ranking_candidates \
+  --reference-snapshot-id 123 \
+  --step 0.05 \
+  --max-candidates 20 \
+  --output generated-ranking-candidates.json
+
+python -m scripts.evaluate_ranking_scenario_sweep \
+  --latest 100 \
+  --horizon 60 \
+  --horizon 240 \
+  --scenario-file generated-ranking-candidates.json
+```
+
+`--output`은 기존 `ranking-scenario-sweep-v1` JSON을 atomic write하며 기존 파일은 기본적으로
+거부합니다. 의도적인 교체에만 `--force`를 사용합니다. 기본 출력 파일에는 novel candidate만
+포함되고 진단 목적으로 이미 등록된 후보까지 포함하려면 `--include-registered`를 사용합니다.
+생성 후보는 기존 Sweep/Historical/Holdout/Walk-forward/Forward/Shadow 검증 절차를 그대로
+거쳐야 합니다.
+
+특정 생성 scenario를 사람이 검토한 뒤 기존 Registry의 dry-run에 연결할 수 있습니다.
+
+```bash
+python -m scripts.register_research_policy_candidate \
+  --scenario-file generated-ranking-candidates.json \
+  --scenario-name auto_v1_liquidity_to_trend_alignment_p0.05 \
+  --reference-snapshot-id 123
+```
+
 ### Temporal Ranking Holdout Validation v1
 
 Temporal Ranking Holdout Validation은 Sweep의 명시적 scenario를 동일한 common comparable
