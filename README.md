@@ -300,6 +300,29 @@ write하며 기존 파일 교체에는 `--force`가 필요합니다. 결과는 g
 기술 evidence의 집계일 뿐 score, rank, winner, screening, 후보 등록, Forward/Shadow/LIVE 변경이
 아닙니다. DB write 및 Upbit/CoinGecko/Telegram/OpenAI 호출도 수행하지 않습니다.
 
+### Historical Candidate Screening Gate v1
+
+Historical Batch 결과는 다음 read-only Gate에서 기존 `POLICY_PROMOTION_GATE_V1`의 historical
+threshold와 동일한 기준으로 후보별 독립 판정을 받을 수 있습니다.
+
+```text
+Historical Batch
+→ Historical Screening Gate
+→ PASS / FAIL / INSUFFICIENT / INVALID
+```
+
+```bash
+python -m scripts.evaluate_historical_candidate_screening_gate \
+  --reference-snapshot-id 123 \
+  --step 0.05 \
+  --output historical-candidate-screening.json
+```
+
+Screening은 후보 간 ranking이나 winner 선정이 아닙니다. 여러 후보가 PASS할 수 있고 PASS는
+LIVE-ready 또는 자동 `ResearchPolicyCandidate` 등록을 뜻하지 않습니다. Forward evidence는
+명시적인 candidate 등록 이후의 별도 단계입니다. Gate는 Batch 결과를 재계산하지 않는
+`evaluate_from_batch()` decision core를 제공하며 DB write, 외부 API, Forward/Shadow/LIVE 호출을
+수행하지 않습니다.
 ### Temporal Ranking Holdout Validation v1
 
 Temporal Ranking Holdout Validation은 Sweep의 명시적 scenario를 동일한 common comparable

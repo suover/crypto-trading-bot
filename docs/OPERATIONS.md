@@ -1192,3 +1192,24 @@ python -m scripts.evaluate_generated_candidate_historical_batch \
 policy/cohort/scenario identity 또는 upstream integrity 오류이므로 결과를 사용하지 말고 source
 row를 조사합니다. 이 배치는 후보 등록, Forward enrollment, Shadow, Full LIVE, Telegram, 주문,
 외부 API를 호출하지 않으며 DB transaction은 rollback으로 종료합니다.
+
+## Historical candidate screening gate
+
+Reference-bounded Batch의 novel 후보를 서로 비교하지 않고, Promotion Gate v1에서 파생한 동일한
+historical fold/coverage/stability threshold로 각각 판정합니다.
+
+```bash
+python -m scripts.evaluate_historical_candidate_screening_gate \
+  --reference-snapshot-id 39 \
+  --step 0.05
+
+python -m scripts.evaluate_historical_candidate_screening_gate \
+  --reference-snapshot-id 39 \
+  --step 0.05 \
+  --output /tmp/historical-screening.json
+```
+
+기존 출력 파일은 `--force` 없이는 교체하지 않습니다. `PASS`, `FAIL`, `INSUFFICIENT`, `INVALID`는
+후보별 absolute historical check 결과이며 PASS도 수익성, Forward-ready, LIVE-ready 또는 자동
+등록을 의미하지 않습니다. CLI는 DB read-only이고 candidate 등록, Forward, Shadow, Full LIVE,
+OpenAI, Upbit, Telegram 또는 CoinGecko를 호출하지 않습니다.

@@ -39,6 +39,11 @@ from crypto_trading_bot.services.forward_candidate_turnover_evidence_service imp
     ForwardCandidateTurnoverEvidenceResult,
     ForwardCandidateTurnoverEvidenceService,
 )
+from crypto_trading_bot.services.historical_candidate_screening_policy import (
+    HistoricalCandidateScreeningEvaluator,
+    HistoricalScreeningEvidence,
+    thresholds_from_promotion_policy,
+)
 from crypto_trading_bot.services.offline_strategy_replay_service import ReplayInputError
 
 
@@ -260,6 +265,9 @@ class PolicyPromotionGateService:
         validate_gate_policy(policy)
         self.session = session
         self.policy = policy
+        self.historical_evaluator = HistoricalCandidateScreeningEvaluator(
+            thresholds_from_promotion_policy(policy)
+        )
         self.historical_service = (
             historical_service
             or CandidateRegistrationBoundedHistoricalEvidenceService(session)
@@ -596,65 +604,58 @@ class PolicyPromotionGateService:
             or set(cost_forward) != set(policy.required_horizons)
         ):
             raise _InvalidGateData("required horizon evidence is missing or duplicated")
-        supportive = 0
-        catastrophic_values = []
+        historical_evaluation = self.historical_evaluator.evaluate(
+            HistoricalScreeningEvidence(
+                horizon_minutes=horizon,
+                gross_fold_count=gross_historical[horizon].fold_count,
+                cost_fold_count=cost_historical[horizon].fold_count,
+                cost_adjustable_coverage_rate=(
+                    cost_historical[horizon].cost_adjustable_coverage_rate
+                ),
+                cost_mean_delta=(
+                    cost_historical[horizon]
+                    .scenario_results[0]
+                    .fold_statistics.statistics.mean_delta
+                    if cost_historical[horizon].scenario_results
+                    else None
+                ),
+                cost_positive_rate=(
+                    cost_historical[horizon]
+                    .scenario_results[0]
+                    .fold_statistics.statistics.positive_rate
+                    if cost_historical[horizon].scenario_results
+                    else None
+                ),
+            )
+            for horizon in policy.required_horizons
+        )
+        historical_invalid = next(
+            (
+                item
+                for item in historical_evaluation.stability_checks
+                if item.status == INVALID
+            ),
+            None,
+        )
+        if historical_invalid is not None:
+            raise _InvalidGateData(
+                historical_invalid.reason or "historical evidence is invalid"
+            )
+        historical_sufficiency = {
+            horizon: tuple(
+                item
+                for item in historical_evaluation.sufficiency_checks
+                if item.horizon_minutes == horizon
+            )
+            for horizon in policy.required_horizons
+        }
         for horizon in policy.required_horizons:
-            hg = gross_historical[horizon]
-            hc = cost_historical[horizon]
             fg = gross_forward[horizon]
             fc = cost_forward[horizon]
-            self._threshold(
-                sufficiency,
-                "HISTORICAL_GROSS_FOLD_COUNT",
-                "SUFFICIENCY",
-                horizon,
-                hg.fold_count,
-                ">=",
-                policy.min_historical_gross_fold_count,
+            sufficiency.extend(
+                PromotionGateCheckResult(**asdict(item))
+                for item in historical_sufficiency[horizon]
             )
-            self._threshold(
-                sufficiency,
-                "HISTORICAL_COST_FOLD_COUNT",
-                "SUFFICIENCY",
-                horizon,
-                hc.fold_count,
-                ">=",
-                policy.min_historical_cost_fold_count,
-            )
-            self._threshold(
-                sufficiency,
-                "HISTORICAL_COST_COVERAGE",
-                "SUFFICIENCY",
-                horizon,
-                hc.cost_adjustable_coverage_rate,
-                ">=",
-                policy.min_historical_cost_adjustable_coverage,
-            )
-            stats = (
-                hc.scenario_results[0].fold_statistics.statistics
-                if hc.scenario_results
-                else None
-            )
-            mean = stats.mean_delta if stats else None
-            positive_rate = stats.positive_rate if stats else None
-            if stats is None and hc.fold_count >= policy.min_historical_cost_fold_count:
-                raise _InvalidGateData("historical stability statistics are missing")
-            if any(
-                value is not None and not self._valid_number(value)
-                for value in (mean, positive_rate)
-            ) or (
-                positive_rate is not None
-                and (positive_rate < Decimal("0") or positive_rate > Decimal("1"))
-            ):
-                raise _InvalidGateData("historical stability statistics are invalid")
-            if (
-                mean is not None
-                and positive_rate is not None
-                and mean > 0
-                and positive_rate >= policy.historical_supportive_positive_rate
-            ):
-                supportive += 1
-            catastrophic_values.append(mean)
             self._threshold(
                 sufficiency,
                 "FORWARD_GROSS_SAMPLE_COUNT",
@@ -722,28 +723,9 @@ class PolicyPromotionGateService:
                 fc.cost_adjustable_forward_snapshot_count
                 >= policy.min_forward_cost_adjustable_snapshots,
             )
-        self._threshold(
-            stability,
-            "HISTORICAL_SUPPORTIVE_HORIZONS",
-            "HISTORICAL_STABILITY",
-            None,
-            supportive,
-            ">=",
-            policy.min_historical_supportive_horizons,
-            failure=FAIL,
-        )
-        catastrophic = min(
-            (value for value in catastrophic_values if value is not None), default=None
-        )
-        self._threshold(
-            stability,
-            "HISTORICAL_CATASTROPHIC_DEGRADATION",
-            "HISTORICAL_STABILITY",
-            None,
-            catastrophic,
-            ">=",
-            policy.historical_catastrophic_mean_delta_floor,
-            failure=FAIL,
+        stability.extend(
+            PromotionGateCheckResult(**asdict(item))
+            for item in historical_evaluation.stability_checks
         )
         self._threshold(
             sufficiency,

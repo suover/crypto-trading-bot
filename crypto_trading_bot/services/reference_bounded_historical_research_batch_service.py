@@ -100,6 +100,9 @@ class HistoricalResearchHorizonEvidence:
     horizon_minutes: int
     baseline_policy_signature: str
     effective_top_n: int
+    gross_fold_count: int | None
+    cost_fold_count: int | None
+    cost_adjustable_coverage_rate: Decimal | None
     gross_status: str
     gross_safe_reason: str | None
     gross: RankingScenarioComparisonResult | None
@@ -629,6 +632,21 @@ class ReferenceBoundedHistoricalResearchBatchService:
                         horizon_minutes=horizon,
                         baseline_policy_signature=generator.reference_policy_signature,
                         effective_top_n=generator.effective_top_n,
+                        gross_fold_count=getattr(robust_cohort, "fold_count", None),
+                        cost_fold_count=(
+                            getattr(cost_robust_cohort, "fold_count", None)
+                            if cost_robust_cohort
+                            else None
+                        ),
+                        cost_adjustable_coverage_rate=(
+                            getattr(
+                                cost_robust_cohort,
+                                "cost_adjustable_coverage_rate",
+                                None,
+                            )
+                            if cost_robust_cohort
+                            else None
+                        ),
                         gross_status=gross_cohort.status,
                         gross_safe_reason=gross_cohort.safe_reason,
                         gross=self._scenario_result(
