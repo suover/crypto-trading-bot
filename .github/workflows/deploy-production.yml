@@ -18,7 +18,7 @@ concurrency:
 jobs:
   deploy:
     name: Deploy exact main SHA
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: production
     env:
       EXPECTED_SHA: ${{ github.sha }}
@@ -41,7 +41,7 @@ jobs:
           fi
 
       - name: Checkout exact workflow commit
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
