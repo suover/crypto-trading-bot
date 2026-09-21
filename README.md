@@ -323,6 +323,18 @@ LIVE-ready 또는 자동 `ResearchPolicyCandidate` 등록을 뜻하지 않습니
 명시적인 candidate 등록 이후의 별도 단계입니다. Gate는 Batch 결과를 재계산하지 않는
 `evaluate_from_batch()` decision core를 제공하며 DB write, 외부 API, Forward/Shadow/LIVE 호출을
 수행하지 않습니다.
+### Screening-Gated Research Candidate Registration v1
+
+연구 흐름은 `Generator → Historical Batch → Screening → Screening-Gated Registration → Genuine
+Forward → Promotion Gate`입니다. 등록 CLI는 과거 Screening JSON을 입력받지 않고 explicit
+reference snapshot으로 Batch와 Screening을 항상 새로 실행합니다. `PASS` 후보 전체를 canonical
+순서로 다루며 ranking, winner 또는 subset 선택을 하지 않습니다.
+
+Preview는 DB write가 없고 deterministic plan signature를 출력합니다. Apply는 같은 reference와
+`--expected-plan-signature`가 필수이며 fresh Screening을 다시 수행합니다. latest runtime-context
+snapshot, same-policy/TopN watermark 또는 PASS/policy set이 바뀌면 stale로 거부합니다. 성공한
+apply만 모든 후보를 동일한 registration anchor로 한 transaction에 등록합니다. Forward,
+Promotion, Shadow, Full LIVE는 자동 실행하지 않습니다.
 ### Temporal Ranking Holdout Validation v1
 
 Temporal Ranking Holdout Validation은 Sweep의 명시적 scenario를 동일한 common comparable

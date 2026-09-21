@@ -1,5 +1,8 @@
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -24,6 +27,11 @@ from crypto_trading_bot.services.research_policy_candidate_registry_service impo
     CREATED,
     ResearchPolicyCandidateConflictError,
     ResearchPolicyCandidateRegistryService,
+)
+from crypto_trading_bot.services.screening_gated_research_candidate_registration_service import (
+    CREATED as BATCH_CREATED,
+    READY,
+    ScreeningGatedResearchCandidateRegistrationService,
 )
 from crypto_trading_bot.services.strategy_replay_dataset_service import (
     DATASET_SCHEMA_VERSION,
@@ -113,6 +121,153 @@ def _copy_candidate(source, **changes):
     }
     values.update(changes)
     return ResearchPolicyCandidate(**values)
+
+
+def _screening_result(*scenarios):
+    candidates = tuple(
+        SimpleNamespace(
+            scenario_name=item.name,
+            scenario_definition_signature=item.definition_signature,
+            component_weights=item.component_weights,
+            donor_field="liquidity",
+            receiver_field="trend_alignment",
+            transfer_step=Decimal("0.05"),
+            status="PASS",
+        )
+        for item in scenarios
+    )
+    return SimpleNamespace(
+        status="SUCCESS",
+        safe_reason=None,
+        invalid_count=0,
+        pass_count=len(candidates),
+        candidate_count=len(candidates),
+        candidate_results=candidates,
+        historical_evidence_as_of=datetime(2062, 1, 1, tzinfo=UTC),
+        gate_schema_version="historical-candidate-screening-gate-v1",
+        screening_policy_schema_version="historical-candidate-screening-policy-v1",
+        screening_policy_signature="screening-policy:test",
+        source_promotion_gate_policy_schema_version="policy-promotion-gate-v1",
+        source_promotion_gate_policy_signature="promotion-policy:test",
+    )
+
+
+def test_postgresql_screening_gated_batch_registration_shares_atomic_anchor():
+    with SessionLocal() as session:
+        user = User(name=f"screened-batch-{uuid4()}")
+        session.add(user)
+        session.flush()
+        reference_time = datetime(2062, 1, 2, tzinfo=UTC)
+        reference = _snapshot(
+            session,
+            user,
+            captured_at=reference_time,
+            policy_data=_policy_data(top_n=7),
+        )
+        scenarios = (
+            _scenario(name="screened-a"),
+            _scenario(name="screened-b", momentum="0.20", liquidity="0.30"),
+        )
+        screening = MagicMock()
+        screening.evaluate.return_value = _screening_result(*scenarios)
+        registered_at = datetime(2062, 1, 3, tzinfo=UTC)
+        registry = ResearchPolicyCandidateRegistryService(
+            session, now_fn=lambda: registered_at
+        )
+        service = ScreeningGatedResearchCandidateRegistrationService(
+            session, screening_service=screening, registry_service=registry
+        )
+
+        preview = service.preview(reference_snapshot_id=reference.id)
+        assert preview.status == READY
+        assert preview.registration_candidate_count == 2
+
+        applied = service.apply(
+            reference_snapshot_id=reference.id,
+            expected_plan_signature=preview.registration_plan_signature,
+        )
+
+        assert applied.status == BATCH_CREATED
+        assert applied.created_candidate_count == 2
+        rows = tuple(
+            session.scalars(
+                select(ResearchPolicyCandidate)
+                .where(ResearchPolicyCandidate.user_id == user.id)
+                .order_by(ResearchPolicyCandidate.id)
+            )
+        )
+        assert len(rows) == 2
+        assert {item.registered_at for item in rows} == {registered_at}
+        assert {item.registration_snapshot_id_watermark for item in rows} == {
+            reference.id
+        }
+        assert {item.registration_captured_at_watermark for item in rows} == {
+            reference_time
+        }
+        session.rollback()
+
+
+@pytest.mark.parametrize(
+    "failure_mode,expected_status",
+    [("already", "STALE_REGISTRATION_STATE"), ("error", "REGISTRATION_FAILED")],
+)
+def test_postgresql_screening_gated_batch_rolls_back_partial_creation(
+    failure_mode, expected_status
+):
+    class FailingSecondRegistry(ResearchPolicyCandidateRegistryService):
+        calls = 0
+
+        def register_with_shared_anchor(self, **kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                if failure_mode == "error":
+                    raise RuntimeError("injected second insert failure")
+                return SimpleNamespace(
+                    registration_status=ALREADY_REGISTERED,
+                    registration_created=False,
+                    candidate=None,
+                    plan=None,
+                )
+            return super().register_with_shared_anchor(**kwargs)
+
+    with SessionLocal() as session:
+        user = User(name=f"screened-rollback-{uuid4()}")
+        session.add(user)
+        session.flush()
+        reference = _snapshot(
+            session,
+            user,
+            captured_at=datetime(2063, 1, 2, tzinfo=UTC),
+            policy_data=_policy_data(top_n=7),
+        )
+        scenarios = (
+            _scenario(name="rollback-a"),
+            _scenario(name="rollback-b", momentum="0.20", liquidity="0.30"),
+        )
+        screening = MagicMock()
+        screening.evaluate.return_value = _screening_result(*scenarios)
+        registry = FailingSecondRegistry(
+            session, now_fn=lambda: datetime(2063, 1, 3, tzinfo=UTC)
+        )
+        service = ScreeningGatedResearchCandidateRegistrationService(
+            session, screening_service=screening, registry_service=registry
+        )
+        preview = service.preview(reference_snapshot_id=reference.id)
+        applied = service.apply(
+            reference_snapshot_id=reference.id,
+            expected_plan_signature=preview.registration_plan_signature,
+        )
+        assert applied.status == expected_status
+        assert not applied.database_write
+        assert (
+            session.scalar(
+                select(func.count())
+                .select_from(ResearchPolicyCandidate)
+                .where(ResearchPolicyCandidate.user_id == user.id)
+            )
+            == 0
+        )
+        session.rollback()
 
 
 def test_postgresql_registration_watermarks_retry_and_constraints():

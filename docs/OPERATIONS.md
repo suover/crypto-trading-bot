@@ -1020,6 +1020,33 @@ docker compose down
 - DB 백업 파일을 유지합니다.
 - 복구는 자동으로 처리하지 말고, 상황을 확인한 뒤 수동으로 신중하게 진행합니다.
 - 복구 전에는 현재 컨테이너 상태, 백업 파일 시각, `.env`와 비밀 디렉터리를 다시 확인합니다.
+## Screening-gated research candidate registration
+
+Preview:
+
+```bash
+python -m scripts.register_screened_research_candidates \
+  --reference-snapshot-id <LATEST_REFERENCE_ID> \
+  --step 0.05
+```
+
+Apply:
+
+```bash
+python -m scripts.register_screened_research_candidates \
+  --reference-snapshot-id <SAME_REFERENCE_ID> \
+  --step 0.05 \
+  --apply \
+  --expected-plan-signature <PREVIEW_SIGNATURE>
+```
+
+Preview는 DB write를 하지 않습니다. Apply는 과거 출력 파일을 신뢰하지 않고 Historical Batch와
+Screening을 다시 계산한 뒤 plan signature를 비교합니다. Preview 이후 새 replay snapshot이
+생성되거나 runtime policy/TopN, same-policy watermark, PASS set 또는 screening/promotion policy
+signature가 바뀌면 거부되므로 최신 reference로 Preview부터 다시 실행합니다. Apply의 짧은
+critical section만 replay snapshot writer와 충돌하는 table lock을 잡고, 모든 PASS candidate를
+동일한 `registered_at`과 watermark로 원자 등록합니다. 등록 직후 정상 Forward 상태는
+`NO_FORWARD_SNAPSHOTS`이며 이 CLI는 Forward/Promotion/Shadow/LIVE를 실행하지 않습니다.
 ## Policy Promotion Gate v1
 
 등록된 Candidate의 고정된 v1 gate를 수동 평가한다.

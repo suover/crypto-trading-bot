@@ -71,6 +71,20 @@ class ResearchPolicyCandidateRegistrationResult:
     registration_status: str
 
 
+@dataclass(frozen=True)
+class ResearchPolicyCandidateRegistrationAnchor:
+    reference_snapshot_id: int
+    reference_snapshot_captured_at: datetime
+    user_id: int
+    exchange: str
+    quote_asset: str
+    dataset_schema_version: str
+    baseline_policy_signature: str
+    effective_top_n: int
+    registration_snapshot_id_watermark: int
+    registration_captured_at_watermark: datetime
+
+
 def select_scenario(
     scenarios: Iterable[RankingScenarioDefinition], scenario_name: str
 ) -> RankingScenarioDefinition:
@@ -184,6 +198,103 @@ class ResearchPolicyCandidateRegistryService:
             weights,
             registered_at=registered_at,
             id_watermark=id_watermark,
+            captured_watermark=captured_watermark,
+        )
+        candidate = ResearchPolicyCandidate(**plan.__dict__)
+        try:
+            with self.session.begin_nested():
+                self.session.add(candidate)
+                self.session.flush()
+        except IntegrityError:
+            concurrent = self._find_existing(snapshot, top_n, scenario)
+            if concurrent is None:
+                raise ResearchPolicyCandidateRegistrationError(
+                    "candidate registration uniqueness conflict"
+                ) from None
+            self._validate_existing(concurrent, weights)
+            return ResearchPolicyCandidateRegistrationResult(
+                candidate=concurrent,
+                plan=self._plan_from_candidate(concurrent),
+                registration_created=False,
+                registration_status=ALREADY_REGISTERED,
+            )
+        return ResearchPolicyCandidateRegistrationResult(
+            candidate=candidate,
+            plan=plan,
+            registration_created=True,
+            registration_status=CREATED,
+        )
+
+    def registration_anchor(
+        self, *, reference_snapshot_id: int
+    ) -> ResearchPolicyCandidateRegistrationAnchor:
+        snapshot, top_n = self._reference_context(reference_snapshot_id)
+        id_watermark, captured_watermark = self._watermarks(snapshot, top_n)
+        return ResearchPolicyCandidateRegistrationAnchor(
+            reference_snapshot_id=snapshot.id,
+            reference_snapshot_captured_at=self._aware_utc(
+                snapshot.captured_at, "reference snapshot captured_at"
+            ),
+            user_id=snapshot.user_id,
+            exchange=snapshot.exchange,
+            quote_asset=snapshot.quote_asset,
+            dataset_schema_version=snapshot.dataset_schema_version,
+            baseline_policy_signature=snapshot.policy_signature,
+            effective_top_n=top_n,
+            registration_snapshot_id_watermark=id_watermark,
+            registration_captured_at_watermark=captured_watermark,
+        )
+
+    def trusted_registration_time(self) -> datetime:
+        return self._trusted_now()
+
+    def register_with_shared_anchor(
+        self,
+        *,
+        reference_snapshot_id: int,
+        scenario: RankingScenarioDefinition,
+        registered_at: datetime,
+        registration_snapshot_id_watermark: int,
+        registration_captured_at_watermark: datetime,
+    ) -> ResearchPolicyCandidateRegistrationResult:
+        snapshot, top_n = self._reference_context(reference_snapshot_id)
+        weights = self._component_weights(scenario)
+        existing = self._find_existing(snapshot, top_n, scenario)
+        if existing is not None:
+            self._validate_existing(existing, weights)
+            return ResearchPolicyCandidateRegistrationResult(
+                candidate=existing,
+                plan=self._plan_from_candidate(existing),
+                registration_created=False,
+                registration_status=ALREADY_REGISTERED,
+            )
+        trusted_time = self._aware_utc(registered_at, "registration clock")
+        current_id_watermark, current_captured_watermark = self._watermarks(
+            snapshot, top_n
+        )
+        captured_watermark = self._aware_utc(
+            registration_captured_at_watermark,
+            "registration captured_at watermark",
+        )
+        if (
+            isinstance(registration_snapshot_id_watermark, bool)
+            or not isinstance(registration_snapshot_id_watermark, int)
+            or registration_snapshot_id_watermark != current_id_watermark
+            or captured_watermark != current_captured_watermark
+            or captured_watermark
+            < self._aware_utc(snapshot.captured_at, "reference snapshot captured_at")
+            or trusted_time < captured_watermark
+        ):
+            raise ResearchPolicyCandidateRegistrationError(
+                "shared registration anchor is invalid"
+            )
+        plan = self._plan(
+            snapshot,
+            top_n,
+            scenario,
+            weights,
+            registered_at=trusted_time,
+            id_watermark=registration_snapshot_id_watermark,
             captured_watermark=captured_watermark,
         )
         candidate = ResearchPolicyCandidate(**plan.__dict__)
@@ -515,6 +626,7 @@ __all__ = [
     "ResearchPolicyCandidateConflictError",
     "ResearchPolicyCandidateInputError",
     "ResearchPolicyCandidateRegistrationError",
+    "ResearchPolicyCandidateRegistrationAnchor",
     "ResearchPolicyCandidateRegistrationPlan",
     "ResearchPolicyCandidateRegistrationResult",
     "ResearchPolicyCandidateRegistryService",
