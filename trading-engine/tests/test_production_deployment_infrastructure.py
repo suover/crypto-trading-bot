@@ -1,11 +1,16 @@
 from pathlib import Path
 
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+ENGINE_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = ENGINE_ROOT.parent
 
 
 def read_repository_file(relative_path: str) -> str:
     return (REPOSITORY_ROOT / relative_path).read_text(encoding="utf-8")
+
+
+def read_engine_file(relative_path: str) -> str:
+    return (ENGINE_ROOT / relative_path).read_text(encoding="utf-8")
 
 
 def test_production_runtime_safety_mode_preserves_limited_live_policy() -> None:
@@ -91,6 +96,16 @@ def test_ci_covers_all_branches_profiles_and_shell_syntax() -> None:
         assert branch_pattern in workflow
     assert "bash -n scripts/check_server_runtime_safety.sh" in workflow
     assert "bash -n scripts/deploy_production.sh" in workflow
+    assert "bash -n scripts/backup_db.sh" in workflow
+    assert 'python-version-file: "trading-engine/.python-version"' in workflow
+    for command in (
+        "uv sync --dev --locked",
+        "uv run alembic upgrade head",
+        "uv run ruff format --check .",
+        "uv run ruff check .",
+        "uv run pytest -q",
+    ):
+        assert f"working-directory: trading-engine\n        run: {command}" in workflow
     assert (
         "docker compose --profile manual --profile scheduler config --quiet" in workflow
     )
@@ -175,7 +190,7 @@ def test_bot_pnl_worker_is_db_only_default_runtime_and_deploy_managed() -> None:
             "CURRENT_STAGE=", 1
         )[0]
         assert "bot-trading-pnl-worker" in block
-    worker = read_repository_file("scripts/run_bot_trading_pnl_worker.py")
+    worker = read_engine_file("scripts/run_bot_trading_pnl_worker.py")
     for forbidden in ("UpbitClient", "OpenAI", "Telegram", "requests", "httpx"):
         assert forbidden not in worker
 
@@ -197,7 +212,7 @@ def test_portfolio_performance_worker_is_opt_in_and_minimum_secret() -> None:
         "telegram_bot_token",
     ):
         assert forbidden_secret not in secret_block
-    worker = read_repository_file("scripts/run_portfolio_performance_worker.py")
+    worker = read_engine_file("scripts/run_portfolio_performance_worker.py")
     assert "portfolio_performance_enabled" in worker
     for forbidden in (
         "create_market_buy_order",
@@ -238,7 +253,7 @@ def test_recommendation_outcome_worker_is_opt_in_public_only_and_deploy_managed(
         "upbit_secret_key\n",
     ):
         assert f"- {forbidden}" not in service
-    worker = read_repository_file("scripts/run_recommendation_outcome_worker.py")
+    worker = read_engine_file("scripts/run_recommendation_outcome_worker.py")
     assert "recommendation_outcome_enabled" in worker
     for forbidden in ("create_order", "OpenAI", "Telegram", "ApprovalRequest"):
         assert forbidden not in worker
@@ -284,13 +299,13 @@ def test_operational_alert_worker_is_minimum_secret_default_runtime() -> None:
             "CURRENT_STAGE=", 1
         )[0]
         assert "operational-alert-worker" in block
-    worker = read_repository_file("scripts/run_operational_alert_worker.py")
+    worker = read_engine_file("scripts/run_operational_alert_worker.py")
     for forbidden in ("UpbitClient", "OpenAI", "requests", "httpx"):
         assert forbidden not in worker
 
 
 def test_operational_alert_diagnostic_is_read_only_and_network_free() -> None:
-    diagnostic = read_repository_file("scripts/check_operational_alerts.py")
+    diagnostic = read_engine_file("scripts/check_operational_alerts.py")
     for forbidden in (
         ".add(",
         ".flush(",
@@ -320,7 +335,7 @@ def test_account_activity_worker_is_opt_in_get_only_and_minimum_secret() -> None
     for variable in ("OPENAI_API_KEY_FILE", "TELEGRAM_BOT_TOKEN_FILE"):
         assert f'{variable}: ""' in service
 
-    worker = read_repository_file("scripts/run_account_activity_sync_worker.py")
+    worker = read_engine_file("scripts/run_account_activity_sync_worker.py")
     assert "account_activity_sync_enabled" in worker
     for forbidden in (
         "create_market_buy_order",
@@ -349,7 +364,7 @@ def test_account_activity_scripts_do_not_contain_write_endpoints_or_other_system
     None
 ):
     combined = "\n".join(
-        read_repository_file(path)
+        read_engine_file(path)
         for path in (
             "scripts/sync_account_activities.py",
             "scripts/check_upbit_account_activity_access.py",

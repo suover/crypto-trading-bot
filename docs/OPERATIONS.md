@@ -1,5 +1,11 @@
 # 운영 가이드
 
+Repository root에는 Compose, `.env`/`.secrets/`, 운영 shell script가 있고 Python project는
+`trading-engine/`에 있습니다. 아래 호스트 `python -m scripts.…`와 `examples/`는
+`cd trading-engine` 후 engine 가상환경에서 실행합니다(`uv run python -m scripts.…`도 가능).
+Compose와 `bash scripts/*.sh`는 repository root에서 실행하며 engine에서 이동했다면
+`cd ..`로 돌아옵니다. 컨테이너 내부 `/app` 명령과 Production repository 경로는 그대로입니다.
+
 ## Recommendation outcome worker
 
 이 worker는 AI 추천을 수정하거나 주문을 실행하지 않고, persisted recommendation 및
@@ -729,8 +735,8 @@ KRW high-water mark/drawdown은 최초 COMPLETE NAV에 index를 적용한 조정
 아닙니다.
 
 ```bash
-python -m scripts.rebuild_portfolio_performance
-python -m scripts.rebuild_portfolio_performance --apply
+(cd trading-engine && uv run python -m scripts.rebuild_portfolio_performance)
+(cd trading-engine && uv run python -m scripts.rebuild_portfolio_performance --apply)
 docker compose logs --tail=100 portfolio-performance-worker
 ```
 

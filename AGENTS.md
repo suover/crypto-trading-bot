@@ -1,7 +1,12 @@
 # AGENTS.md
 
 ## Project
-This is a Python crypto trading bot using PostgreSQL, Docker Compose, Upbit, OpenAI, and Telegram.
+Repository applications:
+- `trading-engine/`: Python 3.14 trading/research engine using PostgreSQL, Upbit, OpenAI, and Telegram.
+- `backend/`: future Spring Boot API backend (placeholder only).
+- `frontend/`: future React/TypeScript frontend (placeholder only).
+
+Docker Compose, operational shell scripts, documentation, and environment/secret files remain at the repository root.
 
 The production system can execute real Upbit orders after Telegram approval.
 Treat live trading and secrets as safety-critical.
@@ -19,7 +24,7 @@ Treat live trading and secrets as safety-critical.
 
 ## Development
 - Python 3.14
-- Use the existing `uv` environment and project dependencies.
+- Run Python development commands in `trading-engine/` using its `uv` environment and locked dependencies.
 - Follow the existing project structure and coding style.
 - Use `Decimal` for monetary and trading calculations where the project already does so.
 - Add or update tests for behavioral changes.
@@ -29,12 +34,13 @@ Treat live trading and secrets as safety-critical.
 After code changes, run:
 
 ```bash
+cd trading-engine
 uv run pytest -q
 uv run ruff format --check .
 uv run ruff check .
 ```
 
-If an Alembic migration is added, also run:
+If an Alembic migration is added, also run from `trading-engine/`:
 
 ```bash
 uv run alembic heads

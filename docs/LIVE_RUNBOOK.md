@@ -1,5 +1,9 @@
 # 첫 5,000 KRW 제한적 LIVE 주문 런북
 
+이 런북의 Compose 및 `scripts/*.sh` 명령은 repository root에서 실행합니다.
+Python 소스와 Dockerfile은 `trading-engine/`에 있지만 컨테이너 내부 `/app` 및
+`python -m scripts.…` 명령은 동일합니다. `.env`와 `.secrets/`도 root에 유지합니다.
+
 이 절차는 수동 승인된 `KRW-BTC` BUY 1건만 검증하기 위한 것입니다. 예약 LIVE 거래는 이 기능에서 활성화하지 않습니다.
 
 ## Phase 1: 안전 준비

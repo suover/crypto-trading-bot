@@ -40,7 +40,7 @@ services:
 
   migrate:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-migrate
     restart: "no"
@@ -56,7 +56,7 @@ services:
 
   ai-trade-analysis:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-ai-trade-analysis
     profiles:
@@ -76,7 +76,7 @@ services:
 
   ai-trade-scheduler:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-ai-trade-scheduler
     profiles:
@@ -101,7 +101,7 @@ services:
 
   telegram-listener:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-telegram-listener
     restart: unless-stopped
@@ -119,7 +119,7 @@ services:
 
   mock-order-retry-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-mock-order-retry-worker
     restart: unless-stopped
@@ -144,7 +144,7 @@ services:
 
   live-order-reconciliation-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-live-order-reconciliation-worker
     restart: unless-stopped
@@ -162,7 +162,7 @@ services:
 
   account-activity-sync-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-account-activity-sync-worker
     restart: unless-stopped
@@ -195,7 +195,7 @@ services:
 
   bot-trading-pnl-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-bot-trading-pnl-worker
     restart: unless-stopped
@@ -228,7 +228,7 @@ services:
 
   portfolio-performance-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-portfolio-performance-worker
     restart: unless-stopped
@@ -261,7 +261,7 @@ services:
 
   operational-alert-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-operational-alert-worker
     restart: unless-stopped
@@ -295,7 +295,7 @@ services:
 
   recommendation-outcome-worker:
     build:
-      context: .
+      context: ./trading-engine
       dockerfile: Dockerfile
     container_name: crypto-trading-recommendation-outcome-worker
     restart: unless-stopped

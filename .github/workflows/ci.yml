@@ -55,27 +55,33 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: ".python-version"
+          python-version-file: "trading-engine/.python-version"
 
       - name: Install dependencies
+        working-directory: trading-engine
         run: uv sync --dev --locked
 
       - name: Run database migrations
+        working-directory: trading-engine
         run: uv run alembic upgrade head
 
       - name: Ruff format check
+        working-directory: trading-engine
         run: uv run ruff format --check .
 
       - name: Ruff lint check
+        working-directory: trading-engine
         run: uv run ruff check .
 
       - name: Run tests
+        working-directory: trading-engine
         run: uv run pytest -q
 
       - name: Validate shell syntax
         run: |
           bash -n scripts/check_server_runtime_safety.sh
           bash -n scripts/deploy_production.sh
+          bash -n scripts/backup_db.sh
 
       - name: Prepare Docker Compose config files
         run: |

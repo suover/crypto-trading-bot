@@ -1,5 +1,24 @@
 # crypto-trading-bot
 
+이 저장소는 다음 application boundary를 갖는 monorepo입니다.
+
+```text
+trading-engine/  Python AI trading and strategy research engine
+backend/         Spring Boot API backend (planned)
+frontend/        React + TypeScript frontend (planned)
+```
+
+Python package 이름과 CLI 모듈 이름은 그대로입니다. 이 문서의 호스트 Python/uv/Alembic
+명령과 `examples/` 경로는 `trading-engine/` 기준입니다. 먼저 `cd trading-engine`한 뒤
+`uv run python -m scripts.…`로 실행하거나 engine 가상환경을 활성화해 `python -m scripts.…`를
+사용합니다. Docker Compose와 root `scripts/*.sh`는 repository root에서 실행합니다.
+engine 디렉터리에 있다면 먼저 `cd ..`로 돌아오세요. 컨테이너 내부는 기존 `/app` 구조입니다.
+
+`.env`, `.env.example`, `.secrets/`는 repository root에 유지합니다. 호스트에서 engine
+디렉터리로 실행해도 settings는 root `.env`와 상대 secret 경로를 사용합니다.
+Windows 분석/작업 등록 실행기는 `trading-engine/scripts/*.ps1`로 이동했습니다.
+기존 Windows 예약 작업은 새 실행기 경로를 확인해야 하며 스케줄 자체는 변경하지 않습니다.
+
 시장 데이터, 계좌 상태, 설정값을 바탕으로 AI 매매 후보를 만들고, 사용자가 Telegram에서 승인한 경우에만 주문 흐름을 진행하는 승인형 코인 트레이딩 봇 프로젝트입니다.
 
 Production은 **예약 AI 분석 → BUY/SELL/HOLD 결정 → BUY/SELL Telegram 승인 요청 → 사용자 승인 → Upbit LIVE 주문** 흐름으로 운영됩니다. AI 분석이 예약 실행되더라도 실제 BUY/SELL 주문은 사용자의 Telegram 승인 없이는 실행되지 않습니다.
@@ -822,6 +841,7 @@ docker compose ps
 ### 2. Python 의존성 설치
 
 ```powershell
+cd trading-engine
 uv sync --dev --locked
 ```
 
@@ -1138,7 +1158,7 @@ python -m scripts.rebuild_bot_trading_pnl --apply
 기본 설정은 `LIVE_ORDER_RECONCILIATION_ENABLED=true`, interval 60초, batch 20개입니다. `ORDER_EXECUTION_MODE`가 LIVE가 아니거나 enabled=false이면 조회 없이 대기합니다. 신규 주문용 LIVE 활성화 플래그를 끄더라도 모드가 LIVE인 동안 기존 주문의 상태 추적은 계속 가능합니다.
 
 ```bash
-python -m scripts.run_live_order_reconciliation_worker --once
+(cd trading-engine && uv run python -m scripts.run_live_order_reconciliation_worker --once)
 docker compose logs --tail=100 live-order-reconciliation-worker
 ```
 

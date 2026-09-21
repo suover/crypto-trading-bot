@@ -1,5 +1,11 @@
 # Production scheduled LIVE 운영 및 배포
 
+배포/Compose/root shell 명령의 기준은 계속 `/home/ubuntu/apps/crypto-trading-bot`입니다.
+Python image는 `./trading-engine`을 build context로 사용하고 내부 application root는 `/app`입니다.
+이 문서의 독립적인 호스트 Python 예제는 `cd trading-engine` 후 engine 가상환경에서 실행합니다.
+Compose/shell 명령으로 돌아가기 전에는 `cd ..`로 repository root로 이동합니다.
+`.env`와 `.secrets/`의 root 위치 및 exact-SHA 배포 진입점은 변경되지 않았습니다.
+
 ## Recommendation outcome rollout
 
 Recommendation outcome은 signal quality 사후평가이며 OrderFill/Bot PnL/PortfolioPerformance와
@@ -173,7 +179,7 @@ Production에서는 migration 후 다음 read-only 진단을 먼저 실행하고
 운영자가 flag를 켜고 worker를 recreate합니다.
 
 ```bash
-python -m scripts.check_operational_alerts
+(cd trading-engine && uv run python -m scripts.check_operational_alerts)
 docker compose up -d --no-deps --force-recreate operational-alert-worker
 docker compose logs --tail=100 operational-alert-worker
 ```
@@ -207,7 +213,7 @@ Production rollout:
 bash scripts/check_server_runtime_safety.sh --production-live
 
 # 2. 인증 GET-only 진단
-python -m scripts.check_upbit_order_chance --market KRW-BTC
+(cd trading-engine && uv run python -m scripts.check_upbit_order_chance --market KRW-BTC)
 
 # 3. 결과 검토와 .env 백업 후 운영자가 flag=true로 변경
 # 4. 필요한 container recreate 후 재확인

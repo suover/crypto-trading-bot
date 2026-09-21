@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
-$LogDir = Join-Path $ProjectRoot "logs"
+$RepositoryRoot = Split-Path -Parent $ProjectRoot
+$LogDir = Join-Path $RepositoryRoot "logs"
 
 New-Item -ItemType Directory -Force $LogDir | Out-Null
 

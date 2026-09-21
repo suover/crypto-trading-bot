@@ -9,6 +9,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
 
+def _configuration_root() -> Path:
+    """Keep host .env and relative secret paths at the monorepo root."""
+    engine_root = Path(__file__).resolve().parents[2]
+    if engine_root.name == "trading-engine" and Path.cwd() == engine_root:
+        return engine_root.parent
+    # Preserve cwd-relative configuration in /app and other execution contexts.
+    return Path.cwd()
+
+
 class Settings(BaseSettings):
     app_env: str = "local"
 
@@ -175,6 +184,8 @@ class Settings(BaseSettings):
         required: bool,
     ) -> str:
         path = Path(file_path)
+        if not path.is_absolute():
+            path = _configuration_root() / path
 
         try:
             value = path.read_text(encoding="utf-8").strip()
@@ -436,7 +447,7 @@ class Settings(BaseSettings):
         return delays
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_configuration_root() / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
