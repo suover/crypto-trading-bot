@@ -31,7 +31,6 @@
 - [설정](#설정)
 - [개발과 검증](#개발과-검증)
 - [문서](#문서)
-- [현재 범위](#현재-범위)
 
 ## 설계 원칙
 
@@ -366,14 +365,6 @@ bash -n scripts/backup_db.sh
 | [Production LIVE](docs/PRODUCTION_LIVE.md) | Production deployment와 LIVE runtime |
 | [LIVE Runbook](docs/LIVE_RUNBOOK.md) | 첫 제한적 실제 주문 절차 |
 | [Trading Engine](trading-engine/README.md) | engine 개발 명령과 directory boundary |
-
-## 현재 범위
-
-- `trading-engine/`: 구현됨
-- `backend/`: Spring Boot API backend 계획용 placeholder
-- `frontend/`: React + TypeScript frontend 계획용 placeholder
-
-Backend와 frontend를 현재 구현 기술처럼 표현하지 않습니다. 현재 동작하는 application은 Python trading/research engine입니다.
 
 ## Risk notice
 
