@@ -21,7 +21,7 @@ DB backup → disabled 확인 → recent `--limit` dry-run → 소량 `--apply` 
 Production 흐름은 다음과 같습니다.
 
 1. `ai-trade-scheduler`가 설정된 시각에 AI 분석을 시작합니다.
-2. DYNAMIC Market Universe와 multi-timeframe feature를 바탕으로 AI가 BUY/SELL/HOLD와 `trade_ratio`를 결정합니다.
+2. 설정에 따른 STATIC 또는 DYNAMIC Market Universe와 multi-timeframe feature를 바탕으로 AI가 BUY/SELL/HOLD와 `trade_ratio`를 결정합니다. DYNAMIC LIVE에는 별도 `LIVE_DYNAMIC_MARKET_ENABLED` guard가 적용됩니다.
 3. 애플리케이션이 정확한 BUY 금액 또는 SELL 수량을 계산합니다.
 4. BUY/SELL은 Telegram 승인 요청을 생성하고 HOLD는 주문을 만들지 않습니다.
 5. 사용자가 Telegram에서 승인한 BUY/SELL만 Upbit LIVE 주문 실행 단계로 이동합니다.
@@ -30,11 +30,12 @@ Production 흐름은 다음과 같습니다.
 
 ## Production Compose 구조
 
-- 기본 runtime: `postgres`, `migrate`, `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`
+- 기본 infrastructure: `postgres`, 1회 실행 후 종료하는 `migrate`
+- 기본 application runtime: `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `account-activity-sync-worker`, `bot-trading-pnl-worker`, `portfolio-performance-worker`, `operational-alert-worker`, `recommendation-outcome-worker`
 - `scheduler` profile: `ai-trade-scheduler`
 - `manual` profile: 일회성 `ai-trade-analysis`
 
-`ai-trade-analysis`는 상시 실행 서비스가 아닙니다. 배포 때 이미지는 build하지만 컨테이너를 계속 실행하지 않습니다.
+`ai-trade-analysis`는 상시 실행 서비스가 아닙니다. 배포 때 이미지는 build하지만 컨테이너를 계속 실행하지 않습니다. 기본 application worker가 Compose runtime에 포함되는 것과 기능이 활성화되는 것은 다릅니다. `*_ENABLED=false`인 opt-in worker는 container가 실행 중이어도 해당 cycle을 수행하지 않고 idle합니다.
 
 ## Production 안전 점검
 
@@ -43,20 +44,16 @@ cd /home/ubuntu/apps/crypto-trading-bot
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
 
-Before deployment, query the existing Production `users` table and set
-`TRADING_USER_ID=<existing active users.id>` in `.env` while preserving mode 600.
-The safety check requires a positive ID and verifies that the referenced row exists
-and is active. Missing, unknown, or inactive IDs fail closed.
+배포 전에 기존 Production `users` 테이블에서 사용할 active user를 확인하고, `.env`의 권한 600을 유지한 채 `TRADING_USER_ID=<existing active users.id>`를 설정합니다. 안전 점검은 양의 ID인지, 해당 row가 존재하고 active인지 검증하며 누락·미등록·비활성 ID는 fail-closed합니다.
 
-This remains a single-user deployment with deployment-level exchange credentials.
-Core services use explicit `user_id`; per-user credential storage is not implemented.
+현재 배포는 deployment-level exchange credential을 사용하는 단일 사용자 구조입니다. Core service는 명시적인 `user_id`를 사용하지만 사용자별 credential 저장은 구현되어 있지 않습니다.
 
 점검 대상은 다음과 같습니다.
 
 - 저장소 루트, `.env`, Compose 구성
 - `.env` 권한 600
 - PostgreSQL running/healthy 및 호스트 포트 미노출
-- Telegram listener, mock retry worker, LIVE reconciliation worker, scheduler 실행 상태
+- Telegram listener, mock retry, LIVE reconciliation, account activity, Bot PnL, Portfolio Performance, operational alert, recommendation outcome worker와 scheduler 실행 상태
 - `LIVE_ORDER_RECONCILIATION_ENABLED=true` (미설정 시 기본 true)
 - DB 백업 존재 여부와 파일 권한 600
 - `SECRET_DIR` 존재 및 권한 700
@@ -97,10 +94,10 @@ bash scripts/deploy_production.sh --expected-sha <40-character-main-SHA>
 7. `${HOME}/backups`에 `.env`를 권한 600으로 백업
 8. scheduler 중지로 Production cutover 시작
 9. `git merge --ff-only origin/main` 및 최종 HEAD expected SHA 재검증
-10. migrate, listener, retry/reconciliation worker, manual analysis, scheduler 이미지 전체 build
-11. listener와 retry/reconciliation worker 중지
+10. migrate, 모든 기본 application worker, manual analysis, scheduler 이미지 전체 build
+11. 모든 기본 application worker 중지
 12. Alembic migration 컨테이너 실행
-13. listener와 retry/reconciliation worker 재생성
+13. 모든 기본 application worker 재생성
 14. scheduler 재생성
 15. container health 확인
 16. `--production-live` 최종 점검
@@ -132,7 +129,7 @@ GitHub Actions의 `Deploy Production` workflow는 `workflow_dispatch`로만 실�
 
 가능하면 GitHub `production` Environment에 required reviewer를 설정해 workflow dispatch 이후에도 사람의 승인을 한 번 더 요구합니다.
 
-## EC2 사전 설정
+## Production host 사전 설정
 
 - 배포 사용자가 `/home/ubuntu/apps/crypto-trading-bot`과 Docker를 사용할 수 있어야 합니다.
 - 저장소 origin이 `suover/crypto-trading-bot`의 main을 가리켜야 합니다.
@@ -142,7 +139,7 @@ GitHub Actions의 `Deploy Production` workflow는 `workflow_dispatch`로만 실�
 - `.env` 권한은 600, `SECRET_DIR` 권한은 700, secret 파일 권한은 600이어야 합니다.
 - Upbit API key에는 필요한 조회/주문 권한만 부여하고 출금 권한은 부여하지 않습니다.
 
-이 작업은 Deploy Key를 자동 생성하거나 서버 인증을 변경하지 않습니다.
+배포 절차는 Deploy Key를 자동 생성하거나 서버 인증을 변경하지 않습니다.
 
 ## 백업과 배포 후 확인
 
@@ -152,11 +149,16 @@ DB 백업은 `${HOME}/backups/crypto_trading_bot_*.sql`, 환경 백업은 `${HOM
 
 ```bash
 docker compose --profile manual --profile scheduler ps -a
+docker compose logs --tail=100 postgres
 docker compose logs --tail=100 migrate
 docker compose logs --tail=100 telegram-listener
 docker compose logs --tail=100 mock-order-retry-worker
 docker compose logs --tail=100 live-order-reconciliation-worker
+docker compose logs --tail=100 account-activity-sync-worker
 docker compose logs --tail=100 bot-trading-pnl-worker
+docker compose logs --tail=100 portfolio-performance-worker
+docker compose logs --tail=100 operational-alert-worker
+docker compose logs --tail=100 recommendation-outcome-worker
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
@@ -206,7 +208,7 @@ Worker에는 PostgreSQL password와 Telegram token만 mount하며 Upbit/OpenAI s
 account payload, Authorization, JWT, API key는 저장하거나 출력하지 않습니다. Chance fee는
 preflight 정보일 뿐 `paid_fee`, OrderFill, Portfolio, Bot PnL의 source가 아닙니다.
 
-Production rollout:
+Production rollout 순서:
 
 ```bash
 # 1. 배포 후 flag=false 및 runtime 확인
@@ -287,8 +289,7 @@ CoinGecko mapping보다 exclusion이 우선합니다. 저장된 policy signature
 snapshot은 가짜 손익을 방지하기 위해 `REBASELINE_AFTER_VALUATION_POLICY_CHANGE` baseline이
 됩니다. Account Activity와 Bot Trading PnL은 변경하지 않습니다.
 
-Production rollout은 운영자가 승인과 백업 후 다음 순서로 수행합니다. Codex 작업에서는
-실행하지 않습니다.
+Production rollout은 운영자의 명시적 승인과 DB 및 `.env` 백업 후 다음 순서로 수행합니다. 자동으로 실행하지 않습니다.
 
 1. 새 코드와 migration 배포
 2. DB와 `.env` 백업
@@ -329,7 +330,7 @@ BOT_TRADING_PNL_ENABLED=false
 BOT_TRADING_PNL_INTERVAL_SECONDS=300
 ```
 
-기본 rebuild는 read-only dry-run입니다. `--apply`는 Production DB에 Codex가 실행하지 않으며 별도 승인과 백업 후 수행합니다. worker는 별도 advisory lock 아래 source signature가 바뀐 경우만 transaction 단위로 derived table을 rebuild하며, 거래·reconciliation 실패/rollback 경로와 결합되지 않습니다.
+기본 rebuild는 read-only dry-run입니다. `--apply`는 운영자의 별도 승인과 DB 및 `.env` 백업 후 수행합니다. worker는 별도 advisory lock 아래 source signature가 바뀐 경우만 transaction 단위로 derived table을 rebuild하며, 거래·reconciliation 실패/rollback 경로와 결합되지 않습니다.
 
 Account Activity Ledger는 Upbit 앱이나 다른 client가 만든 종료 주문과 입출금을 별도
 source ledger로 import할 수 있습니다. 그러나 아직 Bot FIFO inventory를 외부 SELL/출금에

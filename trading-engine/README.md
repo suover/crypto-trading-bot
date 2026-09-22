@@ -20,7 +20,11 @@ root. Container runtime layout stays at `/app`, with environment values and
 
 Run Docker Compose and the three operational shell scripts from the repository
 root. See the [repository README](../README.md), [operations guide](../docs/OPERATIONS.md),
-and [LIVE runbook](../docs/LIVE_RUNBOOK.md) before any operational command.
+the [architecture guide](../docs/ARCHITECTURE.md), and
+[LIVE runbook](../docs/LIVE_RUNBOOK.md) before any operational command. Strategy
+research and policy activation are documented separately in
+[STRATEGY_RESEARCH.md](../docs/STRATEGY_RESEARCH.md) and
+[POLICY_PROMOTION.md](../docs/POLICY_PROMOTION.md).
 
 Windows engine launchers are in `scripts/*.ps1`; existing Task Scheduler entries
 must be reviewed for the moved script and virtual-environment paths.
