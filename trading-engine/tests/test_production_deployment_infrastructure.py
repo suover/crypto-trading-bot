@@ -33,6 +33,46 @@ def test_production_runtime_safety_mode_preserves_limited_live_policy() -> None:
     assert "LIVE_ORDER_CONFIRMATION=${" not in script
 
 
+def test_production_runtime_safety_does_not_print_runtime_value_summary() -> None:
+    script = read_repository_file("scripts/check_server_runtime_safety.sh")
+
+    summary_guard = 'if [[ "$MODE" != "production-live" ]]; then'
+    summary_guard_start = script.index(summary_guard)
+    summary_start = script.index(
+        'echo ".env 라이브 관련 요약(비밀값 제외):"', summary_guard_start
+    )
+    summary_guard_end = script.index("\nfi\n", summary_start)
+    production_start = script.index(
+        'if [[ "$MODE" == "production-live" ]]; then', summary_guard_end
+    )
+
+    assert summary_guard_start < summary_start < summary_guard_end < production_start
+    summary_block = script[summary_start:summary_guard_end]
+    for setting in (
+        "TRADING_MODE",
+        "ORDER_EXECUTION_MODE",
+        "LIVE_ORDER_ENABLED",
+        "MAX_ORDER_AMOUNT_KRW",
+        "DAILY_MAX_ORDER_AMOUNT_KRW",
+        "ALLOWED_MARKETS",
+        "MARKET_UNIVERSE_MODE",
+        "LIVE_DYNAMIC_MARKET_ENABLED",
+        "AI_ANALYSIS_SCHEDULER_ENABLED",
+        "AI_ANALYSIS_SCHEDULE_TIMES",
+    ):
+        raw_value_echo = f'echo "- {setting}=${{{setting}'
+        assert raw_value_echo in summary_block
+        assert script.count(raw_value_echo) == 1
+
+    production_block = script[production_start:]
+    assert '[[ "$TRADING_MODE" == "AI_APPROVAL" ]]' in production_block
+    assert '[[ "$ORDER_EXECUTION_MODE" == "LIVE" ]]' in production_block
+    assert '[[ "$LIVE_ORDER_ENABLED" == "true" ]]' in production_block
+    assert '[[ -n "$AI_ANALYSIS_SCHEDULE_TIMES" ]]' in production_block
+    assert 'is_positive_integer "$MAX_ORDER_AMOUNT_KRW"' in production_block
+    assert 'is_positive_integer "$DAILY_MAX_ORDER_AMOUNT_KRW"' in production_block
+
+
 def test_deploy_script_is_fast_forward_exact_sha_and_fail_closed() -> None:
     script = read_repository_file("scripts/deploy_production.sh")
 
