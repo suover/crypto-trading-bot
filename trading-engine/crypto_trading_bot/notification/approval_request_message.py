@@ -1,10 +1,11 @@
-from decimal import Decimal
 from typing import Any
 
 from crypto_trading_bot.db.models import TradeRecommendation
 from crypto_trading_bot.notification.trade_recommendation_message import (
+    build_superseded_request_notice,
     format_decimal,
     format_krw,
+    format_percentage,
     truncate_text,
 )
 
@@ -14,6 +15,7 @@ SUPPORTED_APPROVAL_ACTIONS = {"BUY", "SELL"}
 def build_approval_request_message(
     recommendation: TradeRecommendation,
     expires_in_minutes: int,
+    superseded_request_count: int = 0,
 ) -> str:
     action = _normalize_action(recommendation.action)
 
@@ -21,50 +23,49 @@ def build_approval_request_message(
         raise ValueError("expires_in_minutes must be greater than 0")
 
     action_label = "매수" if action == "BUY" else "매도"
+    action_icon = "🟢" if action == "BUY" else "🔴"
 
     message_lines = [
-        f"[AI {action_label} 승인 요청]",
+        f"{action_icon} AI {action_label} 추천",
         "",
-        f"추천 ID: {recommendation.id}",
         f"마켓: {recommendation.market}",
-        f"판단: {action}",
-        f"거래 비율: {_format_trade_ratio(recommendation.trade_ratio)}",
-        f"신뢰도: {format_decimal(recommendation.confidence)}",
+        f"신뢰도: {format_percentage(recommendation.confidence)}",
+        f"{action_label} 비율: {format_percentage(recommendation.trade_ratio)}",
     ]
 
     if action == "BUY":
         message_lines.append(
-            f"계산된 KRW 금액: {format_krw(recommendation.recommended_amount_krw)}"
+            f"매수 금액: {format_krw(recommendation.recommended_amount_krw)}"
         )
     else:
         message_lines.append(
-            f"계산된 코인 수량: {format_decimal(recommendation.recommended_quantity, 10)}"
+            f"매도 수량: {format_decimal(recommendation.recommended_quantity, 10)}"
         )
         message_lines.append(
-            f"예상 KRW 매도가치: {format_krw(recommendation.recommended_amount_krw)}"
+            f"예상 매도금액: {format_krw(recommendation.recommended_amount_krw)}"
         )
 
     message_lines.extend(
         [
-            f"승인 유효시간: {expires_in_minutes}분",
             "",
             "사유:",
             truncate_text(recommendation.reason),
             "",
-            "리스크 메모:",
+            "리스크:",
             truncate_text(_get_risk_notes(recommendation)),
             "",
-            "아래 버튼을 눌러 승인 또는 거절해 주세요.",
+            f"승인 유효시간: {expires_in_minutes}분",
+            f"AI 모델: {recommendation.ai_model or '-'}",
         ]
     )
 
+    superseded_notice = build_superseded_request_notice(
+        superseded_request_count=superseded_request_count,
+    )
+    if superseded_notice is not None:
+        message_lines.extend(["", superseded_notice])
+
     return "\n".join(message_lines)
-
-
-def _format_trade_ratio(value: object | None) -> str:
-    if value is None:
-        return "기록 없음"
-    return f"{Decimal(str(value)) * Decimal('100'):.2f}%"
 
 
 def _get_risk_notes(recommendation: TradeRecommendation) -> str:

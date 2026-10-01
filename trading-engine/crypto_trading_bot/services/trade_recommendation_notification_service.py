@@ -16,7 +16,7 @@ from crypto_trading_bot.notification.approval_request_message import (
 )
 from crypto_trading_bot.notification.telegram_client import TelegramClient
 from crypto_trading_bot.notification.trade_recommendation_message import (
-    build_trade_recommendation_summary_message,
+    build_hold_recommendation_message,
 )
 from crypto_trading_bot.services.approval_request_service import (
     ApprovalRequestService,
@@ -86,25 +86,24 @@ class TradeRecommendationNotificationService:
                     f"count={superseded_request_count}"
                 )
 
-        # 모든 분석 대상의 BUY/SELL/HOLD 판단과 사유를 요약해서 먼저 전송
-        summary_message = build_trade_recommendation_summary_message(
-            analysis_run=analysis_run,
-            recommendations=recommendations,
-            superseded_request_counts_by_recommendation_id=(
-                superseded_request_counts_by_recommendation_id
-            ),
-        )
-
-        self.telegram_client.send_message(
-            chat_id=settings.telegram_chat_id,
-            text=summary_message,
-        )
-
-        # 실제 행동이 필요한 BUY/SELL 추천에만 개별 승인 요청 전송
         for recommendation in recommendations:
             action = recommendation.action.strip().upper()
+            superseded_request_count = (
+                superseded_request_counts_by_recommendation_id.get(
+                    recommendation.id or 0,
+                    0,
+                )
+            )
 
             if action not in SUPPORTED_APPROVAL_ACTIONS:
+                hold_message = build_hold_recommendation_message(
+                    recommendation=recommendation,
+                    superseded_request_count=superseded_request_count,
+                )
+                self.telegram_client.send_message(
+                    chat_id=settings.telegram_chat_id,
+                    text=hold_message,
+                )
                 continue
 
             approval_request, _ = (
@@ -125,6 +124,7 @@ class TradeRecommendationNotificationService:
             approval_message = build_approval_request_message(
                 recommendation=recommendation,
                 expires_in_minutes=expires_in_minutes,
+                superseded_request_count=superseded_request_count,
             )
 
             reply_markup = build_approval_request_reply_markup(

@@ -105,8 +105,9 @@ flowchart TD
     MU[Market Universe and Multi-Timeframe Data]
     PV[Portfolio Valuation Snapshot]
     AI[OpenAI Trade Recommendation]
-    N[Telegram Summary]
     A{Recommendation action}
+    N[Telegram HOLD Recommendation]
+    T[Telegram BUY or SELL Approval Recommendation]
     H{Human Approval for BUY or SELL}
     G[Execution Safety Guards]
     M[MOCK Execution]
@@ -115,9 +116,9 @@ flowchart TD
     LD[Execution and Fill Ledger]
     AN[Outcome / PnL / Portfolio Analytics]
 
-    AS --> MU --> PV --> AI --> N --> A
-    A -->|HOLD| S[No approval request and no order]
-    A -->|BUY or SELL| H
+    AS --> MU --> PV --> AI --> A
+    A -->|HOLD| N --> S[No approval request and no order]
+    A -->|BUY or SELL| T --> H
     H -->|Reject| R[No order]
     H -->|Approve| G
     G -->|MOCK| M

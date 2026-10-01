@@ -58,9 +58,11 @@ class FakeSession:
 
 class FakeApprovalRequestService:
     supersede_call_count = 0
+    superseded_request_count = 1
     get_or_create_call_count = 0
     save_telegram_message_id_call_count = 0
     expire_pending_requests_call_count = 0
+    existing_telegram_message_id: int | None = None
 
     def __init__(self, session: FakeSession) -> None:
         self.session = session
@@ -74,7 +76,7 @@ class FakeApprovalRequestService:
         recommendation: TradeRecommendation,
     ) -> int:
         type(self).supersede_call_count += 1
-        return 1
+        return type(self).superseded_request_count
 
     def get_or_create_pending_request(
         self,
@@ -89,7 +91,7 @@ class FakeApprovalRequestService:
             user_id=recommendation.user_id,
             status="PENDING",
             telegram_chat_id=int(telegram_chat_id),
-            telegram_message_id=None,
+            telegram_message_id=type(self).existing_telegram_message_id,
             callback_token="new-token",
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
         )
@@ -108,9 +110,11 @@ class FakeApprovalRequestService:
 
 def reset_fake_approval_request_service() -> None:
     FakeApprovalRequestService.supersede_call_count = 0
+    FakeApprovalRequestService.superseded_request_count = 1
     FakeApprovalRequestService.get_or_create_call_count = 0
     FakeApprovalRequestService.save_telegram_message_id_call_count = 0
     FakeApprovalRequestService.expire_pending_requests_call_count = 0
+    FakeApprovalRequestService.existing_telegram_message_id = None
 
 
 def build_analysis_run() -> AnalysisRun:
@@ -139,12 +143,13 @@ def build_recommendation(
         exchange="UPBIT",
         market=market,
         action=action,
+        trade_ratio=Decimal("0.2"),
         confidence=Decimal("0.7500"),
         reason="test recommendation",
-        recommended_amount_krw=Decimal("5000"),
-        recommended_quantity=None,
-        ai_model="TEST",
-        ai_response={},
+        recommended_amount_krw=(None if action == "HOLD" else Decimal("5000")),
+        recommended_quantity=(Decimal("0.001234") if action == "SELL" else None),
+        ai_model="gpt-5.6-sol",
+        ai_response={"safe_advice": {"risk_notes": "test risk"}},
         status="CREATED",
     )
 
@@ -211,8 +216,27 @@ def test_send_latest_ai_recommendation_supersedes_old_pending_and_sends_new_buy_
     assert FakeApprovalRequestService.get_or_create_call_count == 1
     assert FakeApprovalRequestService.save_telegram_message_id_call_count == 1
 
-    # 요약 메시지 + 승인 요청 메시지
-    assert len(telegram_client.sent_messages) == 2
+    # BUY 추천과 승인 요청을 하나의 메시지로 전송한다.
+    assert len(telegram_client.sent_messages) == 1
+    sent_message = telegram_client.sent_messages[0]
+    assert sent_message["text"].startswith("🟢 AI 매수 추천")
+    assert "마켓: KRW-BTC" in sent_message["text"]
+    assert "신뢰도: 75%" in sent_message["text"]
+    assert "매수 비율: 20%" in sent_message["text"]
+    assert "매수 금액: 5,000원" in sent_message["text"]
+    assert "사유:\ntest recommendation" in sent_message["text"]
+    assert "리스크:\ntest risk" in sent_message["text"]
+    assert "승인 유효시간:" in sent_message["text"]
+    assert "AI 모델: gpt-5.6-sol" in sent_message["text"]
+    assert "[AI 매매 분석 결과]" not in sent_message["text"]
+    assert sent_message["reply_markup"] == {
+        "inline_keyboard": [
+            [
+                {"text": "매수 승인", "callback_data": "approve:new-token"},
+                {"text": "거절", "callback_data": "reject:new-token"},
+            ]
+        ]
+    }
 
 
 def test_send_latest_ai_recommendation_supersedes_old_pending_and_does_not_send_hold_approval(
@@ -241,8 +265,57 @@ def test_send_latest_ai_recommendation_supersedes_old_pending_and_does_not_send_
     assert FakeApprovalRequestService.get_or_create_call_count == 0
     assert FakeApprovalRequestService.save_telegram_message_id_call_count == 0
 
-    # 요약 메시지만 전송된다.
+    # HOLD 핵심 메시지만 전송되고 inline keyboard는 없다.
     assert len(telegram_client.sent_messages) == 1
+    sent_message = telegram_client.sent_messages[0]
+    assert sent_message["text"].startswith("🤖 AI 매매 분석")
+    assert "판단: HOLD" in sent_message["text"]
+    assert "신뢰도: 75%" in sent_message["text"]
+    assert "AI 모델: gpt-5.6-sol" in sent_message["text"]
+    assert "추천금액" not in sent_message["text"]
+    assert "추천수량" not in sent_message["text"]
+    assert (
+        "※ 이전 승인 요청 1건은 최신 분석으로 대체되었습니다." in sent_message["text"]
+    )
+    assert sent_message["reply_markup"] is None
+
+
+def test_send_latest_sell_recommendation_sends_one_approval_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, telegram_client = build_service_with_recommendations(
+        monkeypatch=monkeypatch,
+        recommendations=[build_recommendation(action="SELL")],
+    )
+
+    service.send_latest_ai_recommendation_summary()
+
+    assert len(telegram_client.sent_messages) == 1
+    sent_message = telegram_client.sent_messages[0]
+    assert sent_message["text"].startswith("🔴 AI 매도 추천")
+    assert "매도 비율: 20%" in sent_message["text"]
+    assert "매도 수량: 0.0012340000" in sent_message["text"]
+    assert "예상 매도금액: 5,000원" in sent_message["text"]
+    assert "AI 모델: gpt-5.6-sol" in sent_message["text"]
+    assert sent_message["reply_markup"]["inline_keyboard"][0][0]["text"] == (
+        "매도 승인"
+    )
+
+
+def test_existing_pending_approval_message_is_not_sent_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service, telegram_client = build_service_with_recommendations(
+        monkeypatch=monkeypatch,
+        recommendations=[build_recommendation(action="BUY")],
+    )
+    FakeApprovalRequestService.existing_telegram_message_id = 777
+
+    service.send_latest_ai_recommendation_summary()
+
+    assert FakeApprovalRequestService.get_or_create_call_count == 1
+    assert FakeApprovalRequestService.save_telegram_message_id_call_count == 0
+    assert telegram_client.sent_messages == []
 
 
 def test_latest_ai_run_is_scoped_to_current_pipeline(

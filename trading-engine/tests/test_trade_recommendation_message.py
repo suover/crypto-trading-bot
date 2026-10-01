@@ -1,108 +1,83 @@
-from datetime import UTC, datetime
 from decimal import Decimal
 
-from crypto_trading_bot.db.models import AnalysisRun, TradeRecommendation
+import pytest
+
+from crypto_trading_bot.db.models import TradeRecommendation
 from crypto_trading_bot.notification.trade_recommendation_message import (
-    build_trade_recommendation_summary_message,
+    build_hold_recommendation_message,
+    format_percentage,
 )
-
-
-COMMON_ORDER_NOTICE = (
-    "※ BUY/SELL은 별도 승인 요청 대상이며, HOLD는 주문을 실행하지 않습니다."
-)
-
-
-def build_analysis_run() -> AnalysisRun:
-    return AnalysisRun(
-        id=1,
-        user_id=1,
-        run_type="AI_RECOMMENDATION",
-        trading_mode="AI_APPROVAL",
-        status="SUCCESS",
-        started_at=datetime.now(UTC),
-        finished_at=datetime.now(UTC),
-    )
 
 
 def build_recommendation(
     *,
-    recommendation_id: int = 1,
-    action: str = "BUY",
+    action: str = "HOLD",
+    confidence: Decimal | None = Decimal("0.82"),
 ) -> TradeRecommendation:
     return TradeRecommendation(
-        id=recommendation_id,
+        id=1,
         analysis_run_id=1,
         market_snapshot_id=None,
         user_id=1,
         exchange="UPBIT",
         market="KRW-BTC",
         action=action,
-        confidence=Decimal("0.7500"),
-        reason="test reason",
-        recommended_amount_krw=Decimal("5000") if action != "HOLD" else None,
+        confidence=confidence,
+        reason="현재 시장 상황에서는 관망이 적절합니다.",
+        recommended_amount_krw=None,
         recommended_quantity=None,
-        ai_model="TEST",
+        ai_model="gpt-5.6-sol",
         ai_response={},
         status="CREATED",
     )
 
 
-def test_trade_recommendation_summary_message_shows_buy_approval_notice() -> None:
-    message = build_trade_recommendation_summary_message(
-        analysis_run=build_analysis_run(),
-        recommendations=[
-            build_recommendation(
-                recommendation_id=1,
-                action="BUY",
-            )
-        ],
-    )
-
-    assert "판단: BUY" in message
-    assert "승인요청 상태: 별도 승인 요청 메시지 발송 대상" in message
-    assert COMMON_ORDER_NOTICE in message
-
-
-def test_trade_recommendation_summary_message_shows_sell_approval_notice() -> None:
-    message = build_trade_recommendation_summary_message(
-        analysis_run=build_analysis_run(),
-        recommendations=[build_recommendation(recommendation_id=1, action="SELL")],
-    )
-
-    assert "판단: SELL" in message
-    assert "승인요청 상태: 별도 승인 요청 메시지 발송 대상" in message
-    assert COMMON_ORDER_NOTICE in message
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (Decimal("0.82"), "82%"),
+        (Decimal("0.825"), "82.5%"),
+        (Decimal("0.8333"), "83.33%"),
+        (Decimal("1"), "100%"),
+        (None, "-"),
+        (Decimal("Infinity"), "-"),
+    ],
+)
+def test_format_percentage_is_user_friendly(
+    value: Decimal | None,
+    expected: str,
+) -> None:
+    assert format_percentage(value) == expected
 
 
-def test_trade_recommendation_summary_message_shows_hold_notice() -> None:
-    message = build_trade_recommendation_summary_message(
-        analysis_run=build_analysis_run(),
-        recommendations=[
-            build_recommendation(
-                recommendation_id=1,
-                action="HOLD",
-            )
-        ],
-    )
+def test_hold_recommendation_message_shows_only_relevant_information() -> None:
+    message = build_hold_recommendation_message(build_recommendation())
 
+    assert message.startswith("🤖 AI 매매 분석")
+    assert "마켓: KRW-BTC" in message
     assert "판단: HOLD" in message
-    assert "승인요청 상태: HOLD는 승인 요청 없음" in message
-    assert COMMON_ORDER_NOTICE in message
+    assert "신뢰도: 82%" in message
+    assert "사유:\n현재 시장 상황에서는 관망이 적절합니다." in message
+    assert "현재 주문은 실행하지 않습니다." in message
+    assert "AI 모델: gpt-5.6-sol" in message
+    assert "실행 ID" not in message
+    assert "실행 상태" not in message
+    assert "거래 모드" not in message
+    assert "승인요청 상태" not in message
+    assert "추천금액" not in message
+    assert "추천수량" not in message
+    assert "이전 승인 요청" not in message
 
 
-def test_trade_recommendation_summary_message_shows_superseded_notice() -> None:
-    message = build_trade_recommendation_summary_message(
-        analysis_run=build_analysis_run(),
-        recommendations=[
-            build_recommendation(
-                recommendation_id=1,
-                action="HOLD",
-            )
-        ],
-        superseded_request_counts_by_recommendation_id={
-            1: 2,
-        },
+def test_hold_recommendation_message_shows_superseded_notice() -> None:
+    message = build_hold_recommendation_message(
+        build_recommendation(),
+        superseded_request_count=2,
     )
 
-    assert "판단: HOLD" in message
-    assert "승인요청 상태: 기존 승인 요청 2건이 최신 분석으로 대체됨" in message
+    assert "※ 이전 승인 요청 2건은 최신 분석으로 대체되었습니다." in message
+
+
+def test_hold_recommendation_message_rejects_non_hold_action() -> None:
+    with pytest.raises(ValueError, match="requires HOLD action"):
+        build_hold_recommendation_message(build_recommendation(action="BUY"))
