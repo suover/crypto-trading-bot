@@ -259,6 +259,7 @@ Human approval은 immutable audit row를 만드는 단계이고 activation은 �
 | `portfolio-performance-worker` | Account performance; 필요 시 Upbit public candle 조회 | 상시 container, 기본 idle |
 | `operational-alert-worker` | DB + Telegram operational alerts | 상시 container, 기본 idle |
 | `recommendation-outcome-worker` | Recommendation/Research outcome 및 opt-in Shadow selection cycle | 상시 container, 기본 idle |
+| `research-lifecycle-worker` | DB-only Promotion Gate 검증과 별도 opt-in Shadow 등록 | 상시 container, 기본 idle |
 
 Compose는 worker별 secret scope를 줄입니다. 예를 들어 Bot PnL과 Portfolio Performance는 DB secret만, Operational Alert는 DB와 Telegram, Account Activity는 DB와 Upbit read credential을 받습니다. Container가 실행 중이라는 사실과 기능 flag가 활성화됐다는 사실은 다릅니다.
 
@@ -277,6 +278,8 @@ LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false
 ```
 
 Analytics/account worker도 대부분 opt-in flag가 `false`입니다. 실제 LIVE 활성화 절차와 값은 일반 Quick Start가 아니라 [Production LIVE](docs/PRODUCTION_LIVE.md)와 [LIVE Runbook](docs/LIVE_RUNBOOK.md)의 fail-closed 절차를 따릅니다.
+
+Research Lifecycle은 `RESEARCH_LIFECYCLE_ENABLED=false`와 `RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED=false`가 기본입니다. 자동 Gate 검증과 조건부 Shadow 등록을 분리하며 LIVE ranking을 자동 변경하지 않습니다. Preview/Apply 명령과 주기·배치 설정은 [운영 문서](docs/OPERATIONS.md#research-lifecycle-rollout)를 참고하세요.
 
 ## Production과 CI/CD
 

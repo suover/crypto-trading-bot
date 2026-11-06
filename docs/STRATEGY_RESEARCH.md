@@ -267,6 +267,8 @@ Forward evidence는 descriptive evidence입니다. 표본 충분성, promotion e
 
 ## Read/write와 external-call 요약
 
+등록된 후보의 주기적 Gate 검증과 조건부 Shadow 등록은 독립된 `research-lifecycle-worker`가 담당합니다. 기본 비활성화이며 자동 등록은 별도 opt-in입니다. `uv run python -m scripts.run_research_lifecycle_worker --once`는 DB-only Preview입니다. 설정, Apply, 상태별 처리와 기존 Shadow Selection worker의 관계는 [Research Lifecycle 운영](POLICY_PROMOTION.md#research-lifecycle-자동-검증과-조건부-등록)을 참고하세요. 새 후보 생성·screening 등록·사람 승인·LIVE activation은 이 worker의 작업 범위가 아닙니다.
+
 | 기능 | DB write | External call | Runtime/LIVE 영향 |
 | --- | --- | --- | --- |
 | Replay/A-B/Sweep/Validation/Cost | 없음 | 없음 | 없음 |
@@ -276,5 +278,7 @@ Forward evidence는 descriptive evidence입니다. 표본 충분성, promotion e
 | Registry preview | 없음 | 없음 | 없음 |
 | Registry `--apply` | immutable candidate | 없음 | 없음 |
 | Historical/Forward evidence | 없음 | 없음 | 없음 |
+| Research Lifecycle Preview | 없음 | 없음 | 없음 |
+| Research Lifecycle opt-in Apply | immutable Shadow enrollment | 없음 | 없음 |
 
 JSON output을 쓰는 CLI는 명시한 output file만 atomic write하며 기존 파일 교체에는 `--force`가 필요합니다. Repository에 environment-specific candidate ID나 현재 Production row 상태를 문서 contract로 기록하지 않습니다.

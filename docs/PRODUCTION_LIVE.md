@@ -31,7 +31,7 @@ Production 흐름은 다음과 같습니다.
 ## Production Compose 구조
 
 - 기본 infrastructure: `postgres`, 1회 실행 후 종료하는 `migrate`
-- 기본 application runtime: `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `account-activity-sync-worker`, `bot-trading-pnl-worker`, `portfolio-performance-worker`, `operational-alert-worker`, `recommendation-outcome-worker`
+- 기본 application runtime: `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `account-activity-sync-worker`, `bot-trading-pnl-worker`, `portfolio-performance-worker`, `operational-alert-worker`, `recommendation-outcome-worker`, `research-lifecycle-worker`
 - `scheduler` profile: `ai-trade-scheduler`
 - `manual` profile: 일회성 `ai-trade-analysis`
 
@@ -53,7 +53,7 @@ bash scripts/check_server_runtime_safety.sh --production-live
 - 저장소 루트, `.env`, Compose 구성
 - `.env` 권한 600
 - PostgreSQL running/healthy 및 호스트 포트 미노출
-- Telegram listener, mock retry, LIVE reconciliation, account activity, Bot PnL, Portfolio Performance, operational alert, recommendation outcome worker와 scheduler 실행 상태
+- Telegram listener, mock retry, LIVE reconciliation, account activity, Bot PnL, Portfolio Performance, operational alert, recommendation outcome, research lifecycle worker와 scheduler 실행 상태
 - `LIVE_ORDER_RECONCILIATION_ENABLED=true` (미설정 시 기본 true)
 - DB 백업 존재 여부와 파일 권한 600
 - `SECRET_DIR` 존재 및 권한 700
@@ -159,6 +159,7 @@ docker compose logs --tail=100 bot-trading-pnl-worker
 docker compose logs --tail=100 portfolio-performance-worker
 docker compose logs --tail=100 operational-alert-worker
 docker compose logs --tail=100 recommendation-outcome-worker
+docker compose logs --tail=100 research-lifecycle-worker
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```

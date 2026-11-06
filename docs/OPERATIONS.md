@@ -163,10 +163,29 @@ ls -la "$HOME/backups"
 | Recommendation Outcome | `RECOMMENDATION_OUTCOME_ENABLED` | `false` | Upbit public candle |
 | Research Candidate Outcome | `RESEARCH_CANDIDATE_OUTCOME_ENABLED` | `false` | Upbit public candle |
 | Shadow Selection automation | `SHADOW_SELECTION_EVALUATION_ENABLED` | `false` | 없음 |
+| Research Lifecycle | `RESEARCH_LIFECYCLE_ENABLED` | `false` | 없음, DB-only |
 
 Flag를 바꾼 뒤에는 필요한 service만 명시적으로 recreate하고 logs와 safety check를 확인합니다. 설정 변경 전 `.env`를 권한 `600`으로 backup합니다. 이 문서는 실제 환경 값을 지정하지 않습니다.
 
 Portfolio Performance worker는 PostgreSQL과 DB secret만 사용하지만 non-KRW completed external cash flow 평가에는 Upbit public candle을 조회할 수 있습니다. Upbit private API, OpenAI와 Telegram은 사용하지 않습니다.
+
+### Research Lifecycle rollout
+
+`research-lifecycle-worker`는 기본 runtime에 포함되지만 기본 설정에서는 DB 조회 없이 idle합니다. DB secret만 mount합니다. `RESEARCH_LIFECYCLE_ENABLED=true`만 설정하면 주기적 Gate 검증을 읽기 전용으로 실행하고, `RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED=true`도 설정해야 조건부 Shadow 등록을 허용합니다. `.env`와 DB backup 후 먼저 Preview의 후보별 상태 및 무결성 오류를 확인합니다.
+
+```bash
+# repository root: DB-only Preview (Lifecycle flag와 무관하게 허용)
+docker compose run --rm --no-deps research-lifecycle-worker python -m scripts.run_research_lifecycle_worker --once
+
+# 두 flag가 모두 활성화된 경우에만 조건부 Apply
+docker compose run --rm --no-deps research-lifecycle-worker python -m scripts.run_research_lifecycle_worker --once --apply
+
+# 설정 변경 후 해당 worker만 recreate
+docker compose up -d --no-deps --force-recreate research-lifecycle-worker
+docker compose logs --tail=100 research-lifecycle-worker
+```
+
+상시 worker가 lock을 보유 중이면 one-shot은 중복 실행 없이 종료하므로 진단 시간에는 해당 worker만 중지합니다. 기본 주기는 21600초, 배치는 10개이며 `RESEARCH_LIFECYCLE_INTERVAL_SECONDS`와 `RESEARCH_LIFECYCLE_BATCH_SIZE`로 설정합니다. 구조화된 JSON은 전체 등록/검사 수, Gate 상태, 무결성·실행 오류, 기존/신규 enrollment, DB write 및 LIVE 영향(false)을 보고합니다. 상세 상태·순회·안전 계약은 [Policy Promotion](POLICY_PROMOTION.md#research-lifecycle-자동-검증과-조건부-등록)을 참고하세요. 기존 Shadow Selection 자동평가는 별도 flag로 활성화해야 합니다. 이 worker는 정책 승인이나 LIVE activation을 수행하지 않습니다.
 
 ## Diagnostics
 

@@ -136,6 +136,7 @@ container_running "crypto-trading-operational-alert-worker" && pass_check "opera
 container_running "crypto-trading-account-activity-sync-worker" && pass_check "account-activity-sync-worker가 실행 중입니다." || fail_check "account-activity-sync-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-portfolio-performance-worker" && pass_check "portfolio-performance-worker가 실행 중입니다." || fail_check "portfolio-performance-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-recommendation-outcome-worker" && pass_check "recommendation-outcome-worker가 실행 중입니다." || fail_check "recommendation-outcome-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-research-lifecycle-worker" && pass_check "research-lifecycle-worker가 실행 중입니다." || fail_check "research-lifecycle-worker가 실행 중이 아닙니다."
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
@@ -203,6 +204,16 @@ if [[ "$MODE" == "production-live" ]]; then
     pass_check "production-live: Shadow Selection Evaluation analytics가 활성화되어 있습니다."
   else
     warn "production-live: Shadow Selection Evaluation analytics가 비활성화되어 있습니다. 거래 실행에는 영향이 없습니다."
+  fi
+  RESEARCH_LIFECYCLE_ENABLED="$(get_env_value RESEARCH_LIFECYCLE_ENABLED)"
+  RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED="$(get_env_value RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED)"
+  if [[ "${RESEARCH_LIFECYCLE_ENABLED:-false}" == "true" ]]; then
+    pass_check "production-live: Research Lifecycle Gate 자동 검증이 활성화되어 있습니다."
+    if [[ "${RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED:-false}" == "true" ]]; then
+      warn "production-live: 조건부 자동 Shadow 등록이 활성화되어 있습니다. LIVE 정책 활성화는 수행하지 않습니다."
+    fi
+  else
+    pass_check "production-live: Research Lifecycle은 정상 비활성 상태입니다. 거래 실행에는 영향이 없습니다."
   fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."

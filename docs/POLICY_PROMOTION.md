@@ -79,6 +79,35 @@ python -m scripts.enroll_shadow_policy --candidate-id <ID> --apply
 
 Enrollment는 runtime activation이 아니며 Market Universe, AI, Telegram, 주문 또는 LIVE policy를 바꾸지 않습니다.
 
+## Research Lifecycle 자동 검증과 조건부 등록
+
+`research-lifecycle-worker`는 이미 등록된 `ResearchPolicyCandidate`를 ID 순서로 배치 조회하고 기존 Promotion Gate와 Shadow Enrollment 서비스를 실행합니다. 후보 생성이나 Historical Screening 등록을 자동화하지 않습니다. PostgreSQL만 사용하고 외부 API와 주문 경로를 호출하지 않습니다.
+
+기본값은 `RESEARCH_LIFECYCLE_ENABLED=false`, `RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED=false`입니다. 자동 검증과 자동 등록은 별도 opt-in이며 Apply에는 두 flag가 모두 필요합니다. 기존 유효한 enrollment는 provenance를 검증해 `ALREADY_ENROLLED`로 처리하고 Gate를 재평가하지 않습니다. 손상된 enrollment는 `INVALID_SHADOW_ENROLLMENT`입니다.
+
+- `INSUFFICIENT_DATA`: 증거가 쌓일 때까지 대기
+- `NOT_ELIGIBLE`: 현재 기준 미충족, 등록 안 함
+- `INVALID_PROMOTION_DATA`: 무결성 오류 보고, 등록 안 함
+- `ELIGIBLE_FOR_REVIEW`: 기존 Enrollment 서비스로 재검증; Preview는 `DRY_RUN`, Apply는 실제 `CREATED`인 경우에만 commit
+
+등록 직전 Gate 상태가 바뀌면 최신 상태를 보고하고 등록하지 않습니다. 후보마다 별도 session/transaction을 사용해 실패를 격리하며, 오류 원문 대신 예외 종류와 구조화된 후보별 상태를 출력합니다. 새 평가 이력 테이블은 만들지 않습니다.
+
+`trading-engine/`에서 실행합니다.
+
+```bash
+# 항상 읽기 전용. Lifecycle 비활성 상태에서도 진단 가능
+uv run python -m scripts.run_research_lifecycle_worker --once
+
+# 두 flag를 모두 활성화한 환경에서만 조건부 등록
+uv run python -m scripts.run_research_lifecycle_worker --once --apply
+```
+
+`--once`는 자동 등록 flag가 켜져 있어도 Preview입니다. 상시 worker는 Lifecycle flag가 꺼져 있으면 DB 조회 없이 idle합니다. Lifecycle만 켜면 주기적 읽기 전용 검증, 두 flag를 모두 켜면 조건부 Shadow 등록까지 수행합니다. `RESEARCH_LIFECYCLE_INTERVAL_SECONDS=21600`(60–604800초), `RESEARCH_LIFECYCLE_BATCH_SIZE=10`(1–500개)이며 범위 밖 설정은 거부합니다.
+
+한 순회의 최대 candidate ID를 고정하고 메모리 cursor로 배치를 순회합니다. 뒤쪽 후보와 오류 후보도 다음 순회에서 다시 검사하며 새 후보는 이후 순회에서 발견합니다. 재시작하면 cursor는 처음으로 돌아가지만 기존 enrollment는 중복 생성하지 않습니다. 실패한 cycle도 전체 interval을 기다리고 재시도합니다. 전용 PostgreSQL advisory lock은 중복 worker 실행을 막습니다.
+
+등록 이후 selection 평가는 기존 `recommendation-outcome-worker`의 `SHADOW_SELECTION_EVALUATION_ENABLED`로 별도 제어합니다. 자동화의 끝은 Shadow Enrollment입니다. Shadow Review 통과, 사람의 Promotion Approval 또는 Full LIVE Activation을 수행하거나 암시하지 않습니다. 현재 Ranking, AI 추천과 Telegram 매매 승인에는 영향이 없습니다. Telegram 전략 승인 및 자동화 확장은 후속 단계이며, 현재 explicit Full LIVE activation 절차는 그대로 유지합니다.
+
 ## Shadow Selection
 
 `ShadowPolicyEvaluationService`는 enrollment의 ID/captured/time watermarks를 모두 strict `>`로 통과한 snapshot만 candidate policy로 offline replay합니다. 같은 dataset의 broad timeline을 먼저 고정하고 baseline/Top N mismatch와 replay failure도 immutable marker로 저장해 앞뒤 chronology를 인위적으로 연결하지 않습니다.

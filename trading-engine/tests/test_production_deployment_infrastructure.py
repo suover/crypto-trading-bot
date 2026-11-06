@@ -425,3 +425,55 @@ def test_account_activity_scripts_do_not_contain_write_endpoints_or_other_system
         "LiveExecutionLedgerService",
     ):
         assert forbidden not in combined
+
+
+def test_research_lifecycle_is_db_only_default_runtime_and_deploy_managed() -> None:
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split("  research-lifecycle-worker:", 1)[1].split(
+        "\nsecrets:", 1
+    )[0]
+    assert "profiles:" not in service
+    assert "restart: unless-stopped" in service
+    assert "scripts.run_research_lifecycle_worker" in service
+    assert "condition: service_healthy" in service
+    assert "condition: service_completed_successfully" in service
+    secrets = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    assert secrets.strip() == "- postgres_password"
+    for name in (
+        "OPENAI_API_KEY",
+        "OPENAI_API_KEY_FILE",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_BOT_TOKEN_FILE",
+        "UPBIT_ACCESS_KEY",
+        "UPBIT_ACCESS_KEY_FILE",
+        "UPBIT_SECRET_KEY",
+        "UPBIT_SECRET_KEY_FILE",
+        "COINGECKO_API_KEY",
+    ):
+        assert f'{name}: ""' in service
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert "research-lifecycle-worker" in block
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    assert "crypto-trading-research-lifecycle-worker" in safety
+    assert "Research Lifecycle은 정상 비활성 상태" in safety
+    combined = read_engine_file(
+        "scripts/run_research_lifecycle_worker.py"
+    ) + read_engine_file("crypto_trading_bot/services/research_lifecycle_service.py")
+    for forbidden in (
+        "UpbitClient",
+        "OpenAI",
+        "TelegramClient",
+        "FullLivePolicyActivationService",
+        "ShadowPolicyPromotionApprovalService",
+        "create_order",
+    ):
+        assert forbidden not in combined

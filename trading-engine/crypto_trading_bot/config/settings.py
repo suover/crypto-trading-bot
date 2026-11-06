@@ -144,6 +144,12 @@ class Settings(BaseSettings):
     # In-pipeline, DB-only research dataset. Disabled by default for safe rollout.
     strategy_replay_dataset_enabled: bool = False
 
+    # DB-only Gate evaluation and optional Shadow enrollment, never activation.
+    research_lifecycle_enabled: bool = False
+    research_auto_shadow_enrollment_enabled: bool = False
+    research_lifecycle_interval_seconds: int = Field(default=21600, ge=60, le=604800)
+    research_lifecycle_batch_size: int = Field(default=10, ge=1, le=500)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
