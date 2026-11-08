@@ -150,6 +150,21 @@ class Settings(BaseSettings):
     research_lifecycle_interval_seconds: int = Field(default=21600, ge=60, le=604800)
     research_lifecycle_batch_size: int = Field(default=10, ge=1, le=500)
 
+    # DB-only candidate discovery and separately gated registry writes.
+    research_candidate_automation_enabled: bool = False
+    research_candidate_auto_registration_enabled: bool = False
+    research_candidate_automation_interval_seconds: int = Field(
+        default=86400, ge=60, le=604800
+    )
+    research_candidate_min_new_snapshots: int = Field(default=21, ge=1, le=10000)
+    research_candidate_generation_step: Decimal = Field(
+        default=Decimal("0.05"), gt=0, le=Decimal("0.10"), allow_inf_nan=False
+    )
+    research_candidate_max_registrations_per_cycle: int = Field(default=5, ge=1, le=100)
+    research_candidate_max_registered_per_context: int = Field(
+        default=30, ge=1, le=10000
+    )
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"

@@ -272,6 +272,32 @@ class StrategyReplaySnapshot(Base):
     )
 
 
+class ResearchCandidateAutomationState(Base):
+    __tablename__ = "research_candidate_automation_states"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    exchange: Mapped[str] = mapped_column(String(30), primary_key=True)
+    quote_asset: Mapped[str] = mapped_column(String(20), primary_key=True)
+    dataset_schema_version: Mapped[str] = mapped_column(String(50), primary_key=True)
+    baseline_policy_signature: Mapped[str] = mapped_column(
+        String(100), primary_key=True
+    )
+    effective_top_n: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_observed_snapshot_id: Mapped[int] = mapped_column(BigInteger)
+    reviewed_snapshot_id: Mapped[int] = mapped_column(BigInteger)
+    reviewed_captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    reviewed_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    review_status: Mapped[str] = mapped_column(String(50))
+    review_cycle_cap: Mapped[int] = mapped_column(Integer)
+    review_context_cap: Mapped[int] = mapped_column(Integer)
+    last_reference_snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    last_status: Mapped[str | None] = mapped_column(String(50))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_registration_status: Mapped[str | None] = mapped_column(String(50))
+    last_registered_snapshot_id: Mapped[int | None] = mapped_column(BigInteger)
+    last_registered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ResearchPolicyCandidate(Base):
     __tablename__ = "research_policy_candidates"
     __table_args__ = (

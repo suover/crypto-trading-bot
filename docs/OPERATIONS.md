@@ -187,6 +187,24 @@ docker compose logs --tail=100 research-lifecycle-worker
 
 상시 worker가 lock을 보유 중이면 one-shot은 중복 실행 없이 종료하므로 진단 시간에는 해당 worker만 중지합니다. 기본 주기는 21600초, 배치는 10개이며 `RESEARCH_LIFECYCLE_INTERVAL_SECONDS`와 `RESEARCH_LIFECYCLE_BATCH_SIZE`로 설정합니다. 구조화된 JSON은 전체 등록/검사 수, Gate 상태, 무결성·실행 오류, 기존/신규 enrollment, DB write 및 LIVE 영향(false)을 보고합니다. 상세 상태·순회·안전 계약은 [Policy Promotion](POLICY_PROMOTION.md#research-lifecycle-자동-검증과-조건부-등록)을 참고하세요. 기존 Shadow Selection 자동평가는 별도 flag로 활성화해야 합니다. 이 worker는 정책 승인이나 LIVE activation을 수행하지 않습니다.
 
+## Research Candidate Automation Phase 2
+
+`research-candidate-automation-worker`는 기본 runtime의 DB-only 서비스입니다. 자동 검토가 비활성화되어 있으면 DB에 연결하지 않고 대기합니다. 활성화 전 DB와 .env 백업, migration, `TRADING_USER_ID`, DYNAMIC Upbit KRW BASELINE 문맥, Replay Dataset과 Research Candidate Outcome 수집을 확인합니다.
+
+1. `RESEARCH_CANDIDATE_AUTOMATION_ENABLED=true`만 켜고 Worker를 재생성합니다. 첫 정상 예약 실행은 최신 호환 스냅샷을 기준점으로 저장하고 `BOOTSTRAPPED`를 보고합니다. 기준점 이전의 데이터는 Historical Evidence에 사용할 수 있습니다.
+2. 기본 86400초 주기에서 기준점 이후 신규 스냅샷 21개와 성숙 Outcome을 확인합니다. 결정적 생성 Step은 기본 0.05입니다. `NO_NEW_SNAPSHOTS`, `INSUFFICIENT_RESEARCH_DATA`, `NO_NOVEL_CANDIDATES`, `NO_PASS_CANDIDATES`는 정상 종료입니다.
+3. 검토 결과를 확인한 뒤 자동 등록이 필요하면 `RESEARCH_CANDIDATE_AUTO_REGISTRATION_ENABLED=true`를 별도로 켜고 Worker를 재생성합니다. 이전 `PREVIEW_READY` 건은 새 Screening과 서명 검증을 거쳐 등록을 다시 판단합니다. 기본 상한은 주기당 5개, 동일 Context 전체 30개입니다.
+
+```bash
+docker compose run --rm --no-deps research-candidate-automation-worker python -m scripts.run_research_candidate_automation_worker --once
+docker compose run --rm --no-deps research-candidate-automation-worker python -m scripts.run_research_candidate_automation_worker --once --apply
+docker compose logs --tail=100 research-candidate-automation-worker
+```
+
+호스트에서는 `trading-engine/`에서 `uv run python -m scripts.run_research_candidate_automation_worker --once`로 실행합니다. 단발 Preview는 읽기 전용이며 최초 예약 관찰 전에는 `BOOTSTRAP_REQUIRED`를 보고합니다. `--once --apply`는 두 플래그와 초기 체크포인트를 요구합니다. `LOCK_NOT_ACQUIRED`는 다른 실행이 진행 중임을 뜻합니다.
+
+JSON의 `state_write`, `registration_status`, `created_candidate_count`를 함께 확인하면 관찰·검토와 실제 등록을 구분할 수 있습니다. `REGISTRATION_CAP_EXCEEDED`는 전체 계획 보류입니다. 새 스냅샷이 충분해지거나 상한 설정이 달라지면 전체 계획을 다시 검증합니다. [연구 경계와 체크포인트](STRATEGY_RESEARCH.md#research-candidate-automation-phase-2)를 참고하세요.
+
 ## Diagnostics
 
 아래 명령은 `trading-engine/`에서 실행합니다. 이름에 `check`가 있어도 authenticated/public API 여부가 다르므로 설명을 확인하세요.

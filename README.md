@@ -260,6 +260,7 @@ Human approval은 immutable audit row를 만드는 단계이고 activation은 �
 | `operational-alert-worker` | DB + Telegram operational alerts | 상시 container, 기본 idle |
 | `recommendation-outcome-worker` | Recommendation/Research outcome 및 opt-in Shadow selection cycle | 상시 container, 기본 idle |
 | `research-lifecycle-worker` | DB-only Promotion Gate 검증과 별도 opt-in Shadow 등록 | 상시 container, 기본 idle |
+| `research-candidate-automation-worker` | DB-only 신규 후보 생성, Historical Screening, 별도 opt-in 후보 등록 | 상시 container, 기본 idle |
 
 Compose는 worker별 secret scope를 줄입니다. 예를 들어 Bot PnL과 Portfolio Performance는 DB secret만, Operational Alert는 DB와 Telegram, Account Activity는 DB와 Upbit read credential을 받습니다. Container가 실행 중이라는 사실과 기능 flag가 활성화됐다는 사실은 다릅니다.
 
@@ -280,6 +281,8 @@ LIVE_ORDER_CHANCE_PREFLIGHT_ENABLED=false
 Analytics/account worker도 대부분 opt-in flag가 `false`입니다. 실제 LIVE 활성화 절차와 값은 일반 Quick Start가 아니라 [Production LIVE](docs/PRODUCTION_LIVE.md)와 [LIVE Runbook](docs/LIVE_RUNBOOK.md)의 fail-closed 절차를 따릅니다.
 
 Research Lifecycle은 `RESEARCH_LIFECYCLE_ENABLED=false`와 `RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED=false`가 기본입니다. 자동 Gate 검증과 조건부 Shadow 등록을 분리하며 LIVE ranking을 자동 변경하지 않습니다. Preview/Apply 명령과 주기·배치 설정은 [운영 문서](docs/OPERATIONS.md#research-lifecycle-rollout)를 참고하세요.
+
+Research Candidate Automation Phase 2는 신규 스냅샷이 충분해지면 기존 Historical Screening을 실행합니다. 두 opt-in과 상한을 충족한 전체 PASS 계획을 등록하고, 등록된 후보는 기존 Phase 1 검증 대상으로 들어갑니다. [Phase 2 운영](docs/OPERATIONS.md#research-candidate-automation-phase-2)을 참고하세요.
 
 ## Production과 CI/CD
 

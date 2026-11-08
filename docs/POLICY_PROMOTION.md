@@ -81,7 +81,7 @@ Enrollment는 runtime activation이 아니며 Market Universe, AI, Telegram, 주
 
 ## Research Lifecycle 자동 검증과 조건부 등록
 
-`research-lifecycle-worker`는 이미 등록된 `ResearchPolicyCandidate`를 ID 순서로 배치 조회하고 기존 Promotion Gate와 Shadow Enrollment 서비스를 실행합니다. 후보 생성이나 Historical Screening 등록을 자동화하지 않습니다. PostgreSQL만 사용하고 외부 API와 주문 경로를 호출하지 않습니다.
+`research-lifecycle-worker`는 등록된 `ResearchPolicyCandidate`를 ID 순서로 배치 조회하고 기존 Promotion Gate와 Shadow Enrollment 서비스를 실행합니다. [Phase 2 Worker](OPERATIONS.md#research-candidate-automation-phase-2)가 등록한 후보도 이 흐름에 들어가며, Forward 표본은 등록 watermark 이후로 제한됩니다. Phase 1은 PostgreSQL만 사용합니다.
 
 기본값은 `RESEARCH_LIFECYCLE_ENABLED=false`, `RESEARCH_AUTO_SHADOW_ENROLLMENT_ENABLED=false`입니다. 자동 검증과 자동 등록은 별도 opt-in이며 Apply에는 두 flag가 모두 필요합니다. 기존 유효한 enrollment는 provenance를 검증해 `ALREADY_ENROLLED`로 처리하고 Gate를 재평가하지 않습니다. 손상된 enrollment는 `INVALID_SHADOW_ENROLLMENT`입니다.
 

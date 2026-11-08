@@ -187,11 +187,12 @@ docker compose --profile manual --profile scheduler build \
   operational-alert-worker \
   recommendation-outcome-worker \
   research-lifecycle-worker \
+  research-candidate-automation-worker \
   ai-trade-analysis \
   ai-trade-scheduler
 
 CURRENT_STAGE="application runtime stop"
-docker compose stop telegram-listener mock-order-retry-worker live-order-reconciliation-worker account-activity-sync-worker bot-trading-pnl-worker portfolio-performance-worker operational-alert-worker recommendation-outcome-worker research-lifecycle-worker
+docker compose stop telegram-listener mock-order-retry-worker live-order-reconciliation-worker account-activity-sync-worker bot-trading-pnl-worker portfolio-performance-worker operational-alert-worker recommendation-outcome-worker research-lifecycle-worker research-candidate-automation-worker
 echo "telegram-listener와 retry/reconciliation worker를 migration 직전에 중지했습니다."
 
 CURRENT_STAGE="database migration"
@@ -212,7 +213,8 @@ docker compose up -d --no-deps --force-recreate \
   portfolio-performance-worker \
   operational-alert-worker \
   recommendation-outcome-worker \
-  research-lifecycle-worker
+  research-lifecycle-worker \
+  research-candidate-automation-worker
 
 CURRENT_STAGE="scheduler recreate"
 docker compose --profile scheduler up -d --no-deps --force-recreate ai-trade-scheduler
@@ -231,6 +233,7 @@ container_running "crypto-trading-portfolio-performance-worker" || fail "portfol
 container_running "crypto-trading-operational-alert-worker" || fail "operational-alert-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-recommendation-outcome-worker" || fail "recommendation-outcome-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-research-lifecycle-worker" || fail "research-lifecycle-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-research-candidate-automation-worker" || fail "research-candidate-automation-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-ai-trade-scheduler" || fail "ai-trade-scheduler가 실행 중이 아닙니다."
 
 CURRENT_STAGE="production LIVE safety validation"

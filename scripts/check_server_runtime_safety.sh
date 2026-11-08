@@ -137,6 +137,7 @@ container_running "crypto-trading-account-activity-sync-worker" && pass_check "a
 container_running "crypto-trading-portfolio-performance-worker" && pass_check "portfolio-performance-worker가 실행 중입니다." || fail_check "portfolio-performance-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-recommendation-outcome-worker" && pass_check "recommendation-outcome-worker가 실행 중입니다." || fail_check "recommendation-outcome-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-research-lifecycle-worker" && pass_check "research-lifecycle-worker가 실행 중입니다." || fail_check "research-lifecycle-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-research-candidate-automation-worker" && pass_check "research-candidate-automation-worker가 실행 중입니다." || fail_check "research-candidate-automation-worker가 실행 중이 아닙니다."
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
@@ -214,6 +215,14 @@ if [[ "$MODE" == "production-live" ]]; then
     fi
   else
     pass_check "production-live: Research Lifecycle은 정상 비활성 상태입니다. 거래 실행에는 영향이 없습니다."
+  fi
+  if [[ "$(get_env_value RESEARCH_CANDIDATE_AUTOMATION_ENABLED)" == "true" ]]; then
+    pass_check "production-live: 연구 후보 자동 검증이 활성화되어 있습니다."
+    if [[ "$(get_env_value RESEARCH_CANDIDATE_AUTO_REGISTRATION_ENABLED)" == "true" ]]; then
+      warn "production-live: 조건부 연구 후보 자동 등록이 활성화되어 있습니다."
+    fi
+  else
+    pass_check "production-live: 연구 후보 자동화는 정상 비활성 상태입니다."
   fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."

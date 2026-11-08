@@ -12,9 +12,9 @@ REPO_ROOT = ENGINE_ROOT.parent
 
 def test_engine_build_context_and_repository_operational_boundaries():
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert compose.count("    build:\n      context: ./trading-engine\n") == 12
+    assert compose.count("    build:\n      context: ./trading-engine\n") == 13
     assert "      context: .\n" not in compose
-    assert compose.count("    env_file:\n      - .env\n") == 12
+    assert compose.count("    env_file:\n      - .env\n") == 13
     assert "${SECRET_DIR:-.secrets}/postgres_password" in compose
     assert {
         path.name for path in (REPO_ROOT / "scripts").iterdir() if path.is_file()

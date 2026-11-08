@@ -31,7 +31,7 @@ Production 흐름은 다음과 같습니다.
 ## Production Compose 구조
 
 - 기본 infrastructure: `postgres`, 1회 실행 후 종료하는 `migrate`
-- 기본 application runtime: `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `account-activity-sync-worker`, `bot-trading-pnl-worker`, `portfolio-performance-worker`, `operational-alert-worker`, `recommendation-outcome-worker`, `research-lifecycle-worker`
+- 기본 application runtime: `telegram-listener`, `mock-order-retry-worker`, `live-order-reconciliation-worker`, `account-activity-sync-worker`, `bot-trading-pnl-worker`, `portfolio-performance-worker`, `operational-alert-worker`, `recommendation-outcome-worker`, `research-lifecycle-worker`, `research-candidate-automation-worker`
 - `scheduler` profile: `ai-trade-scheduler`
 - `manual` profile: 일회성 `ai-trade-analysis`
 
@@ -160,9 +160,12 @@ docker compose logs --tail=100 portfolio-performance-worker
 docker compose logs --tail=100 operational-alert-worker
 docker compose logs --tail=100 recommendation-outcome-worker
 docker compose logs --tail=100 research-lifecycle-worker
+docker compose logs --tail=100 research-candidate-automation-worker
 docker compose --profile scheduler logs --tail=100 ai-trade-scheduler
 bash scripts/check_server_runtime_safety.sh --production-live
 ```
+
+Phase 2 Worker의 기본 비활성 상태는 정상입니다. DB 및 .env 백업과 migration 완료 후 [Phase 2 운영 절차](OPERATIONS.md#research-candidate-automation-phase-2)에 따라 초기 관찰과 Preview를 확인합니다. 후보 등록 이후의 사람 승인과 Full LIVE 활성화는 각각 별도 단계입니다.
 
 ## Operational Alerting
 

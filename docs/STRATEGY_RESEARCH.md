@@ -213,6 +213,18 @@ python -m scripts.register_research_policy_candidate \
   --reference-snapshot-id 123
 ```
 
+## Research Candidate Automation Phase 2
+
+Phase 2는 기존 Deterministic Generator, Reference-bounded Historical Batch, Historical Screening, 서명 등록 계획을 설정된 사용자와 DYNAMIC Upbit KRW BASELINE 문맥에서 연결합니다. 동일 사용자·거래소·기준통화·스키마·정책 서명·Top N의 스냅샷만 집계합니다. 현재 정책과 맞지 않는 최신 스냅샷 또는 Full LIVE가 활성인 문맥은 보류합니다.
+
+첫 예약 실행은 최신 호환 스냅샷의 ID, captured_at, created_at을 관찰 기준으로 저장합니다. 이후 세 경계를 모두 넘은 replay 가능 스냅샷만 신규 수량에 포함합니다. 기존 데이터는 여전히 Reference의 ID·captured_at·created_at과 Outcome as-of를 충족하면 Historical Evidence에 사용할 수 있습니다. 늦게 성숙한 Outcome은 더 새로운 Reference에서 검토합니다.
+
+Context별 체크포인트에는 관찰, 최근 평가, 완료된 검토, 실제 등록을 구분해 저장합니다. 데이터 부족은 검토 기준을 전진시키지 않습니다. 예약 `PREVIEW_READY`는 등록 대기 상태로 남으며, Apply가 켜지면 신규 수량 조건을 다시 기다리지 않고 현재 Reference에서 Screening과 서명을 새로 검증합니다. 기존 서명이나 후보 목록을 재사용하지 않습니다. 작업 중 Reference가 바뀌면 해당 Apply를 거부합니다.
+
+등록 상한을 넘으면 전체 PASS 계획을 보류합니다. 같은 Reference와 같은 상한에서는 무거운 검토를 반복하지 않습니다. 등록 성공 시 후보와 실제 등록 체크포인트가 함께 커밋됩니다. 단발 Preview는 체크포인트도 쓰지 않습니다. 등록 watermark 이후의 스냅샷은 기존 Phase 1의 Forward 검증 대상으로 이어집니다.
+
+Phase 3의 연구 검토·사람 승인 편의와 Phase 4의 추가 탐색 범위는 각각 별도로 설계하고 검증합니다.
+
 ## Registration-bounded evidence
 
 Candidate registration은 trusted UTC `registered_at`, snapshot ID watermark와 captured-at watermark를 고정합니다.

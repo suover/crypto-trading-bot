@@ -1,4 +1,7 @@
 from pathlib import Path
+import re
+
+import pytest
 
 
 ENGINE_ROOT = Path(__file__).resolve().parents[1]
@@ -427,14 +430,25 @@ def test_account_activity_scripts_do_not_contain_write_endpoints_or_other_system
         assert forbidden not in combined
 
 
-def test_research_lifecycle_is_db_only_default_runtime_and_deploy_managed() -> None:
+@pytest.mark.parametrize(
+    ("name", "disabled_message"),
+    [
+        ("research-lifecycle", "Research Lifecycle은 정상 비활성 상태"),
+        ("research-candidate-automation", "연구 후보 자동화는 정상 비활성 상태"),
+    ],
+)
+def test_research_workers_are_db_only_default_runtime_and_deploy_managed(
+    name, disabled_message
+) -> None:
+    worker = f"{name}-worker"
+    module = name.replace("-", "_")
     compose = read_repository_file("docker-compose.yml")
-    service = compose.split("  research-lifecycle-worker:", 1)[1].split(
-        "\nsecrets:", 1
+    service = re.split(
+        r"\n(?:  [\w-]+:|secrets:)", compose.split(f"  {worker}:", 1)[1], maxsplit=1
     )[0]
     assert "profiles:" not in service
     assert "restart: unless-stopped" in service
-    assert "scripts.run_research_lifecycle_worker" in service
+    assert f"scripts.run_{module}_worker" in service
     assert "condition: service_healthy" in service
     assert "condition: service_completed_successfully" in service
     secrets = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
@@ -461,13 +475,13 @@ def test_research_lifecycle_is_db_only_default_runtime_and_deploy_managed() -> N
         block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
             "CURRENT_STAGE=", 1
         )[0]
-        assert "research-lifecycle-worker" in block
+        assert worker in block
     safety = read_repository_file("scripts/check_server_runtime_safety.sh")
-    assert "crypto-trading-research-lifecycle-worker" in safety
-    assert "Research Lifecycle은 정상 비활성 상태" in safety
-    combined = read_engine_file(
-        "scripts/run_research_lifecycle_worker.py"
-    ) + read_engine_file("crypto_trading_bot/services/research_lifecycle_service.py")
+    assert f"crypto-trading-{worker}" in safety
+    assert disabled_message in safety
+    combined = read_engine_file(f"scripts/run_{module}_worker.py") + read_engine_file(
+        f"crypto_trading_bot/services/{module}_service.py"
+    )
     for forbidden in (
         "UpbitClient",
         "OpenAI",

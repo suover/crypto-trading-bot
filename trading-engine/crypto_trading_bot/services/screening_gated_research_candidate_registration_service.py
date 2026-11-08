@@ -7,15 +7,16 @@ from hashlib import sha256
 import json
 from typing import Callable
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from crypto_trading_bot.db.models import StrategyReplaySnapshot
+from crypto_trading_bot.db.models import ResearchPolicyCandidate, StrategyReplaySnapshot
 from crypto_trading_bot.services.deterministic_ranking_candidate_generator_service import (
     DEFAULT_STEP,
 )
 from crypto_trading_bot.services.historical_candidate_screening_gate_service import (
     SUCCESS as SCREENING_SUCCESS,
+    HistoricalCandidateScreeningGateResult,
     HistoricalCandidateScreeningGateService,
 )
 from crypto_trading_bot.services.historical_candidate_screening_policy import PASS
@@ -46,6 +47,7 @@ STALE_REGISTRATION_STATE = "STALE_REGISTRATION_STATE"
 INVALID_SCREENING_RESULT = "INVALID_SCREENING_RESULT"
 REGISTRATION_CONFLICT = "REGISTRATION_CONFLICT"
 REGISTRATION_FAILED = "REGISTRATION_FAILED"
+REGISTRATION_CAP_EXCEEDED = "REGISTRATION_CAP_EXCEEDED"
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,10 @@ class ScreeningGatedResearchCandidateRegistrationResult:
     shared_registered_at: datetime | None
     shared_registration_snapshot_id_watermark: int | None
     shared_registration_captured_at_watermark: datetime | None
+    screening_status: str | None = None
+    fail_candidate_count: int = 0
+    insufficient_candidate_count: int = 0
+    invalid_candidate_count: int = 0
     research_only: bool = True
     historical_screening_performed: bool = True
     registration_preview_performed: bool = True
@@ -135,6 +141,7 @@ class _PreparedRegistration:
     signature: str
     scenarios: tuple[object, ...]
     preview_results: tuple[ScreeningGatedRegistrationCandidateResult, ...]
+    screening: HistoricalCandidateScreeningGateResult
 
 
 class _RegistrationAbort(Exception):
@@ -214,6 +221,7 @@ class ScreeningGatedResearchCandidateRegistrationService:
         *,
         reference_snapshot_id: int,
         expected_plan_signature: str,
+        max_registered_per_context: int | None = None,
         step: Decimal | str = DEFAULT_STEP,
     ) -> ScreeningGatedResearchCandidateRegistrationResult:
         prepared, result = self._prepare(
@@ -235,6 +243,8 @@ class ScreeningGatedResearchCandidateRegistrationService:
                 self.snapshot_lock_fn()
                 final_anchor = self.freshness_fn(reference_snapshot_id)
                 self._assert_anchor_matches_plan(final_anchor, prepared.plan)
+                if max_registered_per_context is not None:
+                    self._enforce_context_cap(prepared.plan, max_registered_per_context)
                 shared_time = self.registry_service.trusted_registration_time()
                 for candidate, scenario in zip(
                     prepared.plan.candidates, prepared.scenarios, strict=True
@@ -378,6 +388,7 @@ class ScreeningGatedResearchCandidateRegistrationService:
                 registration_plan_signature(plan),
                 scenarios,
                 candidate_results,
+                screening,
             )
             return prepared, None
         except _RegistrationAbort as error:
@@ -551,6 +562,35 @@ class ScreeningGatedResearchCandidateRegistrationService:
                 status, "registration reference changed during screening or preview"
             )
 
+    def registered_count(self, plan: ScreeningGatedRegistrationPlan) -> int:
+        row = ResearchPolicyCandidate
+        return self.session.execute(
+            select(func.count())
+            .select_from(row)
+            .where(
+                row.user_id == plan.user_id,
+                row.exchange == plan.exchange,
+                row.quote_asset == plan.quote_asset,
+                row.dataset_schema_version == plan.dataset_schema_version,
+                row.baseline_policy_signature == plan.baseline_policy_signature,
+                row.effective_top_n == plan.effective_top_n,
+            )
+        ).scalar_one()
+
+    def _enforce_context_cap(self, plan, maximum: int) -> None:
+        # Take this after the existing snapshot lock. Ordinary registry INSERTs
+        # also conflict with this lock, so a concurrent manual registration
+        # cannot slip between the final count and the atomic registration.
+        self.session.execute(
+            text(
+                "LOCK TABLE research_policy_candidates IN SHARE ROW EXCLUSIVE MODE NOWAIT"
+            )
+        )
+        if maximum < 1 or self.registered_count(plan) + len(plan.candidates) > maximum:
+            raise _RegistrationAbort(
+                REGISTRATION_CAP_EXCEEDED, "whole plan would exceed the context cap"
+            )
+
     def _lock_snapshot_writes(self) -> None:
         self.session.execute(text("LOCK TABLE strategy_replay_snapshots IN SHARE MODE"))
 
@@ -566,6 +606,7 @@ class ScreeningGatedResearchCandidateRegistrationService:
         shared_time=None,
         registration_performed=False,
     ):
+        screening = prepared.screening if prepared else screening
         plan = prepared.plan if prepared else None
         signature = prepared.signature if prepared else None
         screened = (
@@ -597,6 +638,10 @@ class ScreeningGatedResearchCandidateRegistrationService:
             plan.expected_registration_captured_at_watermark
             if registration_performed
             else None,
+            screening_status=getattr(screening, "status", None),
+            fail_candidate_count=getattr(screening, "fail_count", 0),
+            insufficient_candidate_count=getattr(screening, "insufficient_count", 0),
+            invalid_candidate_count=getattr(screening, "invalid_count", 0),
             candidate_registration_performed=registration_performed,
             database_write=registration_performed,
             historical_screening_performed=(
@@ -614,6 +659,7 @@ __all__ = [
     "INVALID_SCREENING_RESULT",
     "NO_PASS_CANDIDATES",
     "READY",
+    "REGISTRATION_CAP_EXCEEDED",
     "REGISTRATION_CONFLICT",
     "REGISTRATION_FAILED",
     "REPORT_TYPE",
