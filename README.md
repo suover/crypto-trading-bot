@@ -135,7 +135,7 @@ LIVE execution은 현재 Upbit 전용입니다. Telegram approval, execution mod
 crypto-trading-bot/
 ├── trading-engine/   # 구현된 Python trading/research engine
 ├── backend/          # Spring Boot API backend 계획용 placeholder
-├── frontend/         # React + TypeScript frontend 계획용 placeholder
+├── frontend/         # React + TypeScript 조회 전용 Mock 대시보드
 ├── docs/             # architecture, research, policy, operations 문서
 ├── scripts/          # root 운영·백업·배포 shell script
 ├── docker-compose.yml
@@ -320,6 +320,18 @@ uv run ruff check .
 ```
 
 외부 API diagnostic, Telegram 발송, authenticated Upbit check와 주문 관련 CLI는 Quick Start에 포함하지 않습니다. 목적과 safety boundary를 확인한 뒤 운영 문서의 명령만 사용하세요.
+
+### Frontend Dashboard — Mock 조회 전용
+
+다섯 주요 화면을 제공하는 React + TypeScript 대시보드를 별도 터미널의 repository root에서 실행할 수 있습니다. Node.js 24.15.0 이상인 24 LTS와 npm을 사용하며 실제 API나 `.env` 없이 동작합니다.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+미리보기는 [localhost:5173](http://localhost:5173)입니다. 화면 구성, Mock 데이터 경계와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요.
 
 ## 설정
 

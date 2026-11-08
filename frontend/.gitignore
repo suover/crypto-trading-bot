@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+# Root ignores data directories used by Python. These are source fixtures.
+!src/data/
+!src/data/**

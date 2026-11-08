@@ -1,0 +1,17 @@
+.analysis-pagination {
+  flex-wrap: wrap;
+}
+
+.analysis-pagination .pagination-actions {
+  margin-left: auto;
+}
+
+@media (max-width: 480px) {
+  .analysis-pagination {
+    row-gap: 10px;
+  }
+
+  .analysis-pagination > span {
+    flex-basis: 100%;
+  }
+}
