@@ -510,6 +510,16 @@ def process_callback_update(
         return
 
     callback_query = callback_query_value
+    data = callback_query.get("data")
+    if isinstance(data, str) and data.lstrip().lower().startswith("policy_"):
+        from crypto_trading_bot.notification.telegram_policy_callback import (
+            process_policy_callback,
+        )
+
+        process_policy_callback(
+            telegram_client, callback_query, session_factory=SessionLocal
+        )
+        return
     callback_query_id: str | None = None
     chat_id: int | None = None
     message_id: int | None = None

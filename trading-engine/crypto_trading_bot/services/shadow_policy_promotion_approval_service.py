@@ -9,7 +9,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from crypto_trading_bot.db.models import ShadowPolicyPromotionApproval
+from crypto_trading_bot.db.models import (
+    ShadowPolicyPromotionApproval,
+    ShadowReviewNotification,
+    TelegramPolicyReviewRequest,
+)
 from crypto_trading_bot.services.forward_candidate_provenance import (
     InvalidForwardCandidateProvenance,
 )
@@ -36,11 +40,17 @@ from crypto_trading_bot.services.shadow_review_gate_service import (
     shadow_review_policy_definition,
     shadow_review_policy_signature,
 )
+from crypto_trading_bot.services.telegram_policy_review_provenance import (
+    notification_matches,
+    review_evidence_fingerprint,
+    telegram_approval_context,
+)
 
 
 REPORT_TYPE = "HUMAN_APPROVED_PROMOTION_V1"
 APPROVAL_SCHEMA_VERSION = "human-approved-promotion-v1"
 APPROVAL_SOURCE = "MANUAL_CLI"
+TELEGRAM_APPROVAL_SOURCE = "TELEGRAM"
 CREATED = "CREATED"
 ALREADY_APPROVED = "ALREADY_APPROVED"
 DRY_RUN = "DRY_RUN"
@@ -146,12 +156,10 @@ _APPROVAL_PAYLOAD_FIELDS = (
 
 
 def promotion_approval_payload(value) -> dict:
-    return _canonicalize(
-        {
-            field_name: getattr(value, field_name)
-            for field_name in _APPROVAL_PAYLOAD_FIELDS
-        }
-    )
+    payload = {name: getattr(value, name) for name in _APPROVAL_PAYLOAD_FIELDS}
+    if value.approval_source == TELEGRAM_APPROVAL_SOURCE:
+        payload["telegram_review_context"] = value.telegram_review_context
+    return _canonicalize(payload)
 
 
 def promotion_approval_signature(value) -> str:
@@ -332,7 +340,54 @@ class ShadowPolicyPromotionApprovalService:
             apply=True,
         )
 
-    def _execute(self, *, candidate_id: int, expected: str | None, apply: bool):
+    def approve_telegram(
+        self, *, request: TelegramPolicyReviewRequest, review: ShadowReviewGateResult
+    ) -> ShadowPolicyPromotionApprovalResult:
+        locked = self.session.get(
+            TelegramPolicyReviewRequest, request.id, with_for_update=True
+        )
+        if (
+            locked is not request
+            or request.status != "REVIEWED"
+            or request.authorized_telegram_user_id is None
+            or request.authorized_telegram_user_id <= 0
+            or request.authorized_telegram_user_id != request.telegram_chat_id
+            or not request.confirmation_token_hash
+            or request.confirmation_expires_at is None
+            or request.reviewed_at is None
+            or not notification_matches(
+                request,
+                self.session.get(ShadowReviewNotification, request.notification_id),
+            )
+        ):
+            raise ShadowPolicyPromotionApprovalError(
+                "Telegram approval request is not verified"
+            )
+        result = self._execute(
+            candidate_id=request.candidate_id,
+            expected=review.review_decision_signature,
+            apply=True,
+            fresh_review=review,
+            telegram_request=request,
+        )
+        if result.promotion_approval_created:
+            approval = result.approval
+            request.status = "APPROVED"
+            request.approval_id = approval.id
+            request.approval_signature = approval.approval_signature
+            request.decided_at = approval.human_approved_at
+            request.updated_at = approval.human_approved_at
+        return result
+
+    def _execute(
+        self,
+        *,
+        candidate_id: int,
+        expected: str | None,
+        apply: bool,
+        fresh_review: ShadowReviewGateResult | None = None,
+        telegram_request: TelegramPolicyReviewRequest | None = None,
+    ):
         if (
             isinstance(candidate_id, bool)
             or not isinstance(candidate_id, int)
@@ -368,7 +423,11 @@ class ShadowPolicyPromotionApprovalService:
                     expected,
                 )
 
-            review = self.review_service.evaluate(candidate_id=candidate_id)
+            review = (
+                fresh_review
+                if telegram_request is not None
+                else self.review_service.evaluate(candidate_id=candidate_id)
+            )
             status = validate_shadow_review(review, candidate_id)
             if status == NO_SHADOW_ENROLLMENT:
                 return self._result(
@@ -398,7 +457,27 @@ class ShadowPolicyPromotionApprovalService:
                     expected,
                     safe_reason="review decision changed after preview",
                 )
+            evidence_changed = telegram_request is not None and (
+                review.enrollment.id != telegram_request.shadow_enrollment_id
+                or review.review_policy_signature
+                != telegram_request.review_policy_signature
+                or review_evidence_fingerprint(self.session, review)
+                != telegram_request.evidence_fingerprint
+            )
             approved_at = _utc(self.now_fn(), "human approval clock")
+            if telegram_request is not None and (
+                evidence_changed
+                or approved_at >= telegram_request.confirmation_expires_at
+                or approved_at < telegram_request.reviewed_at
+            ):
+                return self._result(
+                    candidate_id,
+                    None,
+                    review,
+                    REVIEW_DECISION_CHANGED,
+                    expected,
+                    safe_reason="Telegram review evidence or request changed",
+                )
             performance = review.performance
             if approved_at < _utc(
                 review.evaluated_at, "review evaluated_at"
@@ -410,6 +489,11 @@ class ShadowPolicyPromotionApprovalService:
                     "human approval time precedes reviewed evidence"
                 )
             approval = self._build_approval(review, approved_at)
+            if telegram_request is not None:
+                approval.approval_source = TELEGRAM_APPROVAL_SOURCE
+                approval.telegram_review_context = telegram_approval_context(
+                    telegram_request
+                )
             approval.approval_signature = promotion_approval_signature(approval)
             if self.before_insert_fn is not None:
                 self.before_insert_fn()
@@ -580,7 +664,7 @@ class ShadowPolicyPromotionApprovalService:
             or row.review_policy_definition
             != shadow_review_policy_definition(SHADOW_REVIEW_GATE_V1)
             or row.review_status != ELIGIBLE_FOR_PROMOTION_REVIEW
-            or row.approval_source != APPROVAL_SOURCE
+            or row.approval_source not in {APPROVAL_SOURCE, TELEGRAM_APPROVAL_SOURCE}
             or not isinstance(row.review_checks, list)
             or not row.review_checks
             or any(
@@ -659,6 +743,60 @@ class ShadowPolicyPromotionApprovalService:
         ):
             raise ShadowPolicyPromotionApprovalError(
                 "stored promotion approval signature does not verify"
+            )
+        self._validate_telegram_audit(row)
+
+    def _validate_telegram_audit(self, row) -> None:
+        audit = getattr(row, "telegram_review_context", None)
+        if row.approval_source == APPROVAL_SOURCE:
+            if audit is not None:
+                raise ShadowPolicyPromotionApprovalError(
+                    "manual approval has Telegram audit"
+                )
+            return
+        request_id = audit.get("request_id") if isinstance(audit, dict) else None
+        request = (
+            self.session.get(TelegramPolicyReviewRequest, request_id)
+            if (type(request_id) is int and request_id > 0)
+            else None
+        )
+        notification = (
+            self.session.get(ShadowReviewNotification, request.notification_id)
+            if request
+            else None
+        )
+        if (
+            request is None
+            or request.status != "APPROVED"
+            or request.candidate_id != row.candidate_id
+            or request.shadow_enrollment_id != row.shadow_enrollment_id
+            or request.review_policy_signature != row.review_policy_signature
+            or request.approval_id != row.id
+            or request.approval_signature != row.approval_signature
+            or not notification_matches(request, notification)
+            or (notification.user_id, notification.exchange, notification.quote_asset)
+            != (row.user_id, row.exchange, row.quote_asset)
+            or request.decided_at != row.human_approved_at
+            or request.authorized_telegram_user_id is None
+            or not 0 < request.authorized_telegram_user_id < 2**52
+            or request.authorized_telegram_user_id != request.telegram_chat_id
+            or request.reviewed_at is None
+            or request.review_expires_at is None
+            or request.confirmation_expires_at is None
+            or not notification.sent_at
+            <= request.reviewed_at
+            < request.review_expires_at
+            or not request.reviewed_at
+            <= request.decided_at
+            < request.confirmation_expires_at
+            or not isinstance(request.evidence_fingerprint, str)
+            or not request.evidence_fingerprint.startswith(
+                "telegram-shadow-evidence-v1:"
+            )
+            or telegram_approval_context(request) != audit
+        ):
+            raise ShadowPolicyPromotionApprovalError(
+                "stored Telegram approval audit does not verify"
             )
 
     def _find_existing(self, candidate_id):

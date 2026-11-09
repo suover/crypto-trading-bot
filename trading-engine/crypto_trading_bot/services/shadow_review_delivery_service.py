@@ -29,6 +29,10 @@ from crypto_trading_bot.services.shadow_review_monitor_service import (
     read_outbox_counts,
     same_enrollment_identity,
 )
+from crypto_trading_bot.services.telegram_policy_review_tokens import (
+    finalize_review_button,
+    prepare_review_button,
+)
 
 
 CLAIM_STALE_AFTER = timedelta(minutes=15)
@@ -133,9 +137,15 @@ class ShadowReviewDeliveryService:
                     result.execution_error_count += 1
                     continue
                 if claimed is not None:
-                    attempt, message = claimed
+                    attempt, message, markup = claimed
                     self._send(
-                        telegram, notification_id, attempt, destination, message, result
+                        telegram,
+                        notification_id,
+                        attempt,
+                        destination,
+                        message,
+                        result,
+                        markup=markup,
                     )
         finally:
             with self.session_factory() as session:
@@ -203,9 +213,10 @@ class ShadowReviewDeliveryService:
             )
             if attempt is None:
                 return None
+            markup = prepare_review_button(session, row, self.settings, now)
             session.commit()
             result.database_write = True
-            return attempt, message
+            return attempt, message, markup
 
     def _revalidate(self, session, row, enrollment, context):
         if (
@@ -224,12 +235,23 @@ class ShadowReviewDeliveryService:
         except ValueError, TypeError, KeyError, AttributeError:
             return INVALID_REVIEW_DATA, None
 
-    def _send(self, telegram, notification_id, attempt, destination, message, result):
+    def _send(
+        self,
+        telegram,
+        notification_id,
+        attempt,
+        destination,
+        message,
+        result,
+        *,
+        markup,
+    ):
         # The claim transaction has committed and its session is closed.
         result.external_calls = True
         message_id = None
         try:
-            reply = telegram.send_message(chat_id=destination, text=message)
+            kwargs = {"reply_markup": markup} if markup is not None else {}
+            reply = telegram.send_message(chat_id=destination, text=message, **kwargs)
             value = reply["message_id"]
             chat_id = reply["chat"]["id"]
             if (
@@ -279,5 +301,14 @@ class ShadowReviewDeliveryService:
             )
             if finalized is None:
                 raise RuntimeError("delivery claim changed before finalization")
+            if markup is not None:
+                finalize_review_button(
+                    session,
+                    notification_id=notification_id,
+                    message_id=message_id,
+                    retry_at=retry_at,
+                    now=now,
+                    settings=self.settings,
+                )
             session.commit()
             result.database_write = True

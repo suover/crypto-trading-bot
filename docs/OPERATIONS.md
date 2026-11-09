@@ -236,6 +236,19 @@ LIMIT 50;
 
 Outbox를 삭제하거나 migration을 downgrade하면 중복 방지 이력도 사라집니다. 운영 변경 전 백업에서 이력을 복구할 수 있는지 확인합니다. [자격과 상태 전이](POLICY_PROMOTION.md#shadow-review-monitoring-phase-3)를 참고하세요.
 
+## Telegram Policy Review Phase 4
+
+CI 통과 후 DB와 .env 백업, migration `e8a0c2d4f6b1`, 기존 `telegram-listener`와 `shadow-review-monitor-worker` 기동, 기존 BUY/SELL Listener 및 `--production-live` 안전 점검을 확인합니다. 두 정책 플래그는 기본 OFF입니다. 정책 Callback은 기존 Listener의 단일 polling에서 분리 처리합니다.
+
+1. 기존 `TELEGRAM_CHAT_ID`가 운영자의 봇 개인 채팅인지 확인합니다. 상세 근거는 원본 메시지에 표시되므로 그룹에서 Phase 4를 사용할 수 없습니다. 그룹 알림 운영에서는 Phase 4를 끈 상태로 Phase 3 평문 알림과 수동 CLI를 사용할 수 있습니다.
+2. `POLICY_TELEGRAM_ALLOWED_USER_IDS`에 허용된 숫자 User ID를 쉼표로 구분해 등록합니다. 실제 개인 채팅 사용자 ID가 목록에 있어야 새 알림에 검토 버튼이 붙습니다.
+3. `POLICY_TELEGRAM_REVIEW_ENABLED=true`, `POLICY_TELEGRAM_APPROVAL_ENABLED=false`로 상세 검토를 확인합니다. 설정 변경 후 두 기존 서비스를 재생성합니다. 새 Eligible 알림에서 버튼을 사용하며, 검증을 위해 Gate나 운영 데이터를 조작하지 않습니다.
+4. 별도 운영자 확인 후 `POLICY_TELEGRAM_APPROVAL_ENABLED=true`를 켭니다. 이후 새 요청에서 상세 근거를 확인한 동일 관리자가 승인 또는 거절을 확정할 수 있습니다.
+
+검토 토큰은 발송 receipt 저장부터 기본 7일, 확정 토큰은 상세 검토 저장부터 기본 15분입니다. 만료, 근거 변경, 수신 불확실 또는 상세 메시지 편집 실패로 확정 버튼을 사용할 수 없으면 최신 근거를 수동 CLI로 확인합니다. 기존 SENT 알림을 재발송하거나 토큰을 되살리지 않습니다. 승인 후 메시지 편집 실패는 승인 상태를 되돌리지 않습니다. 승인 ID와 요청 상태는 Listener의 구조화 로그 및 DB 감사 기록으로 확인합니다.
+
+문제가 생기면 승인 플래그를 끄고 두 서비스를 재생성합니다. 스키마 downgrade는 저장된 Telegram 승인이 있으면 차단됩니다. 승인·감사 이력을 삭제해 우회하지 말고, 기존 활성 정책 종료는 별도 수동 절차를 사용합니다. [정책 승인·활성화·종료 절차](POLICY_PROMOTION.md#telegram-policy-review-phase-4)
+
 ## Diagnostics
 
 아래 명령은 `trading-engine/`에서 실행합니다. 이름에 `check`가 있어도 authenticated/public API 여부가 다르므로 설명을 확인하세요.

@@ -561,8 +561,8 @@ class ShadowPolicyPromotionApproval(Base):
             name="ck_shadow_promotion_review_eligible",
         ),
         CheckConstraint(
-            "approval_source = 'MANUAL_CLI'",
-            name="ck_shadow_promotion_source_manual",
+            "(approval_source = 'MANUAL_CLI' AND telegram_review_context IS NULL) OR (approval_source = 'TELEGRAM' AND telegram_review_context IS NOT NULL AND jsonb_typeof(telegram_review_context) = 'object')",
+            name="ck_shadow_promotion_source",
         ),
         CheckConstraint(
             "shadow_evaluation_snapshot_id_ceiling > 0",
@@ -644,12 +644,93 @@ class ShadowPolicyPromotionApproval(Base):
         JSONB, nullable=False
     )
     approval_source: Mapped[str] = mapped_column(String(30), nullable=False)
+    telegram_review_context: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True)
+    )
     human_approved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
     approval_signature: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class TelegramPolicyReviewRequest(Base):
+    __tablename__ = "telegram_policy_review_requests"
+    __table_args__ = (
+        UniqueConstraint("notification_id", name="uq_tg_policy_review_notification"),
+        UniqueConstraint("review_token_hash", name="uq_tg_policy_review_token"),
+        UniqueConstraint(
+            "confirmation_token_hash", name="uq_tg_policy_confirmation_token"
+        ),
+        UniqueConstraint("approval_id", name="uq_tg_policy_review_approval"),
+        CheckConstraint(
+            "status IN ('PENDING', 'REVIEWED', 'APPROVED', 'REJECTED', 'EXPIRED', 'STALE', 'CANCELLED')",
+            name="ck_tg_policy_review_status",
+        ),
+        CheckConstraint(
+            "(telegram_message_id IS NULL) = (review_expires_at IS NULL)",
+            name="ck_tg_policy_review_receipt",
+        ),
+        CheckConstraint(
+            "(confirmation_token_hash IS NULL) = (confirmation_expires_at IS NULL)",
+            name="ck_tg_policy_review_confirmation",
+        ),
+        CheckConstraint(
+            "status NOT IN ('REVIEWED', 'APPROVED', 'REJECTED') OR (telegram_message_id > 0 AND telegram_message_id IS NOT NULL AND authorized_telegram_user_id > 0 AND authorized_telegram_user_id IS NOT NULL AND evidence_fingerprint IS NOT NULL AND reviewed_at IS NOT NULL)",
+            name="ck_tg_policy_review_evidence",
+        ),
+        CheckConstraint(
+            "status NOT IN ('APPROVED', 'REJECTED') OR (decided_at IS NOT NULL AND confirmation_token_hash IS NOT NULL)",
+            name="ck_tg_policy_review_decision",
+        ),
+        CheckConstraint(
+            "(status = 'APPROVED' AND approval_id IS NOT NULL AND approval_signature IS NOT NULL) OR (status <> 'APPROVED' AND approval_id IS NULL AND approval_signature IS NULL)",
+            name="ck_tg_policy_review_approval",
+        ),
+        Index(
+            "ix_tg_policy_review_expiry",
+            "status",
+            "review_expires_at",
+            "confirmation_expires_at",
+        ),
+        Index("ix_tg_policy_review_candidate", "candidate_id", "shadow_enrollment_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    notification_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_review_notifications.id")
+    )
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id")
+    )
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id")
+    )
+    review_policy_signature: Mapped[str] = mapped_column(String(100))
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    authorized_telegram_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    review_token_hash: Mapped[str] = mapped_column(String(64))
+    confirmation_token_hash: Mapped[str | None] = mapped_column(String(64))
+    evidence_fingerprint: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20))
+    review_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmation_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_id: Mapped[int | None] = mapped_column(
+        ForeignKey("shadow_policy_promotion_approvals.id")
+    )
+    approval_signature: Mapped[str | None] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
 
 

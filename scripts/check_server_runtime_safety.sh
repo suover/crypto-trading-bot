@@ -247,6 +247,28 @@ else:
   else
     fail_check "production-live: Shadow Review 설정 검증에 실패했습니다."
   fi
+  if policy_telegram_mode="$(docker compose exec -T telegram-listener python -c '
+from crypto_trading_bot.config.settings import get_settings
+s = get_settings()
+if not s.policy_telegram_review_enabled:
+    print("OFF")
+elif int(s.shadow_review_destination) not in s.policy_telegram_admin_ids:
+    print("NO_ADMINS")
+elif s.policy_telegram_approval_enabled:
+    print("APPROVAL")
+else:
+    print("REVIEW_ONLY")
+' 2>/dev/null)"; then
+    case "$policy_telegram_mode" in
+      OFF) pass_check "production-live: Telegram 정책 검토는 정상 비활성 상태입니다." ;;
+      NO_ADMINS) warn "production-live: 정책 수신 개인 채팅의 사용자가 관리자 목록에 없습니다." ;;
+      REVIEW_ONLY) pass_check "production-live: Telegram 정책 상세 검토만 활성화되어 있습니다." ;;
+      APPROVAL) warn "production-live: Telegram 정책 검토 및 사람 승인·거절이 활성화되어 있습니다." ;;
+      *) fail_check "production-live: Telegram 정책 설정 확인 결과가 올바르지 않습니다." ;;
+    esac
+  else
+    fail_check "production-live: Telegram 정책 설정 검증에 실패했습니다."
+  fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."
 else

@@ -175,6 +175,15 @@ class Settings(BaseSettings):
     shadow_review_notification_max_retries: int = Field(default=3, ge=0, le=10)
     shadow_review_notification_retry_delays_minutes: str = "1,5,15"
 
+    # Policy buttons share Telegram polling but use their own authorization.
+    policy_telegram_review_enabled: bool = False
+    policy_telegram_approval_enabled: bool = False
+    policy_telegram_allowed_user_ids: str = ""
+    policy_telegram_review_token_ttl_seconds: int = Field(
+        default=604800, ge=60, le=2592000
+    )
+    policy_telegram_confirmation_ttl_seconds: int = Field(default=900, ge=30, le=3600)
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
@@ -326,19 +335,30 @@ class Settings(BaseSettings):
         self.recommendation_outcome_horizon_list
         self.research_candidate_outcome_horizon_list
         self.shadow_review_retry_delays
+        self.policy_telegram_admin_ids
         if (
-            self.shadow_review_monitor_enabled
-            or self.shadow_review_telegram_notifications_enabled
+            self.policy_telegram_approval_enabled
+            and not self.policy_telegram_review_enabled
         ):
+            raise ValueError("Telegram policy approval requires policy review")
+        telegram_required = (
+            self.shadow_review_telegram_notifications_enabled
+            or self.policy_telegram_review_enabled
+        )
+        if self.shadow_review_monitor_enabled or telegram_required:
             destination = self.shadow_review_destination
-            if self.shadow_review_telegram_notifications_enabled:
+            if telegram_required:
                 if destination is None:
-                    raise ValueError("Shadow Review delivery requires TELEGRAM_CHAT_ID")
+                    raise ValueError(
+                        "Shadow Review delivery or policy review requires TELEGRAM_CHAT_ID"
+                    )
+                if self.policy_telegram_review_enabled and int(destination) < 0:
+                    raise ValueError("Telegram policy review requires a private chat")
                 if not re.fullmatch(
                     r"[1-9][0-9]*:[A-Za-z0-9_-]{20,128}", self.telegram_bot_token
                 ):
                     raise ValueError(
-                        "Shadow Review delivery requires a valid Telegram bot token format"
+                        "Shadow Review delivery or policy review requires a valid Telegram bot token format"
                     )
 
         return self
@@ -471,6 +491,21 @@ class Settings(BaseSettings):
             raise ValueError("mock order retry delays must be greater than 0")
 
         return delays
+
+    @property
+    def policy_telegram_admin_ids(self) -> frozenset[int]:
+        raw = self.policy_telegram_allowed_user_ids.strip()
+        if not raw:
+            return frozenset()
+        parts = tuple(item.strip() for item in raw.split(","))
+        if any(not re.fullmatch(r"[1-9][0-9]{0,15}", item) for item in parts):
+            raise ValueError(
+                "POLICY_TELEGRAM_ALLOWED_USER_IDS requires positive numeric IDs"
+            )
+        ids = frozenset(map(int, parts))
+        if any(value >= 2**52 for value in ids):
+            raise ValueError("Policy Telegram User ID is out of range")
+        return ids
 
     @property
     def shadow_review_destination(self) -> str | None:

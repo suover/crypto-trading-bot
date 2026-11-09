@@ -287,6 +287,8 @@ Research Candidate Automation Phase 2는 신규 스냅샷이 충분해지면 기
 
 Research Phase 3는 기존 Shadow Review Gate의 검토 가능 판정을 감시합니다. 미승인 후보의 검토 알림을 Outbox에 기록하며, Telegram 전송에는 별도 opt-in이 필요합니다. [Phase 3 운영](docs/OPERATIONS.md#shadow-review-monitoring-phase-3)을 참고하세요.
 
+Research Phase 4는 새 Shadow Review 알림에서 허용된 관리자가 상세 근거를 확인하고 사람 승인 또는 거절을 기록할 수 있게 합니다. 두 플래그는 기본 OFF이며, 정책 승인 후 LIVE 적용은 기존 별도 수동 절차를 따릅니다. [Phase 4 운영](docs/OPERATIONS.md#telegram-policy-review-phase-4)
+
 ## Production과 CI/CD
 
 Production 배포는 push 자동배포가 아닙니다. `Deploy Production` workflow는 `workflow_dispatch` 전용이며 `confirmation=DEPLOY`, `main`, exact `github.sha`, `origin/main` 일치, verified known hosts와 serialized concurrency를 요구합니다. 서버 deploy script는 preflight·backup이 완료된 뒤 scheduler를 중지하고 fast-forward, image build, migration, runtime recreate와 `--production-live` 검증을 수행합니다. 자동 Git/DB rollback은 하지 않습니다.

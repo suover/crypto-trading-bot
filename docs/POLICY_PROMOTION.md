@@ -87,7 +87,23 @@ Outbox의 중복 키는 Enrollment ID, Review Policy Signature, 정규화된 숫
 
 `PENDING` 또는 재시도 시각에 도달한 `FAILED`만 `SENDING`으로 claim합니다. Claim을 커밋한 다음 Telegram을 호출하고, 검증된 영수증이 있으면 `SENT`에 Message ID와 시각을 기록합니다. 전송 여부가 불확실하거나 오래된 claim은 `UNCERTAIN`으로 보류합니다. Telegram 성공 후 DB 저장이 실패할 수 있어 외부 API와 DB 사이의 exactly-once는 보장되지 않습니다.
 
-알림은 예를 들어 “Shadow Review Gate를 통과한 정책을 검토해 주세요. Candidate ID: 12, Shadow Enrollment ID: 5, UPBIT / KRW, Top N: 7, 상태: ELIGIBLE_FOR_PROMOTION_REVIEW”처럼 표시합니다. 실제 메시지에는 검증된 전략명, PASS 수, 근거 기준 시각 및 미승인 안내를 포함합니다. Telegram 매매 승인 Listener와는 별도이며 정책 승인과 LIVE 활성화는 기존 수동 절차를 따릅니다. Phase 4의 정책 검토 버튼·콜백은 별도 개발 범위입니다.
+알림은 검증된 전략명, PASS 수, 근거 기준 시각 및 미승인 안내를 포함합니다. Phase 4를 켜면 조건을 충족하는 새 알림에 상세 검토 버튼을 추가합니다.
+
+## Telegram Policy Review Phase 4
+
+기존 Listener가 `policy_review`, `policy_confirm`, `policy_reject`를 매매 Callback과 분리합니다. 허용 목록의 실제 `from.id`, 개인 Chat ID, 원본 Message ID, 요청 상태와 토큰 만료를 검증합니다. 처음 누르는 버튼은 상세 근거만 표시합니다. 확정이 허용된 경우에는 해당 관리자에게 묶인 별도 승인·거절 토큰을 발급합니다. 토큰 원문은 DB와 로그에 저장하지 않습니다.
+
+확정 시 현재 Gate와 Provenance를 재검증합니다. Evidence Fingerprint에는 서명된 정책·후보·Enrollment, Snapshot 경계, Selection 서명, Gross·Turnover·Cost-adjusted 근거, Check와 선택 시장 Outcome을 포함합니다. 평가 호출 시각만 달라진 경우 승인할 수 있으며 근거가 바뀌면 요청을 `STALE`로 닫습니다. 수동 CLI는 기존 Exact Review Decision Signature 계약을 유지합니다.
+
+`MANUAL_CLI`의 기존 서명 형식은 유지합니다. `TELEGRAM` 서명에는 요청·알림·관리자·메시지·검토 fingerprint를 포함합니다. 승인과 요청 종료·감사 값은 같은 트랜잭션에서 저장하며, 거절은 해당 요청에만 기록합니다.
+
+Telegram 승인 결과의 승인 ID는 `trading-engine/`에서 기존 Full LIVE Activation Preview에 전달할 수 있습니다.
+
+```bash
+uv run python -m scripts.activate_full_live_policy --promotion-approval-id <APPROVAL_ID> --user-id <USER_ID> --exchange UPBIT --quote-asset KRW
+```
+
+LIVE 적용은 별도 운영자가 Preview 결과와 기대 Approval Signature를 확인하고 기존 수동 Apply로 수행합니다. 종료와 BASELINE 복귀는 기존 `stop_full_live_policy` 수동 절차를 따릅니다. [운영 활성화](OPERATIONS.md#telegram-policy-review-phase-4)
 
 ## Research Lifecycle 자동 검증과 조건부 등록
 

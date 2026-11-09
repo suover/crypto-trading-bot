@@ -522,3 +522,21 @@ def test_shadow_review_worker_mounts_only_db_and_telegram_and_is_deploy_managed(
     assert "shadow_review_telegram_notifications_enabled" in safety
     assert "OUTBOX_ONLY) pass_check" in safety
     assert "Shadow Review 설정 검증에 실패했습니다." in safety
+
+
+def test_policy_review_reuses_single_listener_and_checks_runtime_flags():
+    compose = read_repository_file("docker-compose.yml")
+    assert compose.count("scripts.run_telegram_approval_listener") == 1
+    for worker in ("telegram-listener", "shadow-review-monitor-worker"):
+        service = re.split(
+            r"\n(?:  [\w-]+:|secrets:)",
+            compose.split(f"  {worker}:", 1)[1],
+            maxsplit=1,
+        )[0]
+        assert "env_file:\n      - .env" in service
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    assert "docker compose exec -T telegram-listener python" in safety
+    assert "policy_telegram_admin_ids" in safety and "REVIEW_ONLY) pass_check" in safety
+    assert "Telegram 정책 설정 검증에 실패했습니다." in safety
+    listener = read_engine_file("scripts/run_telegram_approval_listener.py")
+    assert listener.count("telegram_client.get_updates(") == 1
