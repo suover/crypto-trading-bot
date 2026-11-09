@@ -2,6 +2,7 @@ from hashlib import sha256
 from functools import lru_cache
 from pathlib import Path
 from decimal import Decimal
+import re
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -165,6 +166,15 @@ class Settings(BaseSettings):
         default=30, ge=1, le=10000
     )
 
+    # Shadow Review monitoring and Telegram delivery are independent opt-ins.
+    shadow_review_monitor_enabled: bool = False
+    shadow_review_telegram_notifications_enabled: bool = False
+    shadow_review_monitor_interval_seconds: int = Field(default=21600, ge=60, le=604800)
+    shadow_review_monitor_batch_size: int = Field(default=10, ge=1, le=500)
+    shadow_review_notification_max_per_cycle: int = Field(default=5, ge=1, le=100)
+    shadow_review_notification_max_retries: int = Field(default=3, ge=0, le=10)
+    shadow_review_notification_retry_delays_minutes: str = "1,5,15"
+
     # Mock order retry
     mock_order_retry_max_retries: int = 3
     mock_order_retry_delays_minutes: str = "5,15,30"
@@ -315,6 +325,21 @@ class Settings(BaseSettings):
         self.portfolio_coingecko_asset_identity_map
         self.recommendation_outcome_horizon_list
         self.research_candidate_outcome_horizon_list
+        self.shadow_review_retry_delays
+        if (
+            self.shadow_review_monitor_enabled
+            or self.shadow_review_telegram_notifications_enabled
+        ):
+            destination = self.shadow_review_destination
+            if self.shadow_review_telegram_notifications_enabled:
+                if destination is None:
+                    raise ValueError("Shadow Review delivery requires TELEGRAM_CHAT_ID")
+                if not re.fullmatch(
+                    r"[1-9][0-9]*:[A-Za-z0-9_-]{20,128}", self.telegram_bot_token
+                ):
+                    raise ValueError(
+                        "Shadow Review delivery requires a valid Telegram bot token format"
+                    )
 
         return self
 
@@ -445,6 +470,34 @@ class Settings(BaseSettings):
         if any(delay <= 0 for delay in delays):
             raise ValueError("mock order retry delays must be greater than 0")
 
+        return delays
+
+    @property
+    def shadow_review_destination(self) -> str | None:
+        value = self.telegram_chat_id.strip()
+        if not value:
+            return None
+        if not re.fullmatch(r"-?[0-9]{1,16}", value):
+            raise ValueError("Shadow Review requires a numeric Telegram chat ID")
+        number = int(value)
+        if not 0 < abs(number) < 2**52:
+            raise ValueError("Shadow Review Telegram chat ID is out of range")
+        return str(number)
+
+    @property
+    def shadow_review_retry_delays(self) -> tuple[int, ...]:
+        raw = self.shadow_review_notification_retry_delays_minutes.strip()
+        if raw and not re.fullmatch(r"[0-9]{1,5}(?:\s*,\s*[0-9]{1,5})*", raw):
+            raise ValueError(
+                "Shadow Review retry delays must be comma-separated integers"
+            )
+        delays = tuple(int(value) for value in raw.split(",")) if raw else ()
+        if len(delays) < self.shadow_review_notification_max_retries or any(
+            not 1 <= delay <= 10080 for delay in delays
+        ):
+            raise ValueError(
+                "Shadow Review retry delays must cover retries and be 1–10080 minutes"
+            )
         return delays
 
     @property

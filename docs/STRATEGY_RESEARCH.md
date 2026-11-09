@@ -225,6 +225,10 @@ Context별 체크포인트에는 관찰, 최근 평가, 완료된 검토, 실제
 
 Phase 3의 연구 검토·사람 승인 편의와 Phase 4의 추가 탐색 범위는 각각 별도로 설계하고 검증합니다.
 
+## Shadow Review Monitoring Phase 3
+
+Phase 2의 후보 등록과 Phase 1의 조건부 Shadow Enrollment 이후 기존 Shadow Selection과 Shadow Performance 증거를 사용합니다. Phase 3은 Review Gate의 연구 판단을 재사용하고 검토 가능하며 미승인인 후보를 Outbox에 기록합니다. Shadow 기준, 관측 구간, 비용과 수익률 계산은 기존 연구 규칙을 따릅니다. 알림 발송과 이후 수동 승인 흐름은 [정책 검토 문서](POLICY_PROMOTION.md#shadow-review-monitoring-phase-3)에 설명되어 있습니다.
+
 ## Registration-bounded evidence
 
 Candidate registration은 trusted UTC `registered_at`, snapshot ID watermark와 captured-at watermark를 고정합니다.

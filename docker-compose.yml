@@ -395,6 +395,41 @@ services:
         condition: service_completed_successfully
     command: ["python", "-m", "scripts.run_research_candidate_automation_worker"]
 
+  shadow-review-monitor-worker:
+    build:
+      context: ./trading-engine
+      dockerfile: Dockerfile
+    container_name: crypto-trading-shadow-review-monitor-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      APP_ENV: docker
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_NAME: crypto_trading_bot
+      DATABASE_USER: trading_user
+      DATABASE_PASSWORD_FILE: /run/secrets/postgres_password
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram_bot_token
+      OPENAI_API_KEY: ""
+      OPENAI_API_KEY_FILE: ""
+      UPBIT_ACCESS_KEY: ""
+      UPBIT_ACCESS_KEY_FILE: ""
+      UPBIT_SECRET_KEY: ""
+      UPBIT_SECRET_KEY_FILE: ""
+      COINGECKO_API_KEY: ""
+      TZ: Asia/Seoul
+    secrets:
+      - postgres_password
+      - telegram_bot_token
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command: ["python", "-m", "scripts.run_shadow_review_monitor_worker"]
+
 secrets:
   postgres_password:
     file: ${SECRET_DIR:-.secrets}/postgres_password

@@ -284,8 +284,10 @@ def test_recommendation_outcome_worker_is_opt_in_public_only_and_deploy_managed(
     None
 ):
     compose = read_repository_file("docker-compose.yml")
-    service = compose.split("  recommendation-outcome-worker:", 1)[1].split(
-        "\nsecrets:", 1
+    service = re.split(
+        r"\n(?:  [\w-]+:|secrets:)",
+        compose.split("  recommendation-outcome-worker:", 1)[1],
+        maxsplit=1,
     )[0]
     assert "scripts.run_recommendation_outcome_worker" in service
     assert "postgres_password" in service
@@ -491,3 +493,32 @@ def test_research_workers_are_db_only_default_runtime_and_deploy_managed(
         "create_order",
     ):
         assert forbidden not in combined
+
+
+def test_shadow_review_worker_mounts_only_db_and_telegram_and_is_deploy_managed():
+    worker = "shadow-review-monitor-worker"
+    compose = read_repository_file("docker-compose.yml")
+    service = compose.split(f"  {worker}:", 1)[1].split("\nsecrets:", 1)[0]
+    secrets = service.split("    secrets:", 1)[1].split("    depends_on:", 1)[0]
+    assert secrets.split() == ["-", "postgres_password", "-", "telegram_bot_token"]
+    assert "condition: service_healthy" in service
+    assert "condition: service_completed_successfully" in service
+    assert "scripts.run_shadow_review_monitor_worker" in service
+    for name in ("UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY", "OPENAI_API_KEY"):
+        assert f'{name}: ""' in service and f'{name}_FILE: ""' in service
+    deploy = read_repository_file("scripts/deploy_production.sh")
+    for stage in (
+        "all application image build",
+        "application runtime stop",
+        "default runtime recreate",
+        "post-deployment health check",
+    ):
+        block = deploy.split(f'CURRENT_STAGE="{stage}"', 1)[1].split(
+            "CURRENT_STAGE=", 1
+        )[0]
+        assert worker in block
+    safety = read_repository_file("scripts/check_server_runtime_safety.sh")
+    assert f"crypto-trading-{worker}" in safety
+    assert "shadow_review_telegram_notifications_enabled" in safety
+    assert "OUTBOX_ONLY) pass_check" in safety
+    assert "Shadow Review 설정 검증에 실패했습니다." in safety

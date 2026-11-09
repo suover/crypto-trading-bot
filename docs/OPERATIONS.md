@@ -205,6 +205,37 @@ docker compose logs --tail=100 research-candidate-automation-worker
 
 JSON의 `state_write`, `registration_status`, `created_candidate_count`를 함께 확인하면 관찰·검토와 실제 등록을 구분할 수 있습니다. `REGISTRATION_CAP_EXCEEDED`는 전체 계획 보류입니다. 새 스냅샷이 충분해지거나 상한 설정이 달라지면 전체 계획을 다시 검증합니다. [연구 경계와 체크포인트](STRATEGY_RESEARCH.md#research-candidate-automation-phase-2)를 참고하세요.
 
+## Shadow Review Monitoring Phase 3
+
+배포 전 DB와 .env를 백업합니다. 배포 후 migration, `shadow-review-monitor-worker` 기동, `--production-live` 안전 점검을 확인합니다. 처음에는 두 플래그 모두 OFF로 두고 읽기 전용 Preview를 실행합니다. Compose 명령은 저장소 루트에서 실행합니다.
+
+```bash
+docker compose run --rm --no-deps shadow-review-monitor-worker python -m scripts.run_shadow_review_monitor_worker --once
+docker compose run --rm --no-deps shadow-review-monitor-worker python -m scripts.run_shadow_review_monitor_worker --once --apply
+docker compose logs --tail=100 shadow-review-monitor-worker
+```
+
+호스트에서는 `trading-engine/`에서 `uv run python -m scripts.run_shadow_review_monitor_worker --once`로 같은 Preview를 실행합니다. `--once`는 DB와 Telegram을 변경하지 않으며, 다음 배치를 평가해 Outbox 상태를 보고합니다. `LOCK_NOT_ACQUIRED`는 다른 주기가 실행 중이라는 뜻입니다.
+
+1. `SHADOW_REVIEW_MONITOR_ENABLED=true`를 켜고 Worker를 재생성합니다. Telegram 플래그는 OFF로 유지합니다.
+2. 두 번째 명령으로 단발 Apply를 실행하거나 예약 주기를 기다립니다. 유효한 숫자 `TELEGRAM_CHAT_ID`가 있으면 적격 미승인 후보가 `PENDING`으로 기록됩니다. 수신 대상이 비어 있으면 감시만 합니다.
+3. Eligible 및 Outbox 집계를 확인하고 수신 대상과 Bot Token 설정을 검증합니다. 운영자의 별도 승인 후에만 `SHADOW_REVIEW_TELEGRAM_NOTIFICATIONS_ENABLED=true`로 전환하고 Worker를 재생성합니다.
+
+기본 주기는 21600초, 배치는 10개, 주기별 Outbox 생성과 발송 시도 상한은 각각 5개입니다. 확실한 실패는 최초 시도 이후 최대 3회 재시도하며 최소 대기 시간은 1·5·15분입니다. 실제 재시도는 다음 Worker 주기에서 처리되므로 주기 설정만큼 늦어질 수 있습니다.
+
+`UNCERTAIN`은 운영 확인 대상으로 보류합니다. 15분 이상 남은 `SENDING`은 다음 발송 주기에 `UNCERTAIN`으로 전환합니다. Telegram에서 수신 여부와 관련 로그를 확인하고, 상태를 임의로 `PENDING`으로 돌리지 않습니다. 아래 읽기 전용 조회는 토큰과 수신 대상 없이 점검할 수 있습니다.
+
+```sql
+SELECT id, candidate_id, shadow_enrollment_id, delivery_status,
+       delivery_attempt_count, safe_failure_code, updated_at
+FROM shadow_review_notifications
+WHERE delivery_status IN ('FAILED', 'SENDING', 'UNCERTAIN', 'SUPPRESSED')
+ORDER BY updated_at DESC
+LIMIT 50;
+```
+
+Outbox를 삭제하거나 migration을 downgrade하면 중복 방지 이력도 사라집니다. 운영 변경 전 백업에서 이력을 복구할 수 있는지 확인합니다. [자격과 상태 전이](POLICY_PROMOTION.md#shadow-review-monitoring-phase-3)를 참고하세요.
+
 ## Diagnostics
 
 아래 명령은 `trading-engine/`에서 실행합니다. 이름에 `check`가 있어도 authenticated/public API 여부가 다르므로 설명을 확인하세요.

@@ -463,6 +463,91 @@ class ShadowPolicyEnrollment(Base):
     )
 
 
+class ShadowReviewNotification(Base):
+    __tablename__ = "shadow_review_notifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "shadow_enrollment_id",
+            "review_policy_signature",
+            "notification_destination",
+            name="uq_shadow_review_notification_destination",
+        ),
+        CheckConstraint(
+            "delivery_status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'SUPPRESSED', 'UNCERTAIN')",
+            name="ck_shadow_review_notification_status",
+        ),
+        CheckConstraint(
+            "delivery_attempt_count >= 0", name="ck_shadow_review_notification_attempts"
+        ),
+        CheckConstraint(
+            "delivery_status <> 'SENDING' OR claimed_at IS NOT NULL",
+            name="ck_shadow_review_notification_claim",
+        ),
+        CheckConstraint(
+            "delivery_status <> 'SENT' OR (telegram_message_id IS NOT NULL AND telegram_message_id > 0 AND sent_at IS NOT NULL)",
+            name="ck_shadow_review_notification_sent",
+        ),
+        CheckConstraint(
+            "effective_top_n > 0 AND shadow_evaluation_snapshot_id_ceiling > 0",
+            name="ck_shadow_review_notification_evidence",
+        ),
+        Index(
+            "ix_shadow_review_notification_due",
+            "user_id",
+            "exchange",
+            "quote_asset",
+            "notification_destination",
+            "delivery_status",
+            "next_retry_at",
+            "id",
+        ),
+        Index("ix_shadow_review_notification_candidate", "candidate_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("research_policy_candidates.id")
+    )
+    shadow_enrollment_id: Mapped[int] = mapped_column(
+        ForeignKey("shadow_policy_enrollments.id", ondelete="CASCADE")
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    exchange: Mapped[str] = mapped_column(String(30))
+    quote_asset: Mapped[str] = mapped_column(String(20))
+    scenario_definition_signature: Mapped[str] = mapped_column(String(100))
+    baseline_policy_signature: Mapped[str] = mapped_column(String(100))
+    effective_top_n: Mapped[int] = mapped_column(Integer)
+    review_policy_schema_version: Mapped[str] = mapped_column(String(50))
+    review_policy_signature: Mapped[str] = mapped_column(String(100))
+    initial_review_decision_signature: Mapped[str] = mapped_column(String(100))
+    first_eligible_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    shadow_evaluation_snapshot_id_ceiling: Mapped[int] = mapped_column(BigInteger)
+    notification_destination: Mapped[str] = mapped_column(String(32))
+    delivery_status: Mapped[str] = mapped_column(String(16))
+    delivery_attempt_count: Mapped[int] = mapped_column(Integer, server_default="0")
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    safe_failure_code: Mapped[str | None] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class ShadowReviewMonitorState(Base):
+    __tablename__ = "shadow_review_monitor_states"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    exchange: Mapped[str] = mapped_column(String(30), primary_key=True)
+    quote_asset: Mapped[str] = mapped_column(String(20), primary_key=True)
+    cursor_enrollment_id: Mapped[int] = mapped_column(BigInteger)
+    sweep_enrollment_id_ceiling: Mapped[int] = mapped_column(BigInteger)
+
+
 class ShadowPolicyPromotionApproval(Base):
     __tablename__ = "shadow_policy_promotion_approvals"
     __table_args__ = (

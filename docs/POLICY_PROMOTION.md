@@ -79,6 +79,16 @@ python -m scripts.enroll_shadow_policy --candidate-id <ID> --apply
 
 Enrollment는 runtime activation이 아니며 Market Universe, AI, Telegram, 주문 또는 LIVE policy를 바꾸지 않습니다.
 
+## Shadow Review Monitoring Phase 3
+
+Phase 2가 등록하고 Phase 1이 Shadow에 등록한 후보는 기존 Shadow Selection 및 Performance 흐름에서 평가됩니다. Phase 3 Worker는 Enrollment ID를 제한된 배치로 순회하고 기존 Shadow Review Gate를 실행합니다. 정책과 결정 서명, 저장된 Enrollment 및 성과 근거, 검증 항목 전체를 확인합니다. 현재 설정과 기준 정책·Top N이 일치하며 활성 Full LIVE 정책과 충돌하지 않는 미승인 후보만 알림 대상으로 삼습니다.
+
+Outbox의 중복 키는 Enrollment ID, Review Policy Signature, 정규화된 숫자 수신 대상입니다. Decision Signature가 새 증거로 바뀌어도 동일 키의 이력은 유지합니다. 전송 직전에는 현재 Gate 및 Human Approval을 다시 확인합니다. 현재 자격이 사라진 항목은 `SUPPRESSED`로 종료합니다.
+
+`PENDING` 또는 재시도 시각에 도달한 `FAILED`만 `SENDING`으로 claim합니다. Claim을 커밋한 다음 Telegram을 호출하고, 검증된 영수증이 있으면 `SENT`에 Message ID와 시각을 기록합니다. 전송 여부가 불확실하거나 오래된 claim은 `UNCERTAIN`으로 보류합니다. Telegram 성공 후 DB 저장이 실패할 수 있어 외부 API와 DB 사이의 exactly-once는 보장되지 않습니다.
+
+알림은 예를 들어 “Shadow Review Gate를 통과한 정책을 검토해 주세요. Candidate ID: 12, Shadow Enrollment ID: 5, UPBIT / KRW, Top N: 7, 상태: ELIGIBLE_FOR_PROMOTION_REVIEW”처럼 표시합니다. 실제 메시지에는 검증된 전략명, PASS 수, 근거 기준 시각 및 미승인 안내를 포함합니다. Telegram 매매 승인 Listener와는 별도이며 정책 승인과 LIVE 활성화는 기존 수동 절차를 따릅니다. Phase 4의 정책 검토 버튼·콜백은 별도 개발 범위입니다.
+
 ## Research Lifecycle 자동 검증과 조건부 등록
 
 `research-lifecycle-worker`는 등록된 `ResearchPolicyCandidate`를 ID 순서로 배치 조회하고 기존 Promotion Gate와 Shadow Enrollment 서비스를 실행합니다. [Phase 2 Worker](OPERATIONS.md#research-candidate-automation-phase-2)가 등록한 후보도 이 흐름에 들어가며, Forward 표본은 등록 watermark 이후로 제한됩니다. Phase 1은 PostgreSQL만 사용합니다.

@@ -138,6 +138,7 @@ container_running "crypto-trading-portfolio-performance-worker" && pass_check "p
 container_running "crypto-trading-recommendation-outcome-worker" && pass_check "recommendation-outcome-worker가 실행 중입니다." || fail_check "recommendation-outcome-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-research-lifecycle-worker" && pass_check "research-lifecycle-worker가 실행 중입니다." || fail_check "research-lifecycle-worker가 실행 중이 아닙니다."
 container_running "crypto-trading-research-candidate-automation-worker" && pass_check "research-candidate-automation-worker가 실행 중입니다." || fail_check "research-candidate-automation-worker가 실행 중이 아닙니다."
+container_running "crypto-trading-shadow-review-monitor-worker" && pass_check "shadow-review-monitor-worker가 실행 중입니다." || fail_check "shadow-review-monitor-worker가 실행 중이 아닙니다."
 
 if [[ "$MODE" == "production-live" ]]; then
   container_running "crypto-trading-ai-trade-scheduler" && pass_check "ai-trade-scheduler가 실행 중입니다." || fail_check "Production LIVE에서는 ai-trade-scheduler가 실행 중이어야 합니다."
@@ -223,6 +224,28 @@ if [[ "$MODE" == "production-live" ]]; then
     fi
   else
     pass_check "production-live: 연구 후보 자동화는 정상 비활성 상태입니다."
+  fi
+  if shadow_review_mode="$(docker compose exec -T shadow-review-monitor-worker python -c '
+from crypto_trading_bot.config.settings import get_settings
+s = get_settings()
+if not s.shadow_review_monitor_enabled:
+    print("OFF")
+elif s.shadow_review_telegram_notifications_enabled:
+    print("DELIVERY")
+elif s.shadow_review_destination is None:
+    print("SCAN_ONLY")
+else:
+    print("OUTBOX_ONLY")
+' 2>/dev/null)"; then
+    case "$shadow_review_mode" in
+      OFF) pass_check "production-live: Shadow Review Monitor는 정상 비활성 상태입니다." ;;
+      SCAN_ONLY) pass_check "production-live: Shadow Review 감시만 활성화되어 있습니다. 수신 대상은 미설정입니다." ;;
+      OUTBOX_ONLY) pass_check "production-live: Shadow Review Outbox만 활성화되어 있습니다." ;;
+      DELIVERY) warn "production-live: Shadow Review Telegram 알림 발송이 활성화되어 있습니다." ;;
+      *) fail_check "production-live: Shadow Review 설정 확인 결과가 올바르지 않습니다." ;;
+    esac
+  else
+    fail_check "production-live: Shadow Review 설정 검증에 실패했습니다."
   fi
 elif container_running "crypto-trading-ai-trade-scheduler"; then
   fail_check "ai-trade-scheduler가 실행 중입니다. 제한적 LIVE 점검에서는 꺼져 있어야 합니다."

@@ -243,6 +243,68 @@ def _valid_evidence_provenance(value) -> bool:
     )
 
 
+def validate_shadow_review(review: ShadowReviewGateResult, candidate_id: int) -> str:
+    if review.result_type != REVIEW_RESULT_TYPE or review.candidate_id != candidate_id:
+        raise ShadowPolicyPromotionApprovalError("review identity does not align")
+    if review.status == NO_SHADOW_ENROLLMENT:
+        return review.status
+    if review.status not in {
+        INVALID_REVIEW_DATA,
+        INSUFFICIENT_DATA,
+        NOT_ELIGIBLE,
+        ELIGIBLE_FOR_PROMOTION_REVIEW,
+    }:
+        raise ShadowPolicyPromotionApprovalError("review status is unsupported")
+    if (
+        review.review_policy_schema_version != SHADOW_REVIEW_GATE_V1.schema_version
+        or review.review_policy != SHADOW_REVIEW_GATE_V1
+        or review.review_policy_signature
+        != shadow_review_policy_signature(SHADOW_REVIEW_GATE_V1)
+        or review.review_policy_definition
+        != shadow_review_policy_definition(SHADOW_REVIEW_GATE_V1)
+        or review.promotion_performed
+        or review.database_write
+        or review.external_calls
+        or review.live_policy_change
+        or review.shadow_runtime_changed
+        or review.statistical_inference_performed
+    ):
+        raise ShadowPolicyPromotionApprovalError("review safety provenance is invalid")
+    if review.status == INVALID_REVIEW_DATA:
+        return review.status
+    if not (
+        review.enrollment is not None
+        and review.enrollment.candidate_id == candidate_id
+        and review.pre_shadow_gate_provenance_verified
+        and review.shadow_performance_provenance_verified
+        and review.sample_sufficiency_assessed
+        and review.policy_decision_performed
+        and review.performance is not None
+        and review.performance.enrollment.id == review.enrollment.id
+        and review.performance.candidate_id == candidate_id
+        and review.review_decision_signature == shadow_review_decision_signature(review)
+    ):
+        raise ShadowPolicyPromotionApprovalError("review decision does not verify")
+    if review.status == ELIGIBLE_FOR_PROMOTION_REVIEW and (
+        not review.eligible_for_promotion_review
+        or not review.all_checks
+        or review.invalid_checks
+        or review.insufficient_checks
+        or review.failed_checks
+        or tuple(review.passed_checks) != tuple(review.all_checks)
+        or any(check.status != "PASS" for check in review.all_checks)
+    ):
+        raise ShadowPolicyPromotionApprovalError(
+            "eligible review is internally inconsistent"
+        )
+    if (
+        review.status != ELIGIBLE_FOR_PROMOTION_REVIEW
+        and review.eligible_for_promotion_review
+    ):
+        raise ShadowPolicyPromotionApprovalError("non-eligible review is inconsistent")
+    return review.status
+
+
 class ShadowPolicyPromotionApprovalService:
     def __init__(
         self,
@@ -307,7 +369,7 @@ class ShadowPolicyPromotionApprovalService:
                 )
 
             review = self.review_service.evaluate(candidate_id=candidate_id)
-            status = self._validate_review(review, candidate_id)
+            status = validate_shadow_review(review, candidate_id)
             if status == NO_SHADOW_ENROLLMENT:
                 return self._result(
                     candidate_id, None, review, NO_SHADOW_ENROLLMENT, expected
@@ -420,75 +482,6 @@ class ShadowPolicyPromotionApprovalService:
             )
         ):
             raise ReplayInputError("expected review decision signature is invalid")
-
-    def _validate_review(self, review, candidate_id):
-        if (
-            review.result_type != REVIEW_RESULT_TYPE
-            or review.candidate_id != candidate_id
-        ):
-            raise ShadowPolicyPromotionApprovalError("review identity does not align")
-        if review.status == NO_SHADOW_ENROLLMENT:
-            return review.status
-        if review.status not in {
-            INVALID_REVIEW_DATA,
-            INSUFFICIENT_DATA,
-            NOT_ELIGIBLE,
-            ELIGIBLE_FOR_PROMOTION_REVIEW,
-        }:
-            raise ShadowPolicyPromotionApprovalError("review status is unsupported")
-        if (
-            review.review_policy_schema_version != SHADOW_REVIEW_GATE_V1.schema_version
-            or review.review_policy != SHADOW_REVIEW_GATE_V1
-            or review.review_policy_signature
-            != shadow_review_policy_signature(SHADOW_REVIEW_GATE_V1)
-            or review.review_policy_definition
-            != shadow_review_policy_definition(SHADOW_REVIEW_GATE_V1)
-            or review.promotion_performed
-            or review.database_write
-            or review.external_calls
-            or review.live_policy_change
-            or review.shadow_runtime_changed
-            or review.statistical_inference_performed
-        ):
-            raise ShadowPolicyPromotionApprovalError(
-                "review safety provenance is invalid"
-            )
-        if review.status == INVALID_REVIEW_DATA:
-            return review.status
-        if not (
-            review.enrollment is not None
-            and review.enrollment.candidate_id == candidate_id
-            and review.pre_shadow_gate_provenance_verified
-            and review.shadow_performance_provenance_verified
-            and review.sample_sufficiency_assessed
-            and review.policy_decision_performed
-            and review.performance is not None
-            and review.performance.enrollment.id == review.enrollment.id
-            and review.performance.candidate_id == candidate_id
-            and review.review_decision_signature
-            == shadow_review_decision_signature(review)
-        ):
-            raise ShadowPolicyPromotionApprovalError("review decision does not verify")
-        if review.status == ELIGIBLE_FOR_PROMOTION_REVIEW and (
-            not review.eligible_for_promotion_review
-            or not review.all_checks
-            or review.invalid_checks
-            or review.insufficient_checks
-            or review.failed_checks
-            or tuple(review.passed_checks) != tuple(review.all_checks)
-            or any(check.status != "PASS" for check in review.all_checks)
-        ):
-            raise ShadowPolicyPromotionApprovalError(
-                "eligible review is internally inconsistent"
-            )
-        if (
-            review.status != ELIGIBLE_FOR_PROMOTION_REVIEW
-            and review.eligible_for_promotion_review
-        ):
-            raise ShadowPolicyPromotionApprovalError(
-                "non-eligible review is inconsistent"
-            )
-        return review.status
 
     def _build_approval(self, review, approved_at):
         enrollment = review.enrollment
