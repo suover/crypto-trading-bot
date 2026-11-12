@@ -1,0 +1,33 @@
+server:
+  address: 127.0.0.1
+  port: 8080
+  error:
+    include-message: never
+    include-stacktrace: never
+spring:
+  application:
+    name: crypto-trading-bot-backend
+  datasource:
+    url: ${BACKEND_DB_URL}
+    username: ${BACKEND_DB_USERNAME}
+    password: ${BACKEND_DB_PASSWORD}
+    hikari:
+      read-only: true
+      maximum-pool-size: 5
+  sql:
+    init:
+      mode: never
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+backend:
+  trading-user-id: ${BACKEND_TRADING_USER_ID}
+  exchange: ${BACKEND_EXCHANGE:UPBIT}
+  quote-asset: ${BACKEND_QUOTE_ASSET:KRW}
+  admin-username: ${BACKEND_ADMIN_USERNAME}
+  admin-password-hash: ${BACKEND_ADMIN_PASSWORD_HASH}

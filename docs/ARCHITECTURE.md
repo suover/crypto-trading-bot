@@ -7,10 +7,12 @@
 | 경로 | 상태 | 책임 |
 | --- | --- | --- |
 | `trading-engine/` | 구현됨 | Python trading, analytics, research engine |
-| `backend/` | 계획됨 | Spring Boot API placeholder |
-| `frontend/` | 계획됨 | React/TypeScript placeholder |
+| `backend/` | 구현됨 | Java 21 / Spring Boot Research 조회 전용 API |
+| `frontend/` | 구현됨 | React/TypeScript Mock 조회 대시보드, API 연동은 별도 단계 |
 
 Root에는 Compose, 운영 shell script, 문서, `.env.example`이 있습니다. Python package는 `trading-engine/crypto_trading_bot`, 실행 module은 `trading-engine/scripts`입니다.
+
+Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 QueryDSL을 사용합니다. 기존 PostgreSQL 스키마의 소유자는 계속 Python/Alembic이며 Java는 `ddl-auto=validate`, SELECT 전용 DB 역할, 읽기 전용 트랜잭션을 사용합니다. 서버에 설정된 active Trading User·exchange·quote 범위만 조회하고, 모든 Research GET API는 단일 관리자 HTTP Basic 인증을 요구합니다. 기본 바인딩은 localhost이며 외부 공개 시 TLS가 필수입니다. 저장된 Gate 상태는 과거 기록으로만 반환하며 평가·등록·승인·활성화·주문을 하지 않습니다. Production Compose와 frontend 연동은 변경하지 않았습니다. 자세한 계약은 [Research Read API v1](../backend/docs/RESEARCH_READ_API_V1.md)을 참고하세요.
 
 ## Package structure
 

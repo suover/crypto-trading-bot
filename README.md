@@ -134,7 +134,7 @@ LIVE execution은 현재 Upbit 전용입니다. Telegram approval, execution mod
 ```text
 crypto-trading-bot/
 ├── trading-engine/   # 구현된 Python trading/research engine
-├── backend/          # Spring Boot API backend 계획용 placeholder
+├── backend/          # Spring Boot Research 조회 전용 API
 ├── frontend/         # React + TypeScript 조회 전용 Mock 대시보드
 ├── docs/             # architecture, research, policy, operations 문서
 ├── scripts/          # root 운영·백업·배포 shell script
@@ -293,7 +293,7 @@ Research Phase 4는 새 Shadow Review 알림에서 허용된 관리자가 상세
 
 Production 배포는 push 자동배포가 아닙니다. `Deploy Production` workflow는 `workflow_dispatch` 전용이며 `confirmation=DEPLOY`, `main`, exact `github.sha`, `origin/main` 일치, verified known hosts와 serialized concurrency를 요구합니다. 서버 deploy script는 preflight·backup이 완료된 뒤 scheduler를 중지하고 fast-forward, image build, migration, runtime recreate와 `--production-live` 검증을 수행합니다. 자동 Git/DB rollback은 하지 않습니다.
 
-CI는 Ubuntu 24.04에서 Python/uv locked dependency, PostgreSQL migration, Ruff format/lint, Pytest, shell syntax, Docker Compose config와 runtime image build를 검사합니다.
+CI는 Ubuntu 24.04에서 Python/uv locked dependency, PostgreSQL migration, Ruff format/lint, Pytest, shell syntax, Docker Compose config와 runtime image build를 검사합니다. 별도 Java Job은 Gradle Wrapper로 QueryDSL 생성, 단위·API·보안 테스트, 실제 Alembic 스키마를 사용한 PostgreSQL 17 Testcontainers 테스트와 JAR 빌드를 수행합니다.
 
 운영 절차는 [Operations](docs/OPERATIONS.md), 배포와 LIVE runtime은 [Production LIVE](docs/PRODUCTION_LIVE.md)가 source of truth입니다.
 
@@ -342,6 +342,8 @@ npm run dev
 미리보기는 [localhost:5173](http://localhost:5173)입니다. 화면 구성, Mock 데이터 경계와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요.
 
 ## 설정
+
+Java Backend는 별도의 관리자 인증과 SELECT 전용 DB 계정으로 Research API 5개를 제공합니다. Python/Alembic 스키마를 검증만 하며, Production Compose에는 추가되지 않았습니다. Java 21 로컬 실행·검증은 [Backend README](backend/README.md), 요청·응답 계약은 [Research Read API v1](backend/docs/RESEARCH_READ_API_V1.md)을 참고하세요. React 대시보드는 아직 Mock 데이터를 사용합니다.
 
 설정의 source of truth는 [.env.example](.env.example)과 [`Settings`](trading-engine/crypto_trading_bot/config/settings.py)입니다.
 

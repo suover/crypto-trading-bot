@@ -98,3 +98,37 @@ jobs:
 
       - name: Build Docker runtime images
         run: docker compose --profile manual --profile scheduler build
+
+  backend:
+    name: Java Backend and Alembic Compatibility
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "trading-engine/.python-version"
+
+      - name: Install Alembic dependencies
+        working-directory: trading-engine
+        run: uv sync --dev --locked
+
+      - name: Compile, test and build backend
+        working-directory: backend
+        run: bash ./gradlew --no-daemon clean build

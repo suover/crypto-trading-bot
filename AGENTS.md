@@ -3,8 +3,8 @@
 ## Project
 Repository applications:
 - `trading-engine/`: Python 3.14 trading/research engine using PostgreSQL, Upbit, OpenAI, and Telegram.
-- `backend/`: future Spring Boot API backend (placeholder only).
-- `frontend/`: future React/TypeScript frontend (placeholder only).
+- `backend/`: Java 21 / Spring Boot Research Read API; read-only JPA/QueryDSL against the Alembic-owned PostgreSQL schema.
+- `frontend/`: React/TypeScript dashboard with mock read data; backend integration is a separate phase.
 
 Docker Compose, operational shell scripts, documentation, and environment/secret files remain at the repository root.
 
@@ -29,6 +29,8 @@ Treat live trading and secrets as safety-critical.
 - Use `Decimal` for monetary and trading calculations where the project already does so.
 - Add or update tests for behavioral changes.
 - Tests must not depend on real external APIs or real orders.
+- Run backend commands in `backend/` with the Gradle Wrapper. Backend integration tests require Docker, uv and Python 3.14; they create isolated PostgreSQL 17 containers and apply the existing Alembic migrations.
+- Backend schema validation must remain `ddl-auto=validate`; do not introduce Java migrations or schema writes.
 
 ## Required Validation
 After code changes, run:
