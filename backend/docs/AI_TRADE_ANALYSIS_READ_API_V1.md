@@ -4,7 +4,7 @@
 
 ## 실행과 접근 경계
 
-Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 기존 HTTP Basic ADMIN 인증과 서버에 설정된 active user/exchange/quote scope를 요구합니다. Vite/Frontend 연결은 별도 단계이며 이번 API를 기존 Vite proxy에 추가하지 않습니다. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
+Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 기존 HTTP Basic ADMIN 인증과 서버에 설정된 active user/exchange/quote scope를 요구합니다. Frontend는 개발 환경의 명시적 opt-in으로 이 GET 3개만 로컬 Vite proxy를 통해 조회합니다. 실행 절차는 [Frontend README](../../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
 
 `@Transactional(readOnly=true, isolation=REPEATABLE_READ)`, SELECT-only Repository, `@Immutable`, `ddl-auto=validate`를 유지합니다. 한 HTTP 요청 안의 count/items/관련 기록은 같은 DB snapshot을 사용합니다. 별도 HTTP 요청 사이의 동일 snapshot은 보장하지 않으며 각 응답에 `generatedAt`을 제공합니다.
 

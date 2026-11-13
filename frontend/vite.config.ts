@@ -16,6 +16,13 @@ export default defineConfig(({ command, mode }) => {
     mode === 'development' &&
     loadEnv(mode, process.cwd(), 'VITE_ENABLE_OVERVIEW_API').VITE_ENABLE_OVERVIEW_API === 'true';
   const overviewPath = /^\/api\/v1\/overview\/(summary|positions|performance|recommendations)$/;
+  const analysisEnabled =
+    command === 'serve' &&
+    mode === 'development' &&
+    loadEnv(mode, process.cwd(), 'VITE_ENABLE_AI_ANALYSIS_API').VITE_ENABLE_AI_ANALYSIS_API ===
+      'true';
+  const analysisPath =
+    /^\/api\/v1\/ai-trade-analysis\/recommendations(?:\/[1-9]\d{0,18}(?:\/candidates)?)?$/;
   return {
     plugins: [
       react(),
@@ -30,7 +37,8 @@ export default defineConfig(({ command, mode }) => {
                 request.method !== 'GET' ||
                 !(
                   (enabled && researchPath.test(path)) ||
-                  (overviewEnabled && overviewPath.test(path))
+                  (overviewEnabled && overviewPath.test(path)) ||
+                  (analysisEnabled && analysisPath.test(path))
                 )
               ) {
                 response.statusCode = 403;
@@ -49,6 +57,15 @@ export default defineConfig(({ command, mode }) => {
       port: 5173,
       strictPort: true,
       proxy: {
+        ...(analysisEnabled
+          ? {
+              '/api/v1/ai-trade-analysis/': {
+                target: 'http://127.0.0.1:8080',
+                followRedirects: false,
+                proxyTimeout: 5000,
+              },
+            }
+          : {}),
         ...(enabled
           ? {
               '/api/v1/research/': {

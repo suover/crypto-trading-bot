@@ -15,3 +15,16 @@
     flex-basis: 100%;
   }
 }
+.analysis-api .overview-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+.analysis-api .stat-value,
+.analysis-api .reason-text {
+  overflow-wrap: anywhere;
+}
+.analysis-api details summary {
+  cursor: pointer;
+}

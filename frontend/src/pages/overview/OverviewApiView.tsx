@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
+import { useAnalysisSource } from '@/hooks/use-analysis-source';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { EmptyState, MetricCard, Panel, SectionHeading, StatusBadge } from '@/components/common';
@@ -300,6 +302,7 @@ function PerformanceHistory({ expectedScope }: { expectedScope?: Scope }) {
   );
 }
 function Recommendations({ expectedScope }: { expectedScope?: Scope }) {
+  const analysis = useAnalysisSource();
   const [filter, setFilter] = useState<RecommendationFilter>({ action: '', page: 0, size: 10 });
   const query = useOverviewRecommendations(filter);
   return (
@@ -381,6 +384,17 @@ function Recommendations({ expectedScope }: { expectedScope?: Scope }) {
                         <td>{r.aiModel ?? '미기록'}</td>
                         <td>
                           <code>{r.status}</code>
+                          {analysis.available && (
+                            <Link
+                              className="text-button"
+                              to={`/ai-analysis?recommendation=${r.id}`}
+                              state={{ analysisReference: { id: r.id, scope: data.scope } }}
+                              onClick={() => analysis.setSource('api')}
+                              aria-label={`${r.id} 실제 추천 상세`}
+                            >
+                              상세 조회
+                            </Link>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -396,8 +410,8 @@ function Recommendations({ expectedScope }: { expectedScope?: Scope }) {
       </QueryContent>
       <p className="small text-muted">
         Confidence는 검증된 성공 확률이 아니고 trade ratio는 실제 체결 비율이 아닙니다. 추천
-        status만으로 실제 체결을 확정하지 않습니다. 실제 상세 조회 API가 없어 DEMO 상세로 연결하지
-        않습니다.
+        status만으로 실제 체결을 확정하지 않습니다. AI Analysis 로컬 API가 활성화된 경우에만 실제
+        추천 상세로 연결합니다. DEMO 상세로 대체하지 않습니다.
       </p>
     </Panel>
   );

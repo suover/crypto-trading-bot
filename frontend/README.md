@@ -1,8 +1,8 @@
 # Crypto Trading Bot Dashboard
 
-Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경의 Research와 Overview 화면은 각각 명시적으로 LOCAL API 모드로 전환할 수 있습니다.
+Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경의 Research, Overview, AI Analysis 화면은 각각 명시적으로 LOCAL API 모드로 전환할 수 있습니다.
 
-DEMO의 모든 금액·상태·시각은 합성 데이터이며 실제 API를 호출하지 않습니다. LOCAL API는 기존 로컬 Spring Boot Research / Overview GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
+DEMO의 모든 금액·상태·시각은 합성 데이터이며 실제 API를 호출하지 않습니다. LOCAL API는 로컬 Spring Boot Research / Overview / AI Trade Analysis GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
 
 ## 기술 스택
 
@@ -53,7 +53,7 @@ npm run preview
 | `/research`    | 전략 연구     | Runtime 정책, 11단계 lifecycle, 후보 목록, 가중치 비교, Historical/Forward/Shadow evidence, Gate 상세 |
 | `/operations`  | 운영 모니터링 | 모의 worker 상태, 분석 일정, Research Lifecycle 처리 현황, 이벤트와 경고                              |
 
-위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시합니다. Research와 Overview의 선택은 독립적이며 AI Analysis / Portfolio / Operations는 DEMO입니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
+위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시합니다. Research, Overview, AI Analysis의 선택은 독립적이며 Portfolio / Operations는 DEMO입니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
 
 Sidebar는 데스크톱에서 접을 수 있고 모바일에서는 Drawer로 열립니다. 모바일 메뉴를 선택하면 Drawer가 닫힙니다. 다크 테마가 기본이며 라이트 테마로 전환할 수 있습니다. 선택한 테마만 브라우저 localStorage에 저장합니다.
 
@@ -214,11 +214,35 @@ Summary가 정상 조회된 뒤 Positions를 조회합니다. Scope가 다르면
 
 PARTIAL의 known total을 전체 총액으로 대체하지 않습니다. BASELINE은 기준점으로 표시하고, PARTIAL·새 BASELINE·periodStartAt 연속성을 확인할 수 없는 구간은 선으로 잇지 않습니다. 차트는 현재 조회 페이지의 기록만 사용하며 90개 row를 90일이나 전체 이력으로 표현하지 않습니다. 페이지 간 임의 누적 수익률 계산이나 보간도 없습니다. 긴 표는 내부 스크롤로 조회합니다.
 
-UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분하고 실제 상세 대신 DEMO 상세로 연결하지 않습니다. 현재 Runtime 정책/Gate·worker 상태·주문/체결 상세 등은 **현재 API 미제공**으로 표시합니다.
+UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분합니다. AI Analysis opt-in이 활성화된 경우 실제 추천 상세로 이동하며 DEMO 상세로 대체하지 않습니다. 현재 Runtime 정책/Gate·worker 상태·주문/체결 상세 등은 **현재 API 미제공**으로 표시합니다.
 
 조회 오류·401·403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치를 구분하며 오류 원문을 노출하지 않습니다. 오류 시 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
 
 Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium HTTP Basic 인증/4개 GET/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 모든 브라우저의 네이티브 인증 창 수동 검증이나 Production 인증 검증을 대신하지 않습니다.
+
+## AI Analysis LOCAL API v1
+
+기본 DEMO를 유지하며 `AnalysisDemoView`와 실제 조회용 DTO/parser/client/Query/view를 분리합니다. [Backend API 계약](../backend/docs/AI_TRADE_ANALYSIS_READ_API_V1.md)의 GET 3개만 사용합니다. 로컬 Backend의 SELECT 전용 계정에는 [최소 컬럼 권한](../backend/README.md)이 필요하며, 권한이나 운영 DB를 Frontend가 변경하지 않습니다.
+
+Repository root에서 파일 수정 없이 실행:
+
+```powershell
+cd frontend
+$env:VITE_ENABLE_AI_ANALYSIS_API = "true"
+try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_AI_ANALYSIS_API }
+```
+
+Unix에서는 `cd frontend` 후 `VITE_ENABLE_AI_ANALYSIS_API=true npm run dev`를 사용합니다. flag는 기본 OFF이며 development에서만 허용합니다. `/ai-analysis`에서 **LOCAL API · READ ONLY**를 선택합니다. 401이면 **새 탭에서 관리자 인증**으로 같은 origin의 `/api/v1/ai-trade-analysis/recommendations`를 열어 브라우저 HTTP Basic 창에서 인증한 뒤 다시 시도합니다. React는 비밀번호를 수집·저장하지 않습니다. Production build, preview, 외부 backend target, redirect, 쓰기 method는 허용하지 않습니다.
+
+- 목록: 추천 생성 시각의 KST 기간, 정확한 market, BUY/SELL/HOLD, 서버 pagination. 최신순 고정이며 승인 상태 필터·전체 행동별 집계는 제공하지 않습니다. 목록 행마다 상세를 호출하지 않습니다.
+- 상세 주소는 `?recommendation=<추천 ID>`입니다. DEMO의 `?analysis=<분석 ID>`와 다릅니다. 직접 주소 입력·reload는 DEMO 기본값을 유지하며 API를 명시적으로 선택해야 실제 상세를 읽습니다. Overview의 실제 추천 상세 링크는 이 flag가 켜진 경우만 제공하고 API 모드로 전환합니다.
+- 추천과 분석 실행 ID, 최종 판단 사유, 추천 sizing, 당시 후보, 승인 기록, MOCK/LIVE 시도와 체결 요약을 구분합니다. 최종 판단 사유는 애플리케이션 안전 규칙 반영 후 기록이며 원본 AI 응답이 아닙니다.
+- Universe의 VERIFIED / NO_REFERENCE / INVALID_REFERENCE를 구분하고, VERIFIED일 때만 후보 페이지를 조회합니다. 상세·후보 응답의 사용자 범위와 Universe 실행/선택 후보 ID를 대조합니다. 불일치하면 해당 영역을 차단하고 다른 분석으로 대체하지 않습니다. 별도 HTTP 요청이 하나의 DB snapshot이라는 보장은 없습니다.
+- 금액·수량·ID는 문자열, 큰 count는 lossless JSON/BigInt로 유지합니다. 지표는 원본 단위이며 저장 당시 가격을 현재가로 표현하지 않습니다. 없는 지표는 미기록, 데이터 품질과 파싱 품질은 별도로 표시합니다. 후보 eligibility는 분석 당시 값입니다.
+- HOLD는 정상적인 관망 판단, LIVE_UNKNOWN은 미확정, LIVE_EXECUTED_CANCELLED는 **실거래 체결 확인 (미체결 잔량 취소)**로 표시합니다. 미기록 체결을 0으로 채우거나 추천값으로 보충하지 않습니다. 검증된 관련 기록 부재는 실제 주문 부재의 증명이 아닙니다.
+- API 실패는 DEMO로 대체하지 않습니다. 새 요청 중/갱신 실패에는 이전 성공값을 현재 정상값처럼 표시하지 않습니다. 화면·상세·출처 전환 시 요청을 취소하고 미사용 cache를 제거합니다. 자동 polling/자동 오류 retry는 없습니다.
+
+사용자 조작은 조회·필터·페이지 이동·새로고침뿐입니다. 승인/거절/주문/취소/reconciliation 기능, 개별 fills·FIFO·성과 재계산, Runtime 정책·worker 상태, Production 인증·배포는 포함하지 않습니다.
 
 ## 개발 검증
 
@@ -249,7 +273,7 @@ npm run test:e2e
 Remove-Item Env:PLAYWRIGHT_CHANNEL
 ```
 
-테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 Research/Overview flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. Research/Overview API는 정밀도 경계를 포함한 mock response로 가로채고 외부 origin 요청은 차단합니다. 기본 E2E에는 실제 Backend·관리자 credential·Production DB가 필요하지 않습니다. 기존 DEMO 및 API 검색·페이지·오류·snapshot 불일치·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
+테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 Research/Overview/AI Analysis flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. Research/Overview/AI Analysis API는 정밀도 경계를 포함한 mock response로 가로채고 외부 origin 요청은 차단합니다. 기본 E2E에는 실제 Backend·관리자 credential·Production DB가 필요하지 않습니다. 기존 DEMO 및 API 검색·페이지·오류·snapshot 불일치·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
 
 개발 도구의 transitive `minimatch`는 `package.json`의 override로 `11.0.1`에 고정합니다. [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)의 glob pattern amplification 문제를 수정한 버전을 사용하기 위한 설정이며 runtime application dependency를 추가하지 않습니다. 변경 시 lockfile과 실제 ESLint 실행의 호환성을 함께 검증합니다.
 
@@ -265,7 +289,7 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL
 
 애플리케이션 로그인·JWT, 직접 PostgreSQL 연결, Upbit 실시간 계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, 기존 Spring Boot 코드, root Compose와 LIVE 안전장치는 변경하지 않습니다.
 
-후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. AI Analysis / Portfolio / Operations 화면의 API 연결도 별도 범위입니다.
+후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. Portfolio / Operations 화면의 API 연결도 별도 범위입니다.
 
 Production 공개 전 TLS reverse proxy, 관리자 인증/세션 설계, 권한·CSRF 정책, 최소 DB 권한, 접근 로그의 민감정보 처리, 보안 header와 origin 경계를 별도로 검토해야 합니다. 로컬 Basic 인증과 Vite proxy는 Production 인증/배포 설계가 아닙니다. `VITE_*`, bundle, URL, localStorage/sessionStorage에 secret을 넣지 마세요.
 

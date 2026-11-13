@@ -228,12 +228,14 @@ export function DetailDrawer({
   title,
   description,
   children,
+  sourceLabel = 'DETAIL VIEW · DEMO',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
   children: ReactNode;
+  sourceLabel?: string;
 }) {
   const opener = useRef<HTMLElement | null>(null);
   return (
@@ -254,7 +256,7 @@ export function DetailDrawer({
         }}
       >
         <DialogHeader>
-          <span className="eyebrow">DETAIL VIEW · DEMO</span>
+          <span className="eyebrow">{sourceLabel}</span>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {description ?? 'Mock 데이터의 조회 전용 상세 정보입니다.'}

@@ -32,6 +32,7 @@ import { dateTime } from '@/lib/format';
 import type { DemoScenario } from '@/types/dashboard';
 import { useResearchSource } from '@/hooks/use-research-source';
 import { useOverviewSource } from '@/hooks/use-overview-source';
+import { useAnalysisSource } from '@/hooks/use-analysis-source';
 
 const navigation = [
   { to: '/overview', label: '대시보드', icon: LayoutDashboard },
@@ -95,10 +96,15 @@ export function AppShell() {
   const { scenario, setScenario } = useDemoScenario();
   const { source } = useResearchSource();
   const overview = useOverviewSource();
+  const analysis = useAnalysisSource();
+  const isAnalysis = /^\/ai-analysis\/?$/.test(location.pathname);
   const isResearch = /^\/research\/?$/.test(location.pathname);
   const isOverview = /^\/overview\/?$/.test(location.pathname);
-  const isApi = (isResearch && source === 'api') || (isOverview && overview.source === 'api');
-  const apiName = isOverview ? 'Overview' : 'Research';
+  const isApi =
+    (isResearch && source === 'api') ||
+    (isOverview && overview.source === 'api') ||
+    (isAnalysis && analysis.source === 'api');
+  const apiName = isAnalysis ? 'AI Analysis' : isOverview ? 'Overview' : 'Research';
   const query = useDashboardData(!isApi);
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
@@ -205,7 +211,7 @@ export function AppShell() {
         </header>
         <main id="main-content" className="main-content" tabIndex={-1}>
           <Suspense fallback={<LoadingSkeleton />}>
-            {isUnknownRoute || isResearch || isOverview ? (
+            {isUnknownRoute || isResearch || isOverview || isAnalysis ? (
               <Outlet />
             ) : query.isPending ? (
               <LoadingSkeleton />
