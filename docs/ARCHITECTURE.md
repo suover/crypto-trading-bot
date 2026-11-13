@@ -7,12 +7,14 @@
 | 경로 | 상태 | 책임 |
 | --- | --- | --- |
 | `trading-engine/` | 구현됨 | Python trading, analytics, research engine |
-| `backend/` | 구현됨 | Java 21 / Spring Boot Research 조회 전용 API |
+| `backend/` | 구현됨 | Java 21 / Spring Boot Research / Overview 조회 전용 API |
 | `frontend/` | 구현됨 | React/TypeScript DEMO 대시보드, 개발 환경의 opt-in Research GET API 조회 |
 
 Root에는 Compose, 운영 shell script, 문서, `.env.example`이 있습니다. Python package는 `trading-engine/crypto_trading_bot`, 실행 module은 `trading-engine/scripts`입니다.
 
-Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 QueryDSL을 사용합니다. 기존 PostgreSQL 스키마의 소유자는 계속 Python/Alembic이며 Java는 `ddl-auto=validate`, SELECT 전용 DB 역할, 읽기 전용 트랜잭션을 사용합니다. 서버에 설정된 active Trading User·exchange·quote 범위만 조회하고, 모든 Research GET API는 단일 관리자 HTTP Basic 인증을 요구합니다. 기본 바인딩은 localhost이며 외부 공개 시 TLS가 필수입니다. 저장된 Gate 상태는 과거 기록으로만 반환하며 평가·등록·승인·활성화·주문을 하지 않습니다. Production Compose는 변경하지 않았습니다. 자세한 계약은 [Research Read API v1](../backend/docs/RESEARCH_READ_API_V1.md)을 참고하세요.
+Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 QueryDSL을 사용합니다. 기존 PostgreSQL 스키마의 소유자는 계속 Python/Alembic이며 Java는 `ddl-auto=validate`, SELECT 전용 DB 역할, 읽기 전용 트랜잭션을 사용합니다. 서버에 설정된 active Trading User·exchange·quote 범위만 조회하고, 모든 Research / Overview GET API는 단일 관리자 HTTP Basic 인증을 요구합니다. 기본 바인딩은 localhost이며 외부 공개 시 TLS가 필수입니다. 저장된 Gate 상태는 과거 기록으로만 반환하며 평가·등록·승인·활성화·주문을 하지 않습니다. Production Compose는 변경하지 않았습니다. 자세한 계약은 [Research Read API v1](../backend/docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](../backend/docs/OVERVIEW_READ_API_V1.md)을 참고하세요.
+
+Overview는 `portfolio_snapshots`의 `captured_at DESC, id DESC`로 최신 계좌를 선택합니다. Position과 Performance는 부모 snapshot을 JOIN해 소유자와 quote를 검증하며 현재 성과는 정확히 같은 snapshot에 연결된 행만 반환합니다. 오래된 성과로 대체하지 않습니다. 독립적인 `bot_trading_pnl_summaries`는 user/exchange 단위 KRW 회계이며 snapshot 시각이나 quote별 수익률로 해석하지 않습니다. KRW 이외 quote에서는 Bot PnL을 제공하지 않습니다. 추천은 user/exchange와 검증된 Upbit `QUOTE-` prefix로 제한합니다. 모든 지표는 저장 값이고 PARTIAL/null/BASELINE을 보존합니다. Overview JSON의 Long ID와 BigDecimal은 문자열, 시각은 UTC이며 raw AI payload는 읽거나 노출하지 않습니다. 거래소·OpenAI·Telegram 호출은 없습니다.
 
 Frontend Research는 기본 DEMO를 유지하며 개발 환경의 명시적 flag와 사용자 선택으로만 `LOCAL API · READ ONLY` 모드를 사용합니다. 별도의 read model/client/Query/view가 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. Vite는 허용된 Research GET만 `127.0.0.1:8080`으로 전달하며 인증은 same-origin 브라우저 HTTP Basic이 담당합니다. React는 credential을 수집·저장하거나 Authorization header를 생성하지 않습니다. Production build에서는 이 모드를 허용하지 않습니다.
 

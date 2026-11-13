@@ -1,6 +1,6 @@
-# Research Read API Backend
+# Research / Overview Read API Backend
 
-Java 21 / Spring Boot 기반 관리자 전용 Research 조회 API입니다. 현재 Python 엔진이 저장한 PostgreSQL 데이터를 읽습니다. 연구 평가, 등록, Telegram 승인, LIVE 활성화, 주문은 수행하지 않습니다.
+Java 21 / Spring Boot 기반 관리자 전용 Research / Overview 조회 API입니다. 현재 Python 엔진이 저장한 PostgreSQL 데이터를 읽습니다. 연구 평가, 금융 지표 재계산, 등록, Telegram 승인, LIVE 활성화, 주문은 수행하지 않습니다.
 
 ## 역할과 구조
 
@@ -17,6 +17,7 @@ src/main/java/io/github/suover/cryptotradingbot/
   research/repository/
   research/entity/     최소 컬럼 @Immutable 매핑, 복합키
   research/dto/        외부 응답, 검색 조건
+  overview/            controller/service/repository/entity/dto, 계좌·성과·추천 조회
 src/test/java/         Mockito, MockMvc, PostgreSQL Testcontainers
 src/test/python/       기존 Alembic 실행 및 테스트 fixture 준비
 ```
@@ -52,11 +53,18 @@ GRANT SELECT ON
     public.research_policy_candidates,
     public.strategy_replay_snapshots,
     public.research_candidate_automation_states,
-    public.shadow_policy_enrollments
+    public.shadow_policy_enrollments,
+    public.portfolio_snapshots,
+    public.portfolio_position_snapshots,
+    public.portfolio_performance_snapshots,
+    public.bot_trading_pnl_summaries,
+    public.trade_recommendations
 TO backend_reader;
 ```
 
-공유 DB에서는 위 GRANT만으로 모든 환경의 읽기 전용 권한이 보장되지 않습니다. 다른 role membership 및 PUBLIC에서 상속된 권한, schema/DB 소유권을 확인하세요. PostgreSQL의 기본 PUBLIC TEMP 권한도 고려해야 합니다. 운영 DB의 PUBLIC 권한 변경은 다른 애플리케이션에 영향을 주므로 DBA가 별도로 검토해야 하며 이 작업에서 자동으로 REVOKE하지 않습니다. Testcontainers DB에서는 PUBLIC schema/DB 권한을 제거하고 CONNECT/USAGE 및 위 5개 테이블 SELECT만 부여한 뒤 DML, TRUNCATE, 일반/임시 CREATE, ALTER, DROP, 주문 테이블 SELECT가 모두 거부되는지 테스트합니다.
+이미 Research 권한이 설정된 계정에는 DBA가 검토 후 위 목록의 Overview 테이블 5개에 대한 SELECT만 추가하면 됩니다. `analysis_runs`, `account_snapshots`, 주문 테이블의 SELECT나 sequence 권한은 필요하지 않습니다. 운영 권한은 자동 변경하지 않습니다.
+
+공유 DB에서는 위 GRANT만으로 모든 환경의 읽기 전용 권한이 보장되지 않습니다. 다른 role membership 및 PUBLIC에서 상속된 권한, schema/DB 소유권을 확인하세요. PostgreSQL의 기본 PUBLIC TEMP 권한도 고려해야 합니다. 운영 DB의 PUBLIC 권한 변경은 다른 애플리케이션에 영향을 주므로 DBA가 별도로 검토해야 하며 이 작업에서 자동으로 REVOKE하지 않습니다. Testcontainers DB에서는 PUBLIC schema/DB 권한을 제거하고 CONNECT/USAGE 및 위 10개 테이블 SELECT만 부여한 뒤 DML, TRUNCATE, 일반/임시 CREATE, ALTER, DROP, 주문 테이블 SELECT가 모두 거부되는지 테스트합니다.
 
 권한 확인 예시(읽기 계정으로 연결):
 
@@ -111,6 +119,10 @@ Python의 `.env`/`.secrets/`를 읽거나 공유하지 않습니다. 필수 설�
 | `/api/v1/research/candidates/{id}` | 후보·등록 당시 기준·과거 Gate 상태 |
 | `/api/v1/research/snapshots` | capturedAt/ID 정렬 페이지 |
 | `/api/v1/research/automation-status` | 복합키별 저장 체크포인트 전체 |
+| `/api/v1/overview/summary` | 최신 계좌 평가, 같은 snapshot의 성과, 독립 Bot PnL |
+| `/api/v1/overview/positions` | 최신 계좌 snapshot에 속한 보유 자산 |
+| `/api/v1/overview/performance` | 저장된 Modified Dietz 성과 이력 |
+| `/api/v1/overview/recommendations` | scoped BUY/SELL/HOLD 추천 이력 |
 
 ```bash
 # -u에는 사용자 이름만 전달하면 curl이 비밀번호를 대화식으로 요청합니다.
@@ -118,7 +130,7 @@ curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/research/summary
 curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/research/candidates?keyword=momentum&shadowEnrolled=true&page=0&size=20"
 ```
 
-파라미터/응답/오류의 전체 계약은 [RESEARCH_READ_API_V1.md](docs/RESEARCH_READ_API_V1.md)를 참고하세요.
+파라미터/응답/오류의 전체 계약은 [Research Read API v1](docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](docs/OVERVIEW_READ_API_V1.md)을 참고하세요. Overview는 nullable 지표와 PARTIAL/BASELINE을 보존하며 성과를 재계산하지 않습니다. Bot PnL은 계좌 수익률이 아닌 user/exchange 단위 FIFO 인식 실현손익입니다.
 
 ## 검증과 CI
 
@@ -150,4 +162,4 @@ JUnit XML/HTML은 `build/test-results/test/`, `build/reports/tests/test/`에 생
 
 현재 연구 상태의 read model이며 Python의 서명 검증·Gate 재평가를 Java로 복제하지 않습니다. 저장된 Gate 값은 당시 상태이고, 자동화 상태도 저장 checkpoint 그대로입니다. 신규 snapshot 21개 조건을 Java에서 재계산하지 않습니다.
 
-다음 React 연동에서는 [기존 Mock DashboardRepository](../frontend/src/services/dashboard-repository.ts)에 실제 API adapter를 별도로 추가해야 합니다. 현재 화면의 evidence/approval/activation 전체 DTO를 이 API가 모두 제공한다고 가정하지 마세요. BigDecimal JSON 숫자는 프론트에서 정밀도를 보존하는 파서/표현을 선택하고, ID는 Java Long 범위이므로 JS safe integer 경계를 검토해야 합니다. 관리자 비밀번호를 frontend bundle에 저장하면 안 됩니다.
+React Overview는 여전히 DEMO이며 [기존 Mock DashboardRepository](../frontend/src/services/dashboard-repository.ts)에 실제 API adapter를 연결하는 작업은 별도입니다. 현재 화면의 evidence/approval/activation 전체 DTO를 이 API가 모두 제공한다고 가정하지 마세요. Overview는 Long ID와 BigDecimal을 JSON 문자열로 반환합니다. 기존 Research API의 숫자 계약과 lossless parsing은 변경하지 않습니다. 관리자 비밀번호를 frontend bundle에 저장하면 안 됩니다.

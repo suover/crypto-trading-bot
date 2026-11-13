@@ -6,6 +6,7 @@ remains the sole DDL source; ORM objects below are test fixtures, not migrations
 
 import os
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,6 +18,12 @@ from sqlalchemy.orm import Session
 from crypto_trading_bot.config import settings
 from crypto_trading_bot.db.models import (
     AnalysisRun,
+    AccountSnapshot,
+    PortfolioSnapshot,
+    PortfolioPositionSnapshot,
+    PortfolioPerformanceSnapshot,
+    BotTradingPnlSummary,
+    TradeRecommendation,
     ResearchCandidateAutomationState,
     ResearchPolicyCandidate,
     ShadowPolicyEnrollment,
@@ -164,6 +171,7 @@ def main():
                     review_context_cap=2,
                 )
             )
+        prepare_overview(session, time)
         session.commit()
     with engine.begin() as connection:
         connection.execute(
@@ -180,10 +188,231 @@ def main():
         connection.execute(
             text(
                 "GRANT SELECT ON users, research_policy_candidates, strategy_replay_snapshots, "
-                "research_candidate_automation_states, shadow_policy_enrollments TO backend_reader"
+                "research_candidate_automation_states, shadow_policy_enrollments, "
+                "portfolio_snapshots, portfolio_position_snapshots, portfolio_performance_snapshots, "
+                "bot_trading_pnl_summaries, trade_recommendations TO backend_reader"
             )
         )
     engine.dispose()
+
+
+def prepare_overview(session, time):
+    """Separate IDs; do not alter Research fixtures or create any production data."""
+    session.add_all(User(id=i, name=f"overview-{i}") for i in (10, 11))
+    session.flush()
+    big = 9007199254740993
+    snapshots = {}
+    for sid, user, exchange, quote, day, status, perf in [
+        (1001, 1, "UPBIT", "KRW", 0, "COMPLETE", "BASELINE"),
+        (big + 1, 1, "UPBIT", "KRW", 1, "COMPLETE", "COMPLETE"),
+        (1002, 1, "UPBIT", "KRW", 3, "COMPLETE", "COMPLETE"),
+        (big, 1, "UPBIT", "KRW", 3, "PARTIAL", "PARTIAL"),
+        (1010, 10, "UPBIT", "KRW", 3, "COMPLETE", "COMPLETE"),
+        (1101, 11, "UPBIT", "KRW", 0, "COMPLETE", "BASELINE"),
+        (1102, 11, "UPBIT", "KRW", 3, "COMPLETE", None),
+        (2001, 2, "UPBIT", "KRW", 9, "COMPLETE", "COMPLETE"),
+        (2002, 1, "BINANCE", "KRW", 9, "COMPLETE", "COMPLETE"),
+        (2003, 1, "UPBIT", "BTC", 9, "COMPLETE", "COMPLETE"),
+        # Inconsistent child owner/exchange rows exercise defensive scope joins.
+        (1004, 1, "UPBIT", "KRW", 2, "COMPLETE", None),
+        (1005, 1, "UPBIT", "KRW", 2, "COMPLETE", None),
+        (2004, 2, "UPBIT", "KRW", 8, "COMPLETE", None),
+    ]:
+        session.add(
+            AnalysisRun(
+                id=sid,
+                user_id=user,
+                run_type="TEST",
+                trading_mode="AI_APPROVAL",
+                status="SUCCESS",
+            )
+        )
+        session.flush()
+        snapshot = PortfolioSnapshot(
+            id=sid,
+            analysis_run_id=sid,
+            pipeline_run_id=str(sid),
+            user_id=user,
+            exchange=exchange,
+            quote_asset=quote,
+            valuation_policy_signature="fixture-policy",
+            cash_available_krw=Decimal("1000"),
+            cash_locked_krw=Decimal("0"),
+            cash_total_krw=Decimal("1000"),
+            priced_positions_value_krw=Decimal("13000"),
+            known_total_value_krw=Decimal("12345678901234567890.1234567890"),
+            total_value_krw=None if status == "PARTIAL" else Decimal("14000"),
+            unrealized_pnl_krw=None if status == "PARTIAL" else Decimal("0"),
+            position_count=3 if sid == big else 0,
+            unpriced_asset_count=1 if sid == big else 0,
+            missing_cost_basis_count=1 if sid == big else 0,
+            valuation_status=status,
+            captured_at=time + timedelta(days=day),
+        )
+        session.add(snapshot)
+        session.flush()
+        snapshots[sid] = snapshot
+        if perf:
+            add_performance(session, snapshot, perf, time)
+    add_performance(session, snapshots[1004], "COMPLETE", time, user=2)
+    add_performance(session, snapshots[1005], "COMPLETE", time, exchange="BINANCE")
+    add_performance(session, snapshots[2004], "COMPLETE", time, user=1)
+    for pid, sid, currency, market, value, basis, status, exchange in [
+        (3001, big, "BTC", "KRW-BTC", "12000", "10000", "PRICED", "UPBIT"),
+        (3002, big, "ETH", "KRW-ETH", "1000", None, "PRICED", "UPBIT"),
+        (3003, big, "APENFT", None, None, None, "UNPRICED", "UPBIT"),
+        (3004, 2001, "OTHER", "KRW-OTHER", "999999", "1", "PRICED", "UPBIT"),
+        (3005, big, "WRONG", "KRW-WRONG", "999999", "1", "PRICED", "BINANCE"),
+    ]:
+        s = snapshots[sid]
+        session.add(
+            AccountSnapshot(
+                id=pid,
+                analysis_run_id=s.analysis_run_id,
+                user_id=s.user_id,
+                exchange=exchange,
+                currency=currency,
+                balance=Decimal("0.1234567890"),
+            )
+        )
+        session.flush()
+        session.add(
+            PortfolioPositionSnapshot(
+                id=pid,
+                portfolio_snapshot_id=sid,
+                account_snapshot_id=pid,
+                exchange=exchange,
+                currency=currency,
+                market=market,
+                available_quantity=Decimal("0.1234567890"),
+                locked_quantity=Decimal("0.1"),
+                total_quantity=Decimal("0.2234567890"),
+                avg_buy_price=Decimal("100") if basis else None,
+                mark_price=Decimal("1000") if value else None,
+                market_value_krw=Decimal(value) if value else None,
+                estimated_cost_basis_krw=Decimal(basis) if basis else None,
+                unrealized_pnl_krw=Decimal("-12.1234567890") if basis else None,
+                unrealized_pnl_percentage=Decimal("-0.1234567890") if basis else None,
+                valuation_status=status,
+                price_source="UNAVAILABLE" if value is None else "MARKET_SNAPSHOT",
+            )
+        )
+    for bid, user, exchange, status in [
+        (5001, 1, "UPBIT", "PARTIAL"),
+        (5002, 10, "UPBIT", "COMPLETE"),
+        (5003, 2, "UPBIT", "COMPLETE"),
+        (5004, 1, "BINANCE", "COMPLETE"),
+    ]:
+        # The source ORM specifies every required accounting field; these are stored fixture values.
+        values = {
+            column.name: Decimal("0")
+            for column in BotTradingPnlSummary.__table__.columns
+            if column.type.__class__.__name__ == "Numeric" and not column.nullable
+        }
+        values.update(
+            {
+                column.name: 0
+                for column in BotTradingPnlSummary.__table__.columns
+                if column.type.__class__.__name__ == "Integer" and not column.nullable
+            }
+        )
+        values.update(
+            recognized_realized_pnl_krw=Decimal("-12345.6789000000"),
+            recognized_realized_return_percentage=Decimal("-1.2345678901"),
+            total_fees_krw=Decimal("12.3"),
+            processed_order_count=5,
+            unmatched_sell_count=1 if status == "PARTIAL" else 0,
+        )
+        session.add(
+            BotTradingPnlSummary(
+                id=bid,
+                user_id=user,
+                exchange=exchange,
+                accounting_status=status,
+                source_signature="fixture",
+                source_last_updated_at=time,
+                calculated_at=time + timedelta(hours=2),
+                **values,
+            )
+        )
+    for rid, user, exchange, market, action, age in [
+        (4001, 1, "UPBIT", "KRW-BTC", "BUY", 0),
+        (4002, 1, "UPBIT", "KRW-ETH", "SELL", 0),
+        (4003, 1, "UPBIT", "KRW-XRP", "HOLD", 0),
+        (big + 10, 1, "UPBIT", "KRW-BTC", "BUY", -1),
+        (4004, 2, "UPBIT", "KRW-BTC", "BUY", 1),
+        (4005, 1, "BINANCE", "KRW-BTC", "BUY", 1),
+        (4006, 1, "UPBIT", "BTC-ETH", "BUY", 1),
+        (4007, 1, "UPBIT", "XKRW-BTC", "BUY", 1),
+        (4008, 1, "UPBIT", "KRW-", "BUY", 1),
+    ]:
+        session.add(
+            AnalysisRun(
+                id=rid,
+                user_id=user,
+                run_type="TEST",
+                trading_mode="AI_APPROVAL",
+                status="SUCCESS",
+            )
+        )
+        session.flush()
+        session.add(
+            TradeRecommendation(
+                id=rid,
+                analysis_run_id=rid,
+                user_id=user,
+                exchange=exchange,
+                market=market,
+                action=action,
+                confidence=Decimal("0.9876"),
+                trade_ratio=None if action == "HOLD" else Decimal("0.123456789"),
+                ai_model=None if action == "HOLD" else "fixture-model",
+                status="APPROVED",
+                reason="private-reason-not-exposed",
+                ai_response={"private": "not-exposed"},
+                created_at=time + timedelta(days=age),
+            )
+        )
+
+
+def add_performance(session, snapshot, status, time, user=None, exchange=None):
+    partial = status == "PARTIAL"
+    baseline = status == "BASELINE"
+    session.add(
+        PortfolioPerformanceSnapshot(
+            id=snapshot.id,
+            portfolio_snapshot_id=snapshot.id,
+            user_id=user if user is not None else snapshot.user_id,
+            exchange=exchange if exchange is not None else snapshot.exchange,
+            period_start_at=None if baseline else time,
+            period_end_at=snapshot.captured_at,
+            return_method="MODIFIED_DIETZ",
+            period_return_percentage=None
+            if partial or baseline
+            else Decimal("1.1234567890"),
+            cumulative_return_percentage=None
+            if partial
+            else Decimal("0" if baseline else "2.1234567890"),
+            performance_index=None
+            if partial
+            else Decimal("100" if baseline else "102.1234567890"),
+            drawdown_index=None if partial else Decimal("0" if baseline else "-3"),
+            drawdown_percentage=None
+            if partial
+            else Decimal("0" if baseline else "-2.1234567890"),
+            max_drawdown_percentage=None
+            if partial
+            else Decimal("0" if baseline else "-4"),
+            performance_status=status,
+            safe_reason="UNPRICED_ASSET"
+            if partial
+            else "NO_PREVIOUS_SNAPSHOT"
+            if baseline
+            else None,
+            calculated_at=snapshot.captured_at + timedelta(hours=1),
+            end_value_krw=snapshot.total_value_krw,
+        )
+    )
 
 
 if __name__ == "__main__":

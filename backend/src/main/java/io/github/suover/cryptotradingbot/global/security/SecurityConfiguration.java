@@ -36,6 +36,10 @@ public class SecurityConfiguration {
                                 "/api/v1/research/candidates", "/api/v1/research/candidates/{id}",
                                 "/api/v1/research/snapshots", "/api/v1/research/automation-status")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/overview/summary",
+                                "/api/v1/overview/positions", "/api/v1/overview/performance",
+                                "/api/v1/overview/recommendations")
+                        .hasRole("ADMIN")
                         .anyRequest().denyAll())
                 .httpBasic(basic -> basic.authenticationEntryPoint((request, response, exception) -> {
                     response.setHeader("WWW-Authenticate", "Basic realm=\"research\"");
