@@ -16,9 +16,10 @@ export function useDemoScenario() {
   return { scenario, setScenario };
 }
 
-export function useDashboardData() {
+export function useDashboardData(enabled = true) {
   const { scenario, repository: adapter } = useContext(DemoScenarioContext);
   return useQuery({
+    enabled,
     queryKey: ['dashboard', scenario],
     queryFn: ({ signal }) => adapter.read({ scenario, signal }),
     staleTime: Infinity,

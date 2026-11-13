@@ -135,7 +135,7 @@ LIVE execution은 현재 Upbit 전용입니다. Telegram approval, execution mod
 crypto-trading-bot/
 ├── trading-engine/   # 구현된 Python trading/research engine
 ├── backend/          # Spring Boot Research 조회 전용 API
-├── frontend/         # React + TypeScript 조회 전용 Mock 대시보드
+├── frontend/         # React + TypeScript DEMO / 로컬 Research 조회 대시보드
 ├── docs/             # architecture, research, policy, operations 문서
 ├── scripts/          # root 운영·백업·배포 shell script
 ├── docker-compose.yml
@@ -329,7 +329,7 @@ uv run ruff check .
 
 외부 API diagnostic, Telegram 발송, authenticated Upbit check와 주문 관련 CLI는 Quick Start에 포함하지 않습니다. 목적과 safety boundary를 확인한 뒤 운영 문서의 명령만 사용하세요.
 
-### Frontend Dashboard — Mock 조회 전용
+### Frontend Dashboard — DEMO / Local Research 조회 전용
 
 다섯 주요 화면을 제공하는 React + TypeScript 대시보드를 별도 터미널의 repository root에서 실행할 수 있습니다. Node.js 24.15.0 이상인 24 LTS와 npm을 사용하며 실제 API나 `.env` 없이 동작합니다.
 
@@ -339,11 +339,11 @@ npm ci
 npm run dev
 ```
 
-미리보기는 [localhost:5173](http://localhost:5173)입니다. 화면 구성, Mock 데이터 경계와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요.
+미리보기는 [localhost:5173](http://localhost:5173)입니다. 기본은 DEMO이며 개발 환경에서 `VITE_ENABLE_RESEARCH_API=true`를 명시하면 Research 화면만 로컬 Spring Boot GET API로 전환할 수 있습니다. 인증정보는 React에 저장하지 않습니다. loopback proxy·브라우저 Basic 인증 절차와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요. Production build에서는 API 모드를 허용하지 않습니다.
 
 ## 설정
 
-Java Backend는 별도의 관리자 인증과 SELECT 전용 DB 계정으로 Research API 5개를 제공합니다. Python/Alembic 스키마를 검증만 하며, Production Compose에는 추가되지 않았습니다. Java 21 로컬 실행·검증은 [Backend README](backend/README.md), 요청·응답 계약은 [Research Read API v1](backend/docs/RESEARCH_READ_API_V1.md)을 참고하세요. React 대시보드는 아직 Mock 데이터를 사용합니다.
+Java Backend는 별도의 관리자 인증과 SELECT 전용 DB 계정으로 Research API 5개를 제공합니다. Python/Alembic 스키마를 검증만 하며, Production Compose에는 추가되지 않았습니다. Java 21 로컬 실행·검증은 [Backend README](backend/README.md), 요청·응답 계약은 [Research Read API v1](backend/docs/RESEARCH_READ_API_V1.md)을 참고하세요. Frontend CI는 기존 Python/Java job과 독립적으로 typecheck·lint·format·단위 테스트·build·mock API 브라우저 테스트를 수행합니다.
 
 설정의 source of truth는 [.env.example](.env.example)과 [`Settings`](trading-engine/crypto_trading_bot/config/settings.py)입니다.
 

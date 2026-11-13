@@ -9,6 +9,58 @@
   background: var(--surface);
 }
 
+.research-source-switch {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.api-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: end;
+}
+.api-filters label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  max-width: 100%;
+}
+.api-filters .field {
+  max-width: 100%;
+  min-width: 0;
+}
+.api-provenance dd {
+  overflow-wrap: anywhere;
+}
+.research-api-view .metric-value {
+  overflow-wrap: anywhere;
+}
+.research-api-view .research-context-note {
+  display: block;
+}
+.api-signature {
+  max-width: 220px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.api-state {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+@media (max-width: 600px) {
+  .api-filters label {
+    width: 100%;
+  }
+  .research-source-switch > button {
+    white-space: normal;
+    height: auto;
+    min-height: 36px;
+  }
+}
+
 .research-runtime-heading,
 .research-runtime-meta,
 .research-legend,

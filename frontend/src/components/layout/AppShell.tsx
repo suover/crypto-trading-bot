@@ -30,6 +30,7 @@ import { useDashboardData, useDemoScenario } from '@/hooks/use-dashboard-data';
 import { DEMO_AS_OF } from '@/data/mock/dashboard';
 import { dateTime } from '@/lib/format';
 import type { DemoScenario } from '@/types/dashboard';
+import { useResearchSource } from '@/hooks/use-research-source';
 
 const navigation = [
   { to: '/overview', label: '대시보드', icon: LayoutDashboard },
@@ -91,7 +92,10 @@ export function AppShell() {
     }
   });
   const { scenario, setScenario } = useDemoScenario();
-  const query = useDashboardData();
+  const { source } = useResearchSource();
+  const isResearch = /^\/research\/?$/.test(location.pathname);
+  const isApi = isResearch && source === 'api';
+  const query = useDashboardData(!isApi);
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -119,9 +123,9 @@ export function AppShell() {
         <div className="sidebar-bottom">
           <div className="sidebar-note">
             <ShieldCheck size={20} />
-            <strong>데모 워크스페이스</strong>
+            <strong>{isApi ? 'Research API 조회' : '데모 워크스페이스'}</strong>
             <p>
-              모든 데이터는 Mock입니다.
+              {isApi ? '현재 Research는 로컬 API입니다.' : '모든 데이터는 Mock입니다.'}
               <br />
               거래·승인·정책 변경 없이
               <br />
@@ -163,7 +167,7 @@ export function AppShell() {
                 <Brand onSelect={() => setMobileOpen(false)} />
                 <Navigation onSelect={() => setMobileOpen(false)} />
                 <p className="text-muted small" style={{ marginTop: 'auto' }}>
-                  Mock 데이터 · 조회 전용
+                  {isApi ? 'Research: LOCAL API · 다른 화면: DEMO' : 'Mock 데이터 · 조회 전용'}
                 </p>
               </DialogContent>
             </Dialog>
@@ -172,10 +176,12 @@ export function AppShell() {
             <strong>{pageTitle}</strong>
           </div>
           <div className="header-actions">
-            <span className="header-timestamp">{dateTime(DEMO_AS_OF)} KST 기준</span>
+            <span className="header-timestamp">
+              {isApi ? '관측·응답 시각은 각 조회 영역에 표시' : dateTime(DEMO_AS_OF) + ' KST 기준'}
+            </span>
             <span className="demo-pill">
               <span className="status-dot" />
-              DEMO
+              {isApi ? 'LOCAL API · READ ONLY' : 'DEMO'}
             </span>
             <span className="header-divider" />
             <Button
@@ -195,7 +201,7 @@ export function AppShell() {
         </header>
         <main id="main-content" className="main-content" tabIndex={-1}>
           <Suspense fallback={<LoadingSkeleton />}>
-            {isUnknownRoute ? (
+            {isUnknownRoute || isResearch ? (
               <Outlet />
             ) : query.isPending ? (
               <LoadingSkeleton />
@@ -211,25 +217,29 @@ export function AppShell() {
           </Suspense>
           <footer className="app-footer">
             <span>
-              Crypto Trading Bot <span aria-hidden="true">/</span> 모든 수치는 데모입니다. 실제 운영
-              데이터와 연결되지 않습니다.
+              Crypto Trading Bot <span aria-hidden="true">/</span>{' '}
+              {isApi
+                ? '현재 Research는 로컬 API 조회 전용입니다. 다른 화면은 DEMO입니다. 거래·승인·활성화는 실행하지 않습니다.'
+                : '모든 수치는 데모입니다. 실제 운영 데이터와 연결되지 않습니다.'}
             </span>
-            <label className="demo-controls">
-              데모 상태
-              <select
-                className="field"
-                aria-label="데모 데이터 상태"
-                value={scenario}
-                onChange={(event) => setScenario(event.target.value as DemoScenario)}
-              >
-                <option value="normal">정상 데이터</option>
-                <option value="partial">부분 평가 · PARTIAL</option>
-                <option value="empty">빈 데이터</option>
-                <option value="loading">로딩</option>
-                <option value="error">오류</option>
-              </select>
-              <ArrowUpRight size={12} aria-hidden="true" />
-            </label>
+            {!isApi && (
+              <label className="demo-controls">
+                데모 상태
+                <select
+                  className="field"
+                  aria-label="데모 데이터 상태"
+                  value={scenario}
+                  onChange={(event) => setScenario(event.target.value as DemoScenario)}
+                >
+                  <option value="normal">정상 데이터</option>
+                  <option value="partial">부분 평가 · PARTIAL</option>
+                  <option value="empty">빈 데이터</option>
+                  <option value="loading">로딩</option>
+                  <option value="error">오류</option>
+                </select>
+                <ArrowUpRight size={12} aria-hidden="true" />
+              </label>
+            )}
           </footer>
         </main>
       </div>
