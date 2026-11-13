@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `trading-engine/` | 구현됨 | Python trading, analytics, research engine |
 | `backend/` | 구현됨 | Java 21 / Spring Boot Research / Overview 조회 전용 API |
-| `frontend/` | 구현됨 | React/TypeScript DEMO 대시보드, 개발 환경의 opt-in Research GET API 조회 |
+| `frontend/` | 구현됨 | React/TypeScript DEMO 대시보드, 개발 환경의 opt-in Research / Overview GET API 조회 |
 
 Root에는 Compose, 운영 shell script, 문서, `.env.example`이 있습니다. Python package는 `trading-engine/crypto_trading_bot`, 실행 module은 `trading-engine/scripts`입니다.
 
@@ -18,7 +18,9 @@ Overview는 `portfolio_snapshots`의 `captured_at DESC, id DESC`로 최신 계�
 
 Frontend Research는 기본 DEMO를 유지하며 개발 환경의 명시적 flag와 사용자 선택으로만 `LOCAL API · READ ONLY` 모드를 사용합니다. 별도의 read model/client/Query/view가 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. Vite는 허용된 Research GET만 `127.0.0.1:8080`으로 전달하며 인증은 same-origin 브라우저 HTTP Basic이 담당합니다. React는 credential을 수집·저장하거나 Authorization header를 생성하지 않습니다. Production build에서는 이 모드를 허용하지 않습니다.
 
-응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 Gate·성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. 기존 나머지 네 화면과 Research DEMO는 그대로 Mock repository를 사용합니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
+Research 응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 연구 Gate·연구 성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. AI Analysis / Portfolio / Operations 및 각 DEMO 모드는 그대로 Mock repository를 사용합니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
+
+Frontend Overview는 별도 `VITE_ENABLE_OVERVIEW_API=true`와 화면 선택으로 활성화합니다. Vite는 Overview 4개 GET만 추가 허용하며 인증·고정 loopback 경계는 동일합니다. Summary 이후 Positions를 조회하고 scope/snapshot ID/관측 시각을 대조합니다. Snapshot 불일치는 1회 재조회 후 갱신 필요 상태로 표시하며 서로 다른 계좌 자료를 혼합하지 않습니다. 성과 이력과 추천은 독립 Query로 기간·action·page 조건을 포함합니다. 금융 값은 문자열과 BigInt로 표시하고 차트 좌표만 Number로 변환합니다. 저장된 성과 index를 사용하며 PARTIAL·새 BASELINE·연속성 미확인 구간은 연결하지 않습니다. 현재 페이지를 전체 기간으로 표현하지 않으며 전일 증감·worker·현재 정책 등 미제공 값은 DEMO로 채우지 않습니다.
 
 ## Package structure
 

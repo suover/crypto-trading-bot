@@ -11,6 +11,11 @@ export default defineConfig(({ command, mode }) => {
     loadEnv(mode, process.cwd(), 'VITE_ENABLE_RESEARCH_API').VITE_ENABLE_RESEARCH_API === 'true';
   const researchPath =
     /^\/api\/v1\/research\/(summary|candidates(?:\/[1-9]\d*)?|snapshots|automation-status)$/;
+  const overviewEnabled =
+    command === 'serve' &&
+    mode === 'development' &&
+    loadEnv(mode, process.cwd(), 'VITE_ENABLE_OVERVIEW_API').VITE_ENABLE_OVERVIEW_API === 'true';
+  const overviewPath = /^\/api\/v1\/overview\/(summary|positions|performance|recommendations)$/;
   return {
     plugins: [
       react(),
@@ -21,9 +26,15 @@ export default defineConfig(({ command, mode }) => {
           server.middlewares.use((request, response, next) => {
             if (request.url?.startsWith('/api/')) {
               const path = new URL(request.url, 'http://127.0.0.1').pathname;
-              if (!enabled || request.method !== 'GET' || !researchPath.test(path)) {
+              if (
+                request.method !== 'GET' ||
+                !(
+                  (enabled && researchPath.test(path)) ||
+                  (overviewEnabled && overviewPath.test(path))
+                )
+              ) {
                 response.statusCode = 403;
-                response.end('Read-only local Research API boundary');
+                response.end('Read-only local API boundary');
                 return;
               }
             }
@@ -37,15 +48,26 @@ export default defineConfig(({ command, mode }) => {
       host: '127.0.0.1',
       port: 5173,
       strictPort: true,
-      proxy: enabled
-        ? {
-            '/api/v1/research/': {
-              target: 'http://127.0.0.1:8080',
-              followRedirects: false,
-              proxyTimeout: 5000,
-            },
-          }
-        : undefined,
+      proxy: {
+        ...(enabled
+          ? {
+              '/api/v1/research/': {
+                target: 'http://127.0.0.1:8080',
+                followRedirects: false,
+                proxyTimeout: 5000,
+              },
+            }
+          : {}),
+        ...(overviewEnabled
+          ? {
+              '/api/v1/overview/': {
+                target: 'http://127.0.0.1:8080',
+                followRedirects: false,
+                proxyTimeout: 5000,
+              },
+            }
+          : {}),
+      },
     },
     test: {
       environment: 'jsdom',

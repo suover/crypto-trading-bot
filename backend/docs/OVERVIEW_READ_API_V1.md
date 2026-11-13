@@ -1,6 +1,6 @@
 # Overview Read API v1
 
-Python 엔진이 PostgreSQL에 저장한 계좌 평가, 보유 자산, Modified Dietz 성과, FIFO Bot PnL과 추천을 읽는 관리자 전용 API입니다. 금융 지표 재계산, 외부 API 호출, 주문·승인·등록·LIVE 활성화는 수행하지 않습니다. React Overview는 계속 DEMO이며 이 API와의 연결은 별도 작업입니다.
+Python 엔진이 PostgreSQL에 저장한 계좌 평가, 보유 자산, Modified Dietz 성과, FIFO Bot PnL과 추천을 읽는 관리자 전용 API입니다. 금융 지표 재계산, 외부 API 호출, 주문·승인·등록·LIVE 활성화는 수행하지 않습니다. React Overview는 기본 DEMO이며 개발 환경에서 명시적으로 이 API에 연결할 수 있습니다. [Frontend 실행 절차](../../frontend/README.md#overview-local-api-v1)를 참고하세요.
 
 ## 실행과 인증
 
@@ -144,4 +144,4 @@ Mockito 서비스 테스트, MockMvc/Security 계약 테스트 및 실제 Alembi
 
 테스트용 SELECT 계정은 Overview 5개 테이블과 기존 Research 5개 테이블에만 접근합니다. JDBC read-only flag를 해제한 연결에서도 INSERT/UPDATE/DELETE/TRUNCATE/CREATE/TEMP/ALTER/DROP 및 불필요한 테이블 SELECT가 거부되는지 검증합니다. 운영 권한을 변경하거나 운영 DB를 테스트에 사용하지 않습니다.
 
-기존 index/schema를 사용하며 migration을 추가하지 않습니다. 운영 데이터 규모에 따른 쿼리 성능 측정은 별도 과제입니다. 현재 API의 조회 상한은 무한 응답을 막지만 대규모 count 비용까지 없애지는 않습니다. Production Compose, Python 저장/계산 정책, LIVE safety와 frontend 코드는 변경하지 않습니다.
+기존 index/schema를 사용하며 migration을 추가하지 않습니다. 운영 데이터 규모에 따른 쿼리 성능 측정은 별도 과제입니다. 현재 API의 조회 상한은 무한 응답을 막지만 대규모 count 비용까지 없애지는 않습니다. Production Compose, Python 저장/계산 정책과 LIVE safety는 변경하지 않습니다.

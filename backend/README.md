@@ -162,4 +162,4 @@ JUnit XML/HTML은 `build/test-results/test/`, `build/reports/tests/test/`에 생
 
 현재 연구 상태의 read model이며 Python의 서명 검증·Gate 재평가를 Java로 복제하지 않습니다. 저장된 Gate 값은 당시 상태이고, 자동화 상태도 저장 checkpoint 그대로입니다. 신규 snapshot 21개 조건을 Java에서 재계산하지 않습니다.
 
-React Overview는 여전히 DEMO이며 [기존 Mock DashboardRepository](../frontend/src/services/dashboard-repository.ts)에 실제 API adapter를 연결하는 작업은 별도입니다. 현재 화면의 evidence/approval/activation 전체 DTO를 이 API가 모두 제공한다고 가정하지 마세요. Overview는 Long ID와 BigDecimal을 JSON 문자열로 반환합니다. 기존 Research API의 숫자 계약과 lossless parsing은 변경하지 않습니다. 관리자 비밀번호를 frontend bundle에 저장하면 안 됩니다.
+React Overview는 기본 DEMO이며 개발 환경의 명시적 opt-in으로 별도 Overview read DTO/client를 사용할 수 있습니다. [Frontend 실행 절차](../frontend/README.md#overview-local-api-v1)를 참고하세요. 현재 화면의 evidence/approval/activation 전체 DTO를 이 API가 모두 제공한다고 가정하지 마세요. Overview는 Long ID와 BigDecimal을 JSON 문자열로 반환합니다. 기존 Research API의 숫자 계약과 lossless parsing은 변경하지 않습니다. 관리자 비밀번호를 frontend bundle에 저장하면 안 됩니다.

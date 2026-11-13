@@ -31,6 +31,7 @@ import { DEMO_AS_OF } from '@/data/mock/dashboard';
 import { dateTime } from '@/lib/format';
 import type { DemoScenario } from '@/types/dashboard';
 import { useResearchSource } from '@/hooks/use-research-source';
+import { useOverviewSource } from '@/hooks/use-overview-source';
 
 const navigation = [
   { to: '/overview', label: '대시보드', icon: LayoutDashboard },
@@ -93,8 +94,11 @@ export function AppShell() {
   });
   const { scenario, setScenario } = useDemoScenario();
   const { source } = useResearchSource();
+  const overview = useOverviewSource();
   const isResearch = /^\/research\/?$/.test(location.pathname);
-  const isApi = isResearch && source === 'api';
+  const isOverview = /^\/overview\/?$/.test(location.pathname);
+  const isApi = (isResearch && source === 'api') || (isOverview && overview.source === 'api');
+  const apiName = isOverview ? 'Overview' : 'Research';
   const query = useDashboardData(!isApi);
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
@@ -123,9 +127,9 @@ export function AppShell() {
         <div className="sidebar-bottom">
           <div className="sidebar-note">
             <ShieldCheck size={20} />
-            <strong>{isApi ? 'Research API 조회' : '데모 워크스페이스'}</strong>
+            <strong>{isApi ? `${apiName} API 조회` : '데모 워크스페이스'}</strong>
             <p>
-              {isApi ? '현재 Research는 로컬 API입니다.' : '모든 데이터는 Mock입니다.'}
+              {isApi ? `현재 ${apiName}는 로컬 API입니다.` : '현재 화면의 데이터는 Mock입니다.'}
               <br />
               거래·승인·정책 변경 없이
               <br />
@@ -167,7 +171,7 @@ export function AppShell() {
                 <Brand onSelect={() => setMobileOpen(false)} />
                 <Navigation onSelect={() => setMobileOpen(false)} />
                 <p className="text-muted small" style={{ marginTop: 'auto' }}>
-                  {isApi ? 'Research: LOCAL API · 다른 화면: DEMO' : 'Mock 데이터 · 조회 전용'}
+                  {isApi ? `${apiName}: LOCAL API · 화면별 출처 확인` : 'Mock 데이터 · 조회 전용'}
                 </p>
               </DialogContent>
             </Dialog>
@@ -201,7 +205,7 @@ export function AppShell() {
         </header>
         <main id="main-content" className="main-content" tabIndex={-1}>
           <Suspense fallback={<LoadingSkeleton />}>
-            {isUnknownRoute || isResearch ? (
+            {isUnknownRoute || isResearch || isOverview ? (
               <Outlet />
             ) : query.isPending ? (
               <LoadingSkeleton />
@@ -219,7 +223,7 @@ export function AppShell() {
             <span>
               Crypto Trading Bot <span aria-hidden="true">/</span>{' '}
               {isApi
-                ? '현재 Research는 로컬 API 조회 전용입니다. 다른 화면은 DEMO입니다. 거래·승인·활성화는 실행하지 않습니다.'
+                ? `현재 ${apiName}는 로컬 API 조회 전용입니다. 각 화면의 출처 표시를 확인하세요. 거래·승인·활성화는 실행하지 않습니다.`
                 : '모든 수치는 데모입니다. 실제 운영 데이터와 연결되지 않습니다.'}
             </span>
             {!isApi && (

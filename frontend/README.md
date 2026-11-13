@@ -1,8 +1,8 @@
 # Crypto Trading Bot Dashboard
 
-Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경의 Research 화면만 명시적으로 LOCAL API 모드로 전환할 수 있습니다.
+Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경의 Research와 Overview 화면은 각각 명시적으로 LOCAL API 모드로 전환할 수 있습니다.
 
-DEMO의 모든 금액·상태·시각은 합성 데이터이며 실제 API를 호출하지 않습니다. LOCAL API는 기존 로컬 Spring Boot Research GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
+DEMO의 모든 금액·상태·시각은 합성 데이터이며 실제 API를 호출하지 않습니다. LOCAL API는 기존 로컬 Spring Boot Research / Overview GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
 
 ## 기술 스택
 
@@ -53,7 +53,7 @@ npm run preview
 | `/research`    | 전략 연구     | Runtime 정책, 11단계 lifecycle, 후보 목록, 가중치 비교, Historical/Forward/Shadow evidence, Gate 상세 |
 | `/operations`  | 운영 모니터링 | 모의 worker 상태, 분석 일정, Research Lifecycle 처리 현황, 이벤트와 경고                              |
 
-위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 Research 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시하며 다른 네 화면은 항상 DEMO입니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
+위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시합니다. Research와 Overview의 선택은 독립적이며 AI Analysis / Portfolio / Operations는 DEMO입니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
 
 Sidebar는 데스크톱에서 접을 수 있고 모바일에서는 Drawer로 열립니다. 모바일 메뉴를 선택하면 Drawer가 닫힙니다. 다크 테마가 기본이며 라이트 테마로 전환할 수 있습니다. 선택한 테마만 브라우저 localStorage에 저장합니다.
 
@@ -98,11 +98,11 @@ frontend/
 │   │   ├── layout/         # Sidebar, Header, AppShell
 │   │   └── charts/         # 공통 자산 차트와 기간 필터
 │   ├── pages/              # overview, ai-analysis, portfolio, research, operations
-│   ├── types/              # Mock DTO와 실제 Research read DTO 분리
+│   ├── types/              # Mock DTO와 Research / Overview read DTO 분리
 │   ├── data/mock/          # 결정적인 공통 fixture와 연구 데이터
-│   ├── services/           # Mock repository, Research GET client
-│   ├── hooks/              # Mock Query와 독립 Research Query/source provider
-│   ├── lib/                # formatter, lossless Research 응답 검증
+│   ├── services/           # Mock repository, Research / Overview GET client
+│   ├── hooks/              # Mock과 독립 Research / Overview Query/source provider
+│   ├── lib/                # formatter, lossless API 응답 검증
 │   ├── styles/             # 공통 tokens와 반응형 스타일
 │   └── test/               # jsdom test setup
 ├── e2e/                    # 로컬 브라우저 회귀 검증
@@ -155,7 +155,7 @@ try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_RESEARCH_API }
 3. 브라우저의 HTTP Basic 인증 창에 로컬 관리자의 자격 증명을 입력합니다. React에는 로그인 form이 없으며 비밀번호를 받거나 Authorization header를 만들지 않습니다. URL userinfo도 사용하지 않습니다.
 4. JSON 조회를 확인한 뒤 Research 탭으로 돌아와 **다시 시도** 또는 **API 새로고침**을 선택합니다. `credentials: same-origin`으로 브라우저가 관리하는 인증 상태만 사용합니다.
 
-주소의 `localhost`와 `127.0.0.1`은 서로 다른 origin입니다. 인증과 UI에서 동일 host/port를 사용하세요. 브라우저별 Basic 인증 캐시와 fetch challenge 동작이 다를 수 있습니다. 반복 401이면 같은 origin에서 직접 인증했는지 확인하고, 필요한 경우 전용 로컬 브라우저 profile에서 검증합니다. 앱은 인증정보나 브라우저 인증 캐시를 읽거나 지우지 않습니다. 이 네이티브 인증 흐름은 mock E2E와 별개의 수동 검증 대상이며 이번 구현에서는 실제 브라우저 인증 성공을 확인하지 않았습니다.
+주소의 `localhost`와 `127.0.0.1`은 서로 다른 origin입니다. 인증과 UI에서 동일 host/port를 사용하세요. 브라우저별 Basic 인증 캐시와 fetch challenge 동작이 다를 수 있습니다. 반복 401이면 같은 origin에서 직접 인증했는지 확인하고, 필요한 경우 전용 로컬 브라우저 profile에서 검증합니다. 앱은 인증정보나 브라우저 인증 캐시를 읽거나 지우지 않습니다. Overview 연동 검증에서는 테스트 credential로 Chromium HTTP Basic 경로를 확인했습니다. 브라우저별 네이티브 인증 창은 별도 수동 검증 대상입니다.
 
 Proxy는 development serve + flag가 활성화된 경우에만 아래 5종 endpoint의 **GET**을 고정 loopback target으로 전달합니다. POST 등 쓰기 메서드와 다른 `/api/` 경로는 403으로 거부합니다. 임의 backend origin, 전체 `/api` 전달, proxy 공용 credential, CORS 허용 설정은 없습니다. Client는 redirect를 오류로 처리하고 proxy도 redirect를 따라가지 않습니다. 401/403 자동 재시도·자동 polling은 하지 않습니다.
 
@@ -178,6 +178,47 @@ Proxy는 development serve + flag가 활성화된 경우에만 아래 5종 endpo
 로딩, 0건, 400 입력 오류, 401 인증 필요, 403 접근 거부, 404 후보 없음, 500 서버 오류, 네트워크 실패, 잘못된 JSON/스키마를 구분합니다. 오류 body/credential을 화면이나 console에 출력하지 않습니다. 실패를 DEMO나 0으로 대체하지 않고 null은 미기록으로 표시합니다. 갱신 실패 시 이전 정상 값을 현재 정상 결과처럼 표시하지 않습니다.
 
 현재 Gate, Historical/Forward 성과, 사람 승인, Full LIVE activation, Runtime 정책, Worker 실행 상태는 현재 API에 없습니다. 화면에 **현재 API 미제공**으로 명시하며 과거 `storedGateStatus`를 현재 적격 판정으로 사용하지 않습니다. Automation row 없음은 미관찰이며 장애나 신규 적격 데이터 0건으로 추정하지 않습니다.
+
+## Overview LOCAL API v1
+
+Overview도 기본 DEMO를 유지합니다. 기존 Mock 화면은 `OverviewDemoView`에 보존하고, 별도 read DTO/parser/client/Query와 `OverviewApiView`에서 실제 저장 데이터를 표시합니다. Backend의 [Overview API 계약](../backend/docs/OVERVIEW_READ_API_V1.md)을 그대로 사용하며 Python/Java 금융 계산이나 DB schema를 변경하지 않습니다.
+
+먼저 로컬 Backend와 SELECT 전용 DB 계정을 준비하세요. 기존 Research 권한만 있는 경우 Portfolio/Position/Performance/Bot PnL/Recommendation 테이블 5개의 SELECT 권한도 필요합니다. 준비 절차는 [Backend README](../backend/README.md)를 따릅니다.
+
+Repository root에서 파일 수정 없이 실행할 수 있습니다.
+
+```powershell
+cd frontend
+$env:VITE_ENABLE_OVERVIEW_API = "true"
+try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_OVERVIEW_API }
+```
+
+Unix에서는 `cd frontend` 후 `VITE_ENABLE_OVERVIEW_API=true npm run dev`를 사용합니다. Research도 함께 사용하려면 별도로 `VITE_ENABLE_RESEARCH_API=true`를 지정하세요. 두 flag는 credential이 아니며 기본 OFF, development에서만 동작합니다. Production build에서는 사용할 수 없습니다.
+
+1. [http://127.0.0.1:5173/overview](http://127.0.0.1:5173/overview)를 열고 **LOCAL API · READ ONLY**를 선택합니다.
+2. 401이면 **새 탭에서 관리자 인증**으로 같은 origin의 `/api/v1/overview/summary`를 방문합니다. 브라우저 HTTP Basic 창에 로컬 관리자 credential을 입력합니다.
+3. JSON 조회를 확인하고 화면에서 다시 시도합니다. 인증은 브라우저가 관리하며 React는 credential을 수집·저장하지 않습니다.
+
+새로고침하면 DEMO로 돌아갑니다. 메모리의 모드 선택은 저장하지 않으며, API 화면을 벗어나면 요청을 취소하고 사용하지 않는 Query cache를 제거합니다. 다른 화면으로 이동할 때 그 화면의 출처 표시를 확인하세요.
+
+| GET endpoint                       | 화면 및 기준                                                                        |
+| ---------------------------------- | ----------------------------------------------------------------------------------- |
+| `/api/v1/overview/summary`         | 최신 계좌 평가, 같은 snapshot의 성과, 독립 FIFO 인식 손익 및 각각의 관측·계산 시각  |
+| `/api/v1/overview/positions`       | Summary와 같은 scope/snapshot ID/관측 시각을 확인한 자산 목록                       |
+| `/api/v1/overview/performance`     | KST 입력을 UTC로 변환한 periodEndAt 기간 조회와 서버 페이지; 저장된 성과 index와 표 |
+| `/api/v1/overview/recommendations` | BUY/SELL/HOLD 필터 및 서버 페이지; 원본 추천 status                                 |
+
+Summary가 정상 조회된 뒤 Positions를 조회합니다. Scope가 다르면 즉시 차단하며, snapshot 불일치만 1회 다시 조회합니다. 계속 다르면 자산을 혼합하지 않고 갱신 필요 상태로 표시합니다. 다시 시도는 계좌 요약을 포함해 새로 조회합니다. Performance/Recommendation은 독립적으로 조회하며 자체 scope와 생성 시각을 표시하고, 사용 가능한 Summary scope와 다르면 표시하지 않습니다. 개별 실패가 다른 정상 영역을 DEMO로 바꾸지 않습니다.
+
+금액·수량·ID는 문자열로 보존합니다. 기존 `lossless-json`으로 count도 손실 없이 읽고 응답 schema·enum·소유권·페이지 개수를 검증합니다. 금액/수량 formatter는 문자열과 BigInt를 사용해 원 단위 미만 및 큰 정수를 보존합니다. Percentage는 저장 단위 그대로이고 confidence/tradeRatio만 문자열 자릿수 이동으로 표시용 %로 바꿉니다. 소수점 뒤 의미 없는 0만 생략합니다. 차트 좌표에만 Number 근사값을 사용하며 tooltip과 표는 원본 decimal을 표시합니다.
+
+PARTIAL의 known total을 전체 총액으로 대체하지 않습니다. BASELINE은 기준점으로 표시하고, PARTIAL·새 BASELINE·periodStartAt 연속성을 확인할 수 없는 구간은 선으로 잇지 않습니다. 차트는 현재 조회 페이지의 기록만 사용하며 90개 row를 90일이나 전체 이력으로 표현하지 않습니다. 페이지 간 임의 누적 수익률 계산이나 보간도 없습니다. 긴 표는 내부 스크롤로 조회합니다.
+
+UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분하고 실제 상세 대신 DEMO 상세로 연결하지 않습니다. 현재 Runtime 정책/Gate·worker 상태·주문/체결 상세 등은 **현재 API 미제공**으로 표시합니다.
+
+조회 오류·401·403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치를 구분하며 오류 원문을 노출하지 않습니다. 오류 시 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
+
+Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium HTTP Basic 인증/4개 GET/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 모든 브라우저의 네이티브 인증 창 수동 검증이나 Production 인증 검증을 대신하지 않습니다.
 
 ## 개발 검증
 
@@ -208,7 +249,7 @@ npm run test:e2e
 Remove-Item Env:PLAYWRIGHT_CHANNEL
 ```
 
-테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. Research API는 정확한 숫자 literal을 가진 mock response로 가로채고 외부 origin 요청은 차단합니다. 실제 Backend·관리자 credential·Production DB는 필요하지 않습니다. 기존 DEMO E2E와 API 모드의 검색·페이지·상세·오류·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
+테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 Research/Overview flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. Research/Overview API는 정밀도 경계를 포함한 mock response로 가로채고 외부 origin 요청은 차단합니다. 기본 E2E에는 실제 Backend·관리자 credential·Production DB가 필요하지 않습니다. 기존 DEMO 및 API 검색·페이지·오류·snapshot 불일치·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
 
 개발 도구의 transitive `minimatch`는 `package.json`의 override로 `11.0.1`에 고정합니다. [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)의 glob pattern amplification 문제를 수정한 버전을 사용하기 위한 설정이며 runtime application dependency를 추가하지 않습니다. 변경 시 lockfile과 실제 ESLint 실행의 호환성을 함께 검증합니다.
 
@@ -222,9 +263,9 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL
 
 ## 이번 단계에 포함하지 않은 기능
 
-애플리케이션 로그인·JWT, 직접 PostgreSQL 연결, 실계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, 기존 Spring Boot 코드, root Compose와 LIVE 안전장치는 변경하지 않습니다.
+애플리케이션 로그인·JWT, 직접 PostgreSQL 연결, Upbit 실시간 계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, 기존 Spring Boot 코드, root Compose와 LIVE 안전장치는 변경하지 않습니다.
 
-후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. 다른 네 화면의 API 연결도 별도 범위입니다.
+후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. AI Analysis / Portfolio / Operations 화면의 API 연결도 별도 범위입니다.
 
 Production 공개 전 TLS reverse proxy, 관리자 인증/세션 설계, 권한·CSRF 정책, 최소 DB 권한, 접근 로그의 민감정보 처리, 보안 header와 origin 경계를 별도로 검토해야 합니다. 로컬 Basic 인증과 Vite proxy는 Production 인증/배포 설계가 아닙니다. `VITE_*`, bundle, URL, localStorage/sessionStorage에 secret을 넣지 마세요.
 
