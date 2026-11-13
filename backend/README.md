@@ -1,6 +1,6 @@
-# Research / Overview Read API Backend
+# Research / Overview / AI Trade Analysis Read API Backend
 
-Java 21 / Spring Boot 기반 관리자 전용 Research / Overview 조회 API입니다. 현재 Python 엔진이 저장한 PostgreSQL 데이터를 읽습니다. 연구 평가, 금융 지표 재계산, 등록, Telegram 승인, LIVE 활성화, 주문은 수행하지 않습니다.
+Java 21 / Spring Boot 기반 관리자 전용 Research / Overview / AI Trade Analysis 조회 API입니다. 현재 Python 엔진이 저장한 PostgreSQL 데이터를 읽습니다. 연구 평가, 금융 지표 재계산, 등록, Telegram 승인, LIVE 활성화, 주문은 수행하지 않습니다.
 
 ## 역할과 구조
 
@@ -18,6 +18,7 @@ src/main/java/io/github/suover/cryptotradingbot/
   research/entity/     최소 컬럼 @Immutable 매핑, 복합키
   research/dto/        외부 응답, 검색 조건
   overview/            controller/service/repository/entity/dto, 계좌·성과·추천 조회
+  tradeanalysis/       추천 상세·당시 후보·승인·주문 시도·체결 요약 조회
 src/test/java/         Mockito, MockMvc, PostgreSQL Testcontainers
 src/test/python/       기존 Alembic 실행 및 테스트 fixture 준비
 ```
@@ -62,9 +63,28 @@ GRANT SELECT ON
 TO backend_reader;
 ```
 
-이미 Research 권한이 설정된 계정에는 DBA가 검토 후 위 목록의 Overview 테이블 5개에 대한 SELECT만 추가하면 됩니다. `analysis_runs`, `account_snapshots`, 주문 테이블의 SELECT나 sequence 권한은 필요하지 않습니다. 운영 권한은 자동 변경하지 않습니다.
+이미 Research 권한이 설정된 계정에는 DBA가 검토 후 위 목록의 Overview 테이블 5개에 대한 SELECT를 추가합니다. AI Trade Analysis를 사용하려면 아래 5개 테이블의 명시된 컬럼 SELECT도 필요합니다. `account_snapshots`, `order_fills`, sequence 권한은 필요하지 않습니다. 운영 권한은 자동 변경하지 않습니다.
 
-공유 DB에서는 위 GRANT만으로 모든 환경의 읽기 전용 권한이 보장되지 않습니다. 다른 role membership 및 PUBLIC에서 상속된 권한, schema/DB 소유권을 확인하세요. PostgreSQL의 기본 PUBLIC TEMP 권한도 고려해야 합니다. 운영 DB의 PUBLIC 권한 변경은 다른 애플리케이션에 영향을 주므로 DBA가 별도로 검토해야 하며 이 작업에서 자동으로 REVOKE하지 않습니다. Testcontainers DB에서는 PUBLIC schema/DB 권한을 제거하고 CONNECT/USAGE 및 위 10개 테이블 SELECT만 부여한 뒤 DML, TRUNCATE, 일반/임시 CREATE, ALTER, DROP, 주문 테이블 SELECT가 모두 거부되는지 테스트합니다.
+```sql
+GRANT SELECT (id, user_id, pipeline_run_id, run_type, trading_mode, status, started_at, finished_at)
+ON public.analysis_runs TO backend_reader;
+GRANT SELECT (id, analysis_run_id, user_id, exchange, market, base_asset, quote_asset,
+    rank, score, selection_source, buy_eligible, sell_eligible, quote_trade_value_24h, feature_data, created_at)
+ON public.market_universe_candidates TO backend_reader;
+GRANT SELECT (id, recommendation_id, user_id, status, expires_at, approved_at, rejected_at, created_at, updated_at)
+ON public.approval_requests TO backend_reader;
+GRANT SELECT (id, recommendation_id, approval_request_id, order_log_id, user_id, trading_mode,
+    attempt_number, status, error_code, attempted_at, next_retry_at)
+ON public.order_execution_attempts TO backend_reader;
+GRANT SELECT (id, recommendation_id, approval_request_id, user_id, trading_mode, exchange, market,
+    side, order_type, amount_krw, quantity, price, status, executed_quantity, executed_funds_krw,
+    average_execution_price, paid_fee, remaining_quantity, trades_count, execution_synced_at, created_at, updated_at)
+ON public.order_logs TO backend_reader;
+```
+
+이는 DB 관리자가 대상 환경과 기존 권한을 검토한 뒤 적용할 예시입니다. 새 테이블의 callback token, Telegram 식별정보, raw 응답·자유형 error message 컬럼은 부여하지 않습니다. 기존 `trade_recommendations`는 전체 SELECT를 유지하지만 API Entity/DTO에서 `ai_response`를 제외합니다. 상세 계약은 [AI Trade Analysis Read API v1](docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요.
+
+공유 DB에서는 위 GRANT만으로 모든 환경의 읽기 전용 권한이 보장되지 않습니다. 다른 role membership 및 PUBLIC에서 상속된 권한, schema/DB 소유권을 확인하세요. PostgreSQL의 기본 PUBLIC TEMP 권한도 고려해야 합니다. 운영 DB의 PUBLIC 권한 변경은 다른 애플리케이션에 영향을 주므로 DBA가 별도로 검토해야 하며 이 작업에서 자동으로 REVOKE하지 않습니다. Testcontainers DB에서는 PUBLIC schema/DB 권한을 제거하고 CONNECT/USAGE, 기존 10개 테이블 SELECT와 추가 5개 테이블의 지정 컬럼 SELECT만 부여합니다. DML, TRUNCATE, 일반/임시 CREATE, ALTER/DROP, 추가 테이블의 비공개 컬럼 및 불필요한 테이블 SELECT 거부를 검증합니다.
 
 권한 확인 예시(읽기 계정으로 연결):
 

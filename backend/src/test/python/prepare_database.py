@@ -14,6 +14,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
+from prepare_trade_analysis import prepare_trade_analysis
 
 from crypto_trading_bot.config import settings
 from crypto_trading_bot.db.models import (
@@ -172,6 +173,7 @@ def main():
                 )
             )
         prepare_overview(session, time)
+        prepare_trade_analysis(session, time)
         session.commit()
     with engine.begin() as connection:
         connection.execute(
@@ -191,6 +193,31 @@ def main():
                 "research_candidate_automation_states, shadow_policy_enrollments, "
                 "portfolio_snapshots, portfolio_position_snapshots, portfolio_performance_snapshots, "
                 "bot_trading_pnl_summaries, trade_recommendations TO backend_reader"
+            )
+        )
+        connection.execute(
+            text(
+                "GRANT SELECT (id, user_id, pipeline_run_id, run_type, trading_mode, status, started_at, finished_at) ON analysis_runs TO backend_reader"
+            )
+        )
+        connection.execute(
+            text(
+                "GRANT SELECT (id, analysis_run_id, user_id, exchange, market, base_asset, quote_asset, rank, score, selection_source, buy_eligible, sell_eligible, quote_trade_value_24h, feature_data, created_at) ON market_universe_candidates TO backend_reader"
+            )
+        )
+        connection.execute(
+            text(
+                "GRANT SELECT (id, recommendation_id, user_id, status, expires_at, approved_at, rejected_at, created_at, updated_at) ON approval_requests TO backend_reader"
+            )
+        )
+        connection.execute(
+            text(
+                "GRANT SELECT (id, recommendation_id, approval_request_id, order_log_id, user_id, trading_mode, attempt_number, status, error_code, attempted_at, next_retry_at) ON order_execution_attempts TO backend_reader"
+            )
+        )
+        connection.execute(
+            text(
+                "GRANT SELECT (id, recommendation_id, approval_request_id, user_id, trading_mode, exchange, market, side, order_type, amount_krw, quantity, price, status, executed_quantity, executed_funds_krw, average_execution_price, paid_fee, remaining_quantity, trades_count, execution_synced_at, created_at, updated_at) ON order_logs TO backend_reader"
             )
         )
     engine.dispose()

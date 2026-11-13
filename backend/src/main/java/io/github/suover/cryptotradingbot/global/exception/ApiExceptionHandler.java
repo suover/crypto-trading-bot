@@ -1,6 +1,7 @@
 package io.github.suover.cryptotradingbot.global.exception;
 
 import io.github.suover.cryptotradingbot.research.service.ResearchNotFoundException;
+import io.github.suover.cryptotradingbot.tradeanalysis.service.AnalysisNotFoundException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -22,6 +23,10 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ResearchNotFoundException.class)
     ResponseEntity<ApiError> notFound() {
         return ResponseEntity.status(404).body(ApiError.of("NOT_FOUND", "Research candidate not found"));
+    }
+    @ExceptionHandler(AnalysisNotFoundException.class)
+    ResponseEntity<ApiError> analysisNotFound() {
+        return ResponseEntity.status(404).body(ApiError.of("NOT_FOUND", "Recommendation not found"));
     }
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiError> forbidden() {

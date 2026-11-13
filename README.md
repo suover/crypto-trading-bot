@@ -134,7 +134,7 @@ LIVE execution은 현재 Upbit 전용입니다. Telegram approval, execution mod
 ```text
 crypto-trading-bot/
 ├── trading-engine/   # 구현된 Python trading/research engine
-├── backend/          # Spring Boot Research / Overview 조회 전용 API
+├── backend/          # Spring Boot Research / Overview / AI Trade Analysis 조회 전용 API
 ├── frontend/         # React + TypeScript DEMO / 로컬 Research·Overview 조회 대시보드
 ├── docs/             # architecture, research, policy, operations 문서
 ├── scripts/          # root 운영·백업·배포 shell script
@@ -343,7 +343,7 @@ npm run dev
 
 ## 설정
 
-Java Backend는 별도의 관리자 인증과 SELECT 전용 DB 계정으로 Research API 5개와 Overview API 4개를 제공합니다. Overview는 저장된 계좌 평가·보유 자산·Modified Dietz 성과·추천 및 독립 FIFO Bot PnL을 조회하며 금융 지표를 재계산하지 않습니다. Python/Alembic 스키마를 검증만 하며, Production Compose에는 추가되지 않았습니다. Java 21 로컬 실행·검증은 [Backend README](backend/README.md), 요청·응답 계약은 [Research Read API v1](backend/docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](backend/docs/OVERVIEW_READ_API_V1.md)을 참고하세요. Frontend CI는 기존 Python/Java job과 독립적으로 typecheck·lint·format·단위 테스트·build·mock API 브라우저 테스트를 수행합니다.
+Java Backend는 별도의 관리자 인증과 SELECT 전용 DB 계정으로 Research API 5개, Overview API 4개, AI Trade Analysis API 3개를 제공합니다. Overview는 저장된 계좌 평가·보유 자산·Modified Dietz 성과·추천 및 독립 FIFO Bot PnL을 조회하며 금융 지표를 재계산하지 않습니다. AI Trade Analysis는 추천 상세·검증된 당시 후보·승인·주문 시도·체결 요약을 읽으며 실행 기능은 없습니다. Python/Alembic 스키마를 검증만 하며, Production Compose에는 추가되지 않았습니다. Java 21 로컬 실행·검증은 [Backend README](backend/README.md), 요청·응답 계약은 [Research Read API v1](backend/docs/RESEARCH_READ_API_V1.md), [Overview Read API v1](backend/docs/OVERVIEW_READ_API_V1.md), [AI Trade Analysis Read API v1](backend/docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요. Frontend AI Analysis 연결은 별도 단계입니다. Frontend CI는 기존 Python/Java job과 독립적으로 typecheck·lint·format·단위 테스트·build·mock API 브라우저 테스트를 수행합니다.
 
 설정의 source of truth는 [.env.example](.env.example)과 [`Settings`](trading-engine/crypto_trading_bot/config/settings.py)입니다.
 
