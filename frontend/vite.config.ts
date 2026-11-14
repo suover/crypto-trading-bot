@@ -23,6 +23,7 @@ export default defineConfig(({ command, mode }) => {
       'true';
   const analysisPath =
     /^\/api\/v1\/ai-trade-analysis\/recommendations(?:\/[1-9]\d{0,18}(?:\/candidates)?)?$/;
+  const authEnabled = enabled || overviewEnabled || analysisEnabled;
   return {
     plugins: [
       react(),
@@ -33,14 +34,15 @@ export default defineConfig(({ command, mode }) => {
           server.middlewares.use((request, response, next) => {
             if (request.url?.startsWith('/api/')) {
               const path = new URL(request.url, 'http://127.0.0.1').pathname;
-              if (
-                request.method !== 'GET' ||
-                !(
-                  (enabled && researchPath.test(path)) ||
-                  (overviewEnabled && overviewPath.test(path)) ||
-                  (analysisEnabled && analysisPath.test(path))
-                )
-              ) {
+              if (!(
+                (request.method === 'GET' &&
+                  ((enabled && researchPath.test(path)) ||
+                    (overviewEnabled && overviewPath.test(path)) ||
+                    (analysisEnabled && analysisPath.test(path)))) ||
+                (authEnabled &&
+                  ((request.method === 'GET' && /^\/api\/v1\/auth\/(csrf|me)$/.test(path)) ||
+                    (request.method === 'POST' && /^\/api\/v1\/auth\/(login|logout)$/.test(path))))
+              )) {
                 response.statusCode = 403;
                 response.end('Read-only local API boundary');
                 return;
@@ -57,6 +59,15 @@ export default defineConfig(({ command, mode }) => {
       port: 5173,
       strictPort: true,
       proxy: {
+        ...(authEnabled
+          ? {
+              '/api/v1/auth/': {
+                target: 'http://127.0.0.1:8080',
+                followRedirects: false,
+                proxyTimeout: 5000,
+              },
+            }
+          : {}),
         ...(analysisEnabled
           ? {
               '/api/v1/ai-trade-analysis/': {

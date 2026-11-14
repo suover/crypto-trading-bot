@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { AnalysisApiError, analysisAuthenticationPath } from '@/services/analysis-api-client';
+import { AnalysisApiError } from '@/services/analysis-api-client';
 export function AnalysisError({ error, retry }: { error: Error; retry: () => void }) {
   const e = error instanceof AnalysisApiError ? error : new AnalysisApiError('data');
   const message =
@@ -22,16 +22,6 @@ export function AnalysisError({ error, retry }: { error: Error; retry: () => voi
     <div role="alert" className="empty-state">
       <h3>{message}</h3>
       <p>실패한 조회를 DEMO나 0으로 대체하지 않습니다.</p>
-      {e.status === 401 && (
-        <a
-          className="text-button"
-          href={analysisAuthenticationPath}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          새 탭에서 관리자 인증
-        </a>
-      )}
       <Button variant="outline" onClick={retry}>
         다시 시도
       </Button>

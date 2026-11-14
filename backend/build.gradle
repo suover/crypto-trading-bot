@@ -31,3 +31,10 @@ tasks.withType(Test).configureEach {
     testLogging { events 'failed', 'skipped'; exceptionFormat 'short' }
 }
 tasks.withType(JavaCompile).configureEach { options.compilerArgs += '-parameters' }
+
+// Used by the local, console-only password hash tool; no server or DB is started.
+tasks.register('adminHashClasspath') {
+    doLast {
+        println configurations.runtimeClasspath.files.find { it.name.startsWith('spring-security-crypto-') }.absolutePath
+    }
+}

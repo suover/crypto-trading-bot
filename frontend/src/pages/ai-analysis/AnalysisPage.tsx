@@ -1,3 +1,4 @@
+import { ApiSessionBoundary } from '@/components/auth/ApiSessionBoundary';
 import { lazy, Suspense } from 'react';
 import { useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
@@ -43,7 +44,9 @@ export default function AnalysisPage() {
       )}
       {source === 'api' ? (
         <Suspense fallback={<LoadingSkeleton />}>
-          <AnalysisApiView />
+          <ApiSessionBoundary>
+            <AnalysisApiView />
+          </ApiSessionBoundary>
         </Suspense>
       ) : demo.isPending ? (
         <LoadingSkeleton />

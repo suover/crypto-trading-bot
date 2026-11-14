@@ -3,7 +3,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { dateTime } from '@/lib/format';
 import { sameScope } from '@/lib/overview-api-parser';
-import { OverviewApiError, overviewAuthenticationPath } from '@/services/overview-api-client';
+import { OverviewApiError } from '@/services/overview-api-client';
 import type { Envelope, Page, Scope } from '@/types/overview-api';
 
 export function Time({ value }: { value: string | null }) {
@@ -43,19 +43,6 @@ export function ApiError({ error, retry }: { error: Error; retry: () => void }) 
     <div className="empty-state" role="alert">
       <h3>{message}</h3>
       <p>실패한 조회를 DEMO나 0으로 대체하지 않습니다.</p>
-      {e.status === 401 && (
-        <p>
-          <a
-            className="text-button"
-            href={overviewAuthenticationPath}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            새 탭에서 관리자 인증
-          </a>{' '}
-          후 다시 시도하세요. 비밀번호는 브라우저 인증 창에서만 입력합니다.
-        </p>
-      )}
       <Button variant="outline" onClick={retry}>
         다시 시도
       </Button>

@@ -172,7 +172,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         mvc.perform(get(url)).andExpect(status().isUnauthorized());
         mvc.perform(get(url).with(httpBasic("fixture-admin", "wrong"))).andExpect(status().isUnauthorized());
         mvc.perform(get(url).with(user("viewer").roles("VIEWER"))).andExpect(status().isForbidden());
-        String body = mvc.perform(get(url).with(httpBasic("fixture-admin", "admin-fixture-only")))
+        String body = mvc.perform(get(url).session(adminSession(mvc)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.scope.userId").isString())
                 .andReturn().getResponse().getContentAsString();
         assertThat(body).doesNotContain("aiResponse", "private-reason", "not-exposed", "sourceSignature", "telegram", "password");
@@ -181,7 +181,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         ownerSql("UPDATE users SET is_active=false WHERE id=1");
         try {
             for (String endpoint : List.of("summary", "positions", "performance", "recommendations")) {
-                mvc.perform(get("/api/v1/overview/" + endpoint).with(httpBasic("fixture-admin", "admin-fixture-only")))
+                mvc.perform(get("/api/v1/overview/" + endpoint).session(adminSession(mvc)))
                         .andExpect(status().isForbidden());
             }
         } finally { ownerSql("UPDATE users SET is_active=true WHERE id=1"); }

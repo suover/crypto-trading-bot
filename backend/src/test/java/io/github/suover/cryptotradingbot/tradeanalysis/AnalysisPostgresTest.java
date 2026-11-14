@@ -176,19 +176,19 @@ class AnalysisPostgresTest extends PostgresFixtureTest {
             assertThat(stats.getPrepareStatementCount()).isLessThanOrEqualTo(6);
         } finally { stats.setStatisticsEnabled(false); }
     }
-    @Test void realHttpBasicAndStringSafeContractForExistingUserRemainCompatible() throws Exception {
+    @Test void realSessionAndStringSafeContractForExistingUserRemainCompatible() throws Exception {
         mvc.perform(get(ROOT + "/4001")).andExpect(status().isUnauthorized());
         mvc.perform(get(ROOT + "/4001").with(httpBasic("fixture-admin", "wrong"))).andExpect(status().isUnauthorized());
         mvc.perform(get(ROOT + "/4001").with(user("viewer").roles("VIEWER"))).andExpect(status().isForbidden());
-        mvc.perform(get(ROOT + "/4001").with(httpBasic("fixture-admin", "admin-fixture-only")))
+        mvc.perform(get(ROOT + "/4001").session(adminSession(mvc)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.recommendation.id").value("4001"))
                 .andExpect(jsonPath("$.recommendation.tradeRatio").value("0.123456789"))
                 .andExpect(jsonPath("$.universe.status").value("NO_REFERENCE"))
                 .andExpect(jsonPath("$.order").isEmpty())
                 .andExpect(jsonPath("$.recommendation.aiResponse").doesNotExist());
-        mvc.perform(get(ROOT + "/5001").with(httpBasic("fixture-admin", "admin-fixture-only")))
+        mvc.perform(get(ROOT + "/5001").session(adminSession(mvc)))
                 .andExpect(status().isNotFound());
-        mvc.perform(get(ROOT + "/4001/candidates").with(httpBasic("fixture-admin", "admin-fixture-only")))
+        mvc.perform(get(ROOT + "/4001/candidates").session(adminSession(mvc)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty());
     }
     @Test void newColumnGrantsDenyWritesAndPrivateColumnsEvenWithoutReadOnlyFlag() throws Exception {

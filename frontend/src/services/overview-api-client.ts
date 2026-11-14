@@ -1,3 +1,4 @@
+import { reportUnauthorized } from './auth-api';
 import {
   InvalidOverviewData,
   parseSummary,
@@ -28,6 +29,7 @@ async function get<T>(path: string, read: (raw: string) => T, signal?: AbortSign
       cache: 'no-store',
       headers: { Accept: 'application/json' },
     });
+    reportUnauthorized(response.status, signal);
     if (!response.ok) throw new OverviewApiError('http', response.status);
     if (!response.headers.get('content-type')?.toLowerCase().includes('application/json'))
       throw new OverviewApiError('data');

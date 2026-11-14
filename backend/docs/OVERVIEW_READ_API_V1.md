@@ -6,15 +6,9 @@ Python 엔진이 PostgreSQL에 저장한 계좌 평가, 보유 자산, Modified 
 
 Repository root에서 `cd backend` 후 Java 21 / Gradle Wrapper를 사용합니다. DB 설정, 실행 방법 및 DBA용 최소 권한 SQL은 [Backend README](../README.md)를 따릅니다. PostgreSQL 스키마의 소유자는 Python/Alembic이며 `ddl-auto=validate`를 유지합니다.
 
-모든 endpoint는 기존 stateless HTTP Basic 관리자 인증과 ADMIN 권한을 요구합니다. 기본 주소는 `http://127.0.0.1:8080`입니다. 인터넷 공개 전 TLS와 접근 통제를 별도로 검토해야 합니다. CORS를 확장하거나 인증정보를 frontend에 저장하지 않습니다.
+모든 endpoint는 기존 Spring Security 세션 관리자 인증과 ADMIN 권한을 요구합니다. 기본 주소는 `http://127.0.0.1:8080`입니다. 인터넷 공개 전 TLS와 접근 통제를 별도로 검토해야 합니다. CORS를 확장하거나 인증정보를 frontend에 저장하지 않습니다.
 
-```bash
-# 사용자 이름만 전달하고 비밀번호는 curl의 대화식 입력으로 제공합니다.
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/overview/summary"
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/overview/positions"
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/overview/performance?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&page=0&size=90"
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/overview/recommendations?action=BUY&page=0&size=10"
-```
+[관리자 세션 로그인](../README.md#세션과-인증-api) 후 동일 브라우저의 frontend origin에서 `/api/v1/overview/summary`, `/api/v1/overview/positions` 등을 조회합니다. HTTP Basic `curl -u` 방식은 지원하지 않습니다.
 
 ## 범위와 공통 응답 계약
 

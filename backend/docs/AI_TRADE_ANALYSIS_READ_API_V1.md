@@ -4,7 +4,7 @@
 
 ## 실행과 접근 경계
 
-Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 기존 HTTP Basic ADMIN 인증과 서버에 설정된 active user/exchange/quote scope를 요구합니다. Frontend는 개발 환경의 명시적 opt-in으로 이 GET 3개만 로컬 Vite proxy를 통해 조회합니다. 실행 절차는 [Frontend README](../../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
+Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 기존 Spring Security 세션 ADMIN 인증과 서버에 설정된 active user/exchange/quote scope를 요구합니다. Frontend는 개발 환경의 명시적 opt-in으로 이 GET 3개만 로컬 Vite proxy를 통해 조회합니다. 실행 절차는 [Frontend README](../../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
 
 `@Transactional(readOnly=true, isolation=REPEATABLE_READ)`, SELECT-only Repository, `@Immutable`, `ddl-auto=validate`를 유지합니다. 한 HTTP 요청 안의 count/items/관련 기록은 같은 DB snapshot을 사용합니다. 별도 HTTP 요청 사이의 동일 snapshot은 보장하지 않으며 각 응답에 `generatedAt`을 제공합니다.
 
@@ -28,11 +28,8 @@ Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 
 
 공통 `scope`는 userId/exchange/quoteAsset, Page는 items/page/size/totalElements/totalPages/generatedAt입니다. Long ID와 모든 BigDecimal은 **문자열**, 시각은 UTC instant, count는 JSON 정수입니다. Frontend는 큰 정수 count를 lossless parsing해야 합니다. null은 저장값 부재이며 0과 구분합니다.
 
-예시(backend가 로컬에서 실행 중일 때, curl이 비밀번호를 대화식으로 받음):
-
-```bash
-curl --user local-admin 'http://127.0.0.1:8080/api/v1/ai-trade-analysis/recommendations?action=HOLD&page=0&size=20'
-```
+조회 예시 경로: `/api/v1/ai-trade-analysis/recommendations?action=HOLD&page=0&size=20`.
+[관리자 세션 로그인](../README.md#세션과-인증-api) 이후 동일 브라우저의 frontend origin에서 조회합니다. HTTP Basic `curl --user` 방식은 지원하지 않습니다.
 
 ## Recommendation과 Detail
 
@@ -107,4 +104,4 @@ callback_token, Telegram chat/message ID, raw AI/exchange payload, exchange_orde
 
 [Backend README](../README.md)의 기존 권한에 아래 5개 테이블의 매핑 컬럼 SELECT만 추가합니다. 테스트 fixture는 실제 column privilege로 비공개 컬럼 SELECT, DML/DDL/TEMP를 차단합니다. 기존 trade_recommendations 전체 SELECT 권한은 유지되므로 raw ai_response의 DB 권한 차단까지 주장하지 않으며, 이 API의 Entity/DTO에는 매핑하지 않습니다.
 
-기존 Alembic PostgreSQL 17 Testcontainers에서 scope/FK/pipeline/quote, 큰 ID와 JSONB/Decimal, HOLD/legacy/HELD/PARTIAL, partial cancel/UNKNOWN/MOCK, HTTP Basic, 쓰기 거부와 query count를 검증합니다. 목록과 후보 페이지는 row별 추가 조회를 하지 않습니다. 기존 index를 사용하며 운영 규모의 count/offset 성능 측정은 별도입니다. migration이나 운영 DB 변경은 없습니다.
+기존 Alembic PostgreSQL 17 Testcontainers에서 scope/FK/pipeline/quote, 큰 ID와 JSONB/Decimal, HOLD/legacy/HELD/PARTIAL, partial cancel/UNKNOWN/MOCK, 세션 인증, 쓰기 거부와 query count를 검증합니다. 목록과 후보 페이지는 row별 추가 조회를 하지 않습니다. 기존 index를 사용하며 운영 규모의 count/offset 성능 측정은 별도입니다. migration이나 운영 DB 변경은 없습니다.

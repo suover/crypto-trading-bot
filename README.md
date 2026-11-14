@@ -339,7 +339,7 @@ npm ci
 npm run dev
 ```
 
-미리보기는 [localhost:5173](http://localhost:5173)입니다. 기본은 DEMO이며 개발 환경에서 `VITE_ENABLE_RESEARCH_API=true`, `VITE_ENABLE_OVERVIEW_API=true` 또는 `VITE_ENABLE_AI_ANALYSIS_API=true`를 명시하면 해당 화면을 로컬 Spring Boot GET API로 전환할 수 있습니다. Overview는 계좌 평가·보유 자산·저장된 성과·추천을 조회하며 PARTIAL/null과 각각의 기준 시각을 보존합니다. 인증정보는 React에 저장하지 않습니다. loopback proxy·브라우저 Basic 인증 절차와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요. Production build에서는 API 모드를 허용하지 않습니다.
+미리보기는 [localhost:5173](http://localhost:5173)입니다. 기본은 DEMO이며 개발 환경에서 `VITE_ENABLE_RESEARCH_API=true`, `VITE_ENABLE_OVERVIEW_API=true` 또는 `VITE_ENABLE_AI_ANALYSIS_API=true`를 명시하면 해당 화면을 로컬 Spring Boot GET API로 전환할 수 있습니다. Overview는 계좌 평가·보유 자산·저장된 성과·추천을 조회하며 PARTIAL/null과 각각의 기준 시각을 보존합니다. 인증정보는 React에 저장하지 않습니다. loopback proxy·관리자 로그인/세션 인증 절차와 검증 방법은 [Frontend README](frontend/README.md)를 참고하세요. Production build에서는 API 모드를 허용하지 않습니다.
 
 ## 설정
 

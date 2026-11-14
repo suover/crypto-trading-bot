@@ -150,14 +150,16 @@ try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_RESEARCH_API }
 
 `VITE_ENABLE_RESEARCH_API`는 비밀이 아닌 opt-in flag이며 기본 비활성입니다. `import.meta.env.DEV`도 참이어야 합니다. mode 선택은 React 메모리에만 보관하고 새로고침하면 DEMO로 돌아갑니다. localStorage, sessionStorage, URL에 mode나 credential을 저장하지 않습니다. 기존 테마 저장 기능은 유지합니다.
 
-1. [http://127.0.0.1:5173/research](http://127.0.0.1:5173/research)를 엽니다. 항상 DEMO로 시작하며 **LOCAL API · READ ONLY**를 선택해야 HTTP 조회합니다.
-2. 인증되지 않은 브라우저는 401/관리자 인증 필요 상태를 표시합니다. **새 탭에서 관리자 인증**으로 동일 origin의 `/api/v1/research/summary`를 직접 방문합니다.
-3. 브라우저의 HTTP Basic 인증 창에 로컬 관리자의 자격 증명을 입력합니다. React에는 로그인 form이 없으며 비밀번호를 받거나 Authorization header를 만들지 않습니다. URL userinfo도 사용하지 않습니다.
-4. JSON 조회를 확인한 뒤 Research 탭으로 돌아와 **다시 시도** 또는 **API 새로고침**을 선택합니다. `credentials: same-origin`으로 브라우저가 관리하는 인증 상태만 사용합니다.
+1. Backend README의 관리자 설정과 로컬 HTTP용 `BACKEND_SESSION_COOKIE_SECURE=false`로 서버를 시작합니다.
+2. [http://127.0.0.1:5173/research](http://127.0.0.1:5173/research)를 엽니다. DEMO는 로그인 없이 사용하며 **LOCAL API · READ ONLY** 선택 시 세션을 확인합니다.
+3. 미인증이면 `/login`으로 이동합니다. 관리자 아이디와 원래 비밀번호를 입력하면 선택한 API 화면으로 돌아옵니다. 직접 `/login`을 열어 로그인할 수도 있습니다.
+4. 새로고침 후에도 서버 세션은 유지되지만 화면의 데이터 출처 선택은 DEMO로 초기화됩니다. 헤더의 **로그아웃**은 서버 세션을 종료하고 진행 중인 조회/캐시를 제거합니다.
 
-주소의 `localhost`와 `127.0.0.1`은 서로 다른 origin입니다. 인증과 UI에서 동일 host/port를 사용하세요. 브라우저별 Basic 인증 캐시와 fetch challenge 동작이 다를 수 있습니다. 반복 401이면 같은 origin에서 직접 인증했는지 확인하고, 필요한 경우 전용 로컬 브라우저 profile에서 검증합니다. 앱은 인증정보나 브라우저 인증 캐시를 읽거나 지우지 않습니다. Overview 연동 검증에서는 테스트 credential로 Chromium HTTP Basic 경로를 확인했습니다. 브라우저별 네이티브 인증 창은 별도 수동 검증 대상입니다.
+로그인 화면만 비밀번호를 일시적으로 입력받고 제출 시 입력값을 지웁니다. URL, localStorage/sessionStorage, 번들에 credential을 보관하지 않습니다. `credentials: same-origin` 세션 쿠키를 사용하고 React는 HttpOnly 쿠키를 읽지 않습니다. API 401 시 캐시를 제거하고 재로그인을 요구하며, 403/서버 장애를 로그아웃 성공이나 DEMO 응답으로 바꾸지 않습니다. 로그아웃 실패 시 실제 데이터를 숨기고 상태 재확인을 안내합니다.
 
-Proxy는 development serve + flag가 활성화된 경우에만 아래 5종 endpoint의 **GET**을 고정 loopback target으로 전달합니다. POST 등 쓰기 메서드와 다른 `/api/` 경로는 403으로 거부합니다. 임의 backend origin, 전체 `/api` 전달, proxy 공용 credential, CORS 허용 설정은 없습니다. Client는 redirect를 오류로 처리하고 proxy도 redirect를 따라가지 않습니다. 401/403 자동 재시도·자동 polling은 하지 않습니다.
+주소의 `localhost`와 `127.0.0.1`을 혼용하지 마세요. 로컬 UI/API는 `127.0.0.1:5173`의 같은 origin으로 사용합니다. 서버 세션 만료는 다음 인증/조회 요청에서 확인됩니다. 다른 탭에서 로그아웃한 경우 현재 탭은 다음 요청 전까지 이미 표시된 데이터를 가지고 있을 수 있습니다.
+
+Proxy는 development serve + flag가 활성화된 경우에만 아래 5종 endpoint의 **GET**을 고정 loopback target으로 전달합니다. 업무 API의 쓰기 메서드와 다른 `/api/` 경로는 403으로 거부합니다. API flag가 하나 이상 켜져 있을 때만 인증용 GET `/api/v1/auth/csrf`, `/api/v1/auth/me` 및 POST `/api/v1/auth/login`, `/api/v1/auth/logout`을 추가 허용합니다. 임의 backend origin, 전체 `/api` 전달, proxy 공용 credential, CORS 허용 설정은 없습니다. Client는 redirect를 오류로 처리하고 proxy도 redirect를 따라가지 않습니다. 401/403 자동 재시도·자동 polling은 하지 않습니다.
 
 ## Research API와 화면 계약
 
@@ -196,7 +198,7 @@ try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_OVERVIEW_API }
 Unix에서는 `cd frontend` 후 `VITE_ENABLE_OVERVIEW_API=true npm run dev`를 사용합니다. Research도 함께 사용하려면 별도로 `VITE_ENABLE_RESEARCH_API=true`를 지정하세요. 두 flag는 credential이 아니며 기본 OFF, development에서만 동작합니다. Production build에서는 사용할 수 없습니다.
 
 1. [http://127.0.0.1:5173/overview](http://127.0.0.1:5173/overview)를 열고 **LOCAL API · READ ONLY**를 선택합니다.
-2. 401이면 **새 탭에서 관리자 인증**으로 같은 origin의 `/api/v1/overview/summary`를 방문합니다. 브라우저 HTTP Basic 창에 로컬 관리자 credential을 입력합니다.
+2. 미인증이면 로그인 화면으로 이동합니다. 관리자 세션을 생성한 뒤 원래 Overview API 화면으로 돌아옵니다.
 3. JSON 조회를 확인하고 화면에서 다시 시도합니다. 인증은 브라우저가 관리하며 React는 credential을 수집·저장하지 않습니다.
 
 새로고침하면 DEMO로 돌아갑니다. 메모리의 모드 선택은 저장하지 않으며, API 화면을 벗어나면 요청을 취소하고 사용하지 않는 Query cache를 제거합니다. 다른 화면으로 이동할 때 그 화면의 출처 표시를 확인하세요.
@@ -218,7 +220,7 @@ UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 �
 
 조회 오류·401·403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치를 구분하며 오류 원문을 노출하지 않습니다. 오류 시 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
 
-Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium HTTP Basic 인증/4개 GET/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 모든 브라우저의 네이티브 인증 창 수동 검증이나 Production 인증 검증을 대신하지 않습니다.
+Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium 조회/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 Production 인증/배포 검증을 대신하지 않습니다.
 
 ## AI Analysis LOCAL API v1
 
@@ -232,7 +234,7 @@ $env:VITE_ENABLE_AI_ANALYSIS_API = "true"
 try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_AI_ANALYSIS_API }
 ```
 
-Unix에서는 `cd frontend` 후 `VITE_ENABLE_AI_ANALYSIS_API=true npm run dev`를 사용합니다. flag는 기본 OFF이며 development에서만 허용합니다. `/ai-analysis`에서 **LOCAL API · READ ONLY**를 선택합니다. 401이면 **새 탭에서 관리자 인증**으로 같은 origin의 `/api/v1/ai-trade-analysis/recommendations`를 열어 브라우저 HTTP Basic 창에서 인증한 뒤 다시 시도합니다. React는 비밀번호를 수집·저장하지 않습니다. Production build, preview, 외부 backend target, redirect, 쓰기 method는 허용하지 않습니다.
+Unix에서는 `cd frontend` 후 `VITE_ENABLE_AI_ANALYSIS_API=true npm run dev`를 사용합니다. flag는 기본 OFF이며 development에서만 허용합니다. `/ai-analysis`에서 **LOCAL API · READ ONLY**를 선택합니다. 미인증이면 로그인 화면에서 세션 인증 후 원래 화면으로 돌아옵니다. API 401은 캐시를 제거하고 재로그인을 요구합니다. 비밀번호는 로그인 제출에만 사용하고 저장하지 않습니다. Production build의 API 모드, preview API, 외부 backend target, redirect, 업무 쓰기 method는 허용하지 않습니다. 인증용 POST 두 개만 예외입니다.
 
 - 목록: 추천 생성 시각의 KST 기간, 정확한 market, BUY/SELL/HOLD, 서버 pagination. 최신순 고정이며 승인 상태 필터·전체 행동별 집계는 제공하지 않습니다. 목록 행마다 상세를 호출하지 않습니다.
 - 상세 주소는 `?recommendation=<추천 ID>`입니다. DEMO의 `?analysis=<분석 ID>`와 다릅니다. 직접 주소 입력·reload는 DEMO 기본값을 유지하며 API를 명시적으로 선택해야 실제 상세를 읽습니다. Overview의 실제 추천 상세 링크는 이 flag가 켜진 경우만 제공하고 API 모드로 전환합니다.
@@ -287,11 +289,11 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL
 
 ## 이번 단계에 포함하지 않은 기능
 
-애플리케이션 로그인·JWT, 직접 PostgreSQL 연결, Upbit 실시간 계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, 기존 Spring Boot 코드, root Compose와 LIVE 안전장치는 변경하지 않습니다.
+회원가입·JWT, 직접 PostgreSQL 연결, Upbit 실시간 계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, root Compose와 LIVE 안전장치는 유지합니다. Backend의 인증만 Spring Security 세션으로 전환합니다.
 
 후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. Portfolio / Operations 화면의 API 연결도 별도 범위입니다.
 
-Production 공개 전 TLS reverse proxy, 관리자 인증/세션 설계, 권한·CSRF 정책, 최소 DB 권한, 접근 로그의 민감정보 처리, 보안 header와 origin 경계를 별도로 검토해야 합니다. 로컬 Basic 인증과 Vite proxy는 Production 인증/배포 설계가 아닙니다. `VITE_*`, bundle, URL, localStorage/sessionStorage에 secret을 넣지 마세요.
+Production 공개 전 TLS reverse proxy, 관리자 인증/세션 설계, 권한·CSRF 정책, 최소 DB 권한, 접근 로그의 민감정보 처리, 보안 header와 origin 경계를 별도로 검토해야 합니다. 세션 인증이 구현되어도 Vite 개발 proxy는 Production 배포용이 아닙니다. 운영 API 모드를 자동으로 켜지 않습니다. `VITE_*`, bundle, URL, localStorage/sessionStorage에 secret을 넣지 마세요.
 
 ## 참고한 공식 가이드
 

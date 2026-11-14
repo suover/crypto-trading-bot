@@ -1,3 +1,4 @@
+import { ApiSessionBoundary } from '@/components/auth/ApiSessionBoundary';
 import { lazy, Suspense } from 'react';
 import { Button } from '@/components/ui/button';
 import { ErrorState, LoadingSkeleton } from '@/components/common';
@@ -32,7 +33,9 @@ export default function OverviewPage() {
       )}
       {source === 'api' ? (
         <Suspense fallback={<LoadingSkeleton />}>
-          <OverviewApiView />
+          <ApiSessionBoundary>
+            <OverviewApiView />
+          </ApiSessionBoundary>
         </Suspense>
       ) : demo.isPending ? (
         <LoadingSkeleton />

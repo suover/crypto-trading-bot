@@ -3,7 +3,7 @@
 ## 공통 계약
 
 - Base URL: 로컬 기본 `http://127.0.0.1:8080/api/v1/research`.
-- 모든 endpoint는 HTTP Basic 인증된 ADMIN에게만 허용합니다. 공개 HTTP 사용은 금지하고 외부 서비스 전환 전 TLS를 구성합니다.
+- 모든 endpoint는 세션 인증된 ADMIN에게만 허용합니다. 공개 HTTP 사용은 금지하고 외부 서비스 전환 전 TLS를 구성합니다.
 - 서버의 `BACKEND_TRADING_USER_ID`, `BACKEND_EXCHANGE`(UPBIT), `BACKEND_QUOTE_ASSET`(KRW)가 범위를 결정합니다. 요청으로 사용자나 범위를 바꿀 수 없으며 알 수 없는 query parameter는 400입니다.
 - user가 없거나 inactive이면 403입니다. 범위 내 다른 schema/policy/Top N의 기록을 임의로 하나로 합쳐 자동화 상태를 판단하지 않습니다.
 - UTC ISO-8601 시각과 JSON number를 사용합니다. ID는 Java Long, 가중치는 BigDecimal입니다. 클라이언트는 JS number 변환의 정밀도 제한을 고려해야 합니다.
@@ -11,7 +11,7 @@
 - 한 service 호출은 REPEATABLE_READ/readOnly 트랜잭션으로 count·페이지·상세 사이의 DB 조회 시점을 일치시킵니다. 별도 HTTP 요청 사이에는 새 데이터가 추가될 수 있습니다.
 - raw JSON, secret, 감사 context, decision signature, ORM Entity를 반환하지 않습니다. Baseline/policy signature는 인증된 관리자가 연구 cohort를 구분하는 식별 정보로만 노출합니다.
 - 이 API는 등록된 데이터의 조회이며 Python의 provenance signature 검증이나 현재 Gate 재평가를 대신하지 않습니다.
-- 쓰기 endpoint, 로그인/회원가입/JWT, policy approve/activate, 거래·포트폴리오 API는 없습니다.
+- 업무 쓰기 endpoint, 회원가입/JWT, policy approve/activate, 거래·포트폴리오 API는 없습니다.
 
 ## 오류
 
@@ -26,7 +26,7 @@
 | HTTP | code | 의미 |
 | --- | --- | --- |
 | 400 | INVALID_REQUEST | 파라미터 형식/범위, 날짜 순서, sort 또는 알 수 없는 query |
-| 401 | UNAUTHENTICATED | 인증 없음/잘못된 인증정보, Basic challenge 포함 |
+| 401 | UNAUTHENTICATED | 인증 세션 없음/만료, JSON 오류 (Basic challenge 없음) |
 | 403 | FORBIDDEN | ADMIN 아님, 비활성/없는 configured user, 미정의 경로/쓰기 요청 |
 | 404 | NOT_FOUND | 후보 없음 또는 다른 사용자/거래소/quote 범위 |
 | 500 | INTERNAL_ERROR | DB 장애/매핑 오류 등, 정상 0건이나 빈 목록으로 위장하지 않음 |

@@ -8,6 +8,10 @@ test.beforeEach(async ({ page }) => {
       await route.abort();
       throw new Error('Unexpected external request: ' + url.origin);
     }
+    if (url.pathname === '/api/v1/auth/me') {
+      await route.fulfill({ json: { username: 'fixture-admin' } });
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       expect(route.request().method()).toBe('GET');
       expect(url.pathname).toMatch(
@@ -23,7 +27,8 @@ test('DEMO defaults, server filters and pages, exact detail and non-persistent m
 }) => {
   const urls: string[] = [];
   page.on('request', (request) => {
-    if (request.url().includes('/api/')) urls.push(request.url());
+    if (request.url().includes('/api/') && !request.url().includes('/auth/'))
+      urls.push(request.url());
   });
   await page.goto('/research');
   await expect(
@@ -77,14 +82,15 @@ for (const [status, message] of [
     );
     await page.goto('/research');
     await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
+    if (status === 401) {
+      await expect(page.getByRole('heading', { name: '관리자 로그인' })).toBeVisible();
+      await expect(page.getByRole('table')).toHaveCount(0);
+      return;
+    }
     await expect(page.getByRole('alert')).toHaveCount(4);
     await expect(page.getByRole('alert').first()).toContainText(message);
     await expect(page.getByText('private exception')).toHaveCount(0);
     await expect(page.getByRole('region', { name: '현재 Runtime Ranking 정책' })).toHaveCount(0);
-    if (status === 401)
-      await expect(
-        page.getByRole('link', { name: '새 탭에서 관리자 인증' }).first(),
-      ).toHaveAttribute('href', '/api/v1/research/summary');
   });
 }
 test('invalid schema and detail not found are explicit', async ({ page }) => {

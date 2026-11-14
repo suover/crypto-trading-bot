@@ -52,12 +52,12 @@ class ResearchPostgresTest extends io.github.suover.cryptotradingbot.support.Pos
         assertThat(summary.latestSnapshotId()).isEqualTo(103);
         assertThat(summary.latestSnapshotCapturedAt()).isEqualTo(Instant.parse("2026-01-01T01:00:00Z"));
     }
-    @Test void actualBasicAuthenticationAndJsonResponse() throws Exception {
-        mvc.perform(get("/api/v1/research/summary").with(httpBasic("fixture-admin", "admin-fixture-only")))
+    @Test void actualSessionAuthenticationAndJsonResponse() throws Exception {
+        mvc.perform(get("/api/v1/research/summary").session(adminSession(mvc)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.candidateCount").value(3));
         mvc.perform(get("/api/v1/research/summary").with(httpBasic("fixture-admin", "incorrect")))
                 .andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/v1/research/candidates/204").with(httpBasic("fixture-admin", "admin-fixture-only")))
+        mvc.perform(get("/api/v1/research/candidates/204").session(adminSession(mvc)))
                 .andExpect(status().isNotFound());
     }
     @Test void queryDslKeywordOnlyLiteralWildcardsAndNoResults() {

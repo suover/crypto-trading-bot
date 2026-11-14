@@ -5,12 +5,12 @@ Java 21 / Spring Boot 기반 관리자 전용 Research / Overview / AI Trade Ana
 ## 역할과 구조
 
 ```text
-HTTP Basic 관리자 → Controller → Service → Repository (JPA / QueryDSL)
+세션 인증 관리자 → Controller → Service → Repository (JPA / QueryDSL)
                                           ↓ SELECT only
                                  PostgreSQL (Python/Alembic 소유)
 src/main/java/io/github/suover/cryptotradingbot/
   global/config/       서버 범위, QueryDSL, UTC Clock
-  global/security/     단일 관리자 BCrypt / stateless HTTP Basic
+  global/security/     단일 관리자 BCrypt / Spring Security 세션 인증
   global/exception/    민감정보 없는 공통 오류
   research/controller/
   research/service/
@@ -112,6 +112,7 @@ Unix checkout에서 Wrapper 실행권한이 없다면 `./gradlew` 대신 `bash .
 | `BACKEND_TRADING_USER_ID` | 필수 양의 정수, 기존 active users.id |
 | `BACKEND_ADMIN_USERNAME` | 필수 단일 관리자 이름 |
 | `BACKEND_ADMIN_PASSWORD_HASH` | BCrypt 해시, cost 10–16, 실제 plaintext 금지 |
+| `BACKEND_SESSION_COOKIE_SECURE` | 기본 `true`. 로컬 loopback HTTP 개발에서만 `false` |
 | `BACKEND_EXCHANGE` | 기본 `UPBIT`, 대문자 영숫자 |
 | `BACKEND_QUOTE_ASSET` | 기본 `KRW`, 대문자 영숫자 |
 
@@ -124,13 +125,52 @@ Python의 `.env`/`.secrets/`를 읽거나 공유하지 않습니다. 필수 설�
 .\gradlew.bat bootRun
 ```
 
-기본 주소는 `127.0.0.1:8080`입니다. HTTP Basic은 localhost 개발용이며 공개 인터넷에 HTTP로 노출하지 마세요. TLS, reverse proxy, 인증정보 주입, 최소 DB 권한과 접근 통제를 별도로 검토하기 전 Production 배포하지 않습니다. Production Compose나 배포 스크립트에 이 서비스를 추가하지 않았습니다.
+기본 주소는 `127.0.0.1:8080`입니다. 관리자 HTTP Basic은 세션 인증으로 전환되었습니다. 기존 Basic 클라이언트는 아래 로그인 절차로 전환해야 합니다. Production Compose나 배포 스크립트에는 서비스를 추가하지 않았습니다.
 
-인증 세션/cookie를 사용하지 않으며 모든 쓰기 메서드 및 미정의 endpoint를 거부하므로 CSRF를 명시적으로 끕니다. CORS를 열거나 React에 인증정보를 내장하지 않습니다.
+### 관리자 로그인 설정
+
+DB 계정과 대시보드 관리자 계정은 별개입니다. 기존 관리자 이름/BCrypt 해시 설정을 사용하며 회원가입이나 계정 테이블을 만들지 않습니다. `BACKEND_TRADING_USER_ID`는 로그인 이름으로 선택하거나 변경할 수 없습니다.
+
+PowerShell에서 JDK 21 `JAVA_HOME`을 설정한 뒤 다음 명령으로 비밀번호를 두 번 숨겨 입력합니다. 비밀번호는 파일/명령 인수에 기록되지 않고 해시만 출력합니다.
+
+```powershell
+.\scripts\create_admin_password_hash.ps1
+# 가짜 비밀번호로 도구만 검증:
+.\scripts\create_admin_password_hash.ps1 -SelfTest
+```
+
+Unix에서는 같은 JDK의 터미널에서 실행합니다.
+
+```bash
+java --class-path "$(bash ./gradlew --no-daemon --console=plain -q adminHashClasspath)" tools/CreateAdminHash.java
+```
+
+IntelliJ `Run → Edit Configurations → CryptoTradingBotApplication → Environment variables`에서 기존 DB 설정을 유지하고 다음을 입력합니다. 실행 설정을 프로젝트 파일로 공유하거나 커밋하지 않습니다.
+
+- `BACKEND_ADMIN_USERNAME`: 사용할 관리자 아이디 (예: `local-admin`).
+- `BACKEND_ADMIN_PASSWORD_HASH`: 생성된 60자 BCrypt 전체. 따옴표/`{bcrypt}` 접두어 없이 입력.
+- `BACKEND_SESSION_COOKIE_SECURE=false`: `127.0.0.1` HTTP 로컬 개발에서만 사용. 운영 HTTPS는 기본 `true` 유지.
+
+서버를 재시작하고 API flag를 켠 frontend의 `http://127.0.0.1:5173/login`에서 **원래 비밀번호**로 로그인합니다. 해시나 DB 비밀번호를 로그인 화면에 입력하지 않습니다.
+
+### 세션과 인증 API
+
+| Method / URL | 의미 |
+| --- | --- |
+| `GET /api/v1/auth/csrf` | 익명 접근 가능. 세션에 연결된 masked CSRF token/headerName 반환 |
+| `POST /api/v1/auth/login` | URL-encoded `username`, `password` + `X-CSRF-TOKEN`. 성공 204, 실패 401 |
+| `GET /api/v1/auth/me` | ADMIN 세션 필요. `{username}`만 반환, 미인증 401 |
+| `POST /api/v1/auth/logout` | CSRF 필요. 서버 세션 무효화·쿠키 삭제, 성공 204 |
+
+Spring Security 기본 로그인 필터가 인증·세션 ID 교체·SecurityContext 저장을 담당합니다. 로그인/로그아웃 이후 CSRF token을 다시 조회해야 합니다. 리다이렉트나 브라우저 Basic challenge 대신 JSON 오류를 반환합니다. 업무 API의 쓰기 메서드와 미정의 경로는 유효한 ADMIN 세션과 CSRF token이 있어도 거부합니다.
+
+세션은 서버 메모리에 보관하며 유휴 30분, 로그인 후 최대 8시간입니다. 서버 재시작/배포 시 다시 로그인해야 합니다. 쿠키는 `HttpOnly`, `SameSite=Strict`, 기본 `Secure`이며 URL 세션 ID는 사용하지 않습니다. 로그인은 연결 원격 주소별 1분 10회로 제한하며 429/Retry-After를 반환합니다. 클라이언트가 보낸 `X-Forwarded-For`는 신뢰하지 않습니다. 이 제한은 단일 인스턴스용이고 reverse proxy 뒤에서는 여러 사용자가 한 주소로 집계될 수 있습니다.
+
+운영 공개는 별도 승인/배포 단계입니다. HTTPS 동일 출처 reverse proxy, 직접 backend 접근 차단, 신뢰할 proxy/forwarded-header 정책, proxy의 로그인 시도 제한과 민감정보 없는 로그를 검토해야 합니다. 다중 인스턴스에서는 공유 세션 저장소가 필요하며 현재 읽기 전용 거래 DB에 세션을 쓰지 않습니다. CORS나 JWT/localStorage 인증은 도입하지 않습니다.
 
 ## API
 
-관리자 인증이 필요한 GET만 제공합니다.
+업무 데이터 API는 관리자 세션 인증이 필요한 GET만 제공합니다.
 
 | URL | 역할 |
 | --- | --- |

@@ -1,3 +1,4 @@
+import { reportUnauthorized } from './auth-api';
 import {
   InvalidAnalysisData,
   parseAnalysisRecommendations,
@@ -26,6 +27,7 @@ async function get<T>(path: string, read: (raw: string) => T, signal?: AbortSign
       cache: 'no-store',
       headers: { Accept: 'application/json' },
     });
+    reportUnauthorized(response.status, signal);
     if (!response.ok) throw new AnalysisApiError('http', response.status);
     if (!response.headers.get('content-type')?.toLowerCase().includes('application/json'))
       throw new AnalysisApiError('data');

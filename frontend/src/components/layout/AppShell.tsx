@@ -1,3 +1,4 @@
+import { useAdminSession } from '@/hooks/use-admin-session';
 import { Suspense, useEffect, useState } from 'react';
 import {
   Activity,
@@ -82,6 +83,7 @@ function Navigation({ onSelect }: { onSelect?: () => void }) {
 
 export function AppShell() {
   const location = useLocation();
+  const session = useAdminSession();
   const pageTitle =
     navigation.find((item) => item.to === location.pathname)?.label ?? '페이지 안내';
   const [collapsed, setCollapsed] = useState(false);
@@ -156,7 +158,7 @@ export function AppShell() {
         </div>
       </aside>
       <div className="app-body">
-        <header className="app-header">
+        <header className={`app-header${session.available ? ' has-admin-session' : ''}`}>
           <div className="header-breadcrumb">
             <Dialog open={mobileOpen} onOpenChange={setMobileOpen}>
               <DialogTrigger asChild>
@@ -186,6 +188,26 @@ export function AppShell() {
             <strong>{pageTitle}</strong>
           </div>
           <div className="header-actions">
+            {session.available &&
+              (session.status === 'authenticated' ? (
+                <>
+                  <span className="small session-username" title={session.username ?? undefined}>
+                    {session.username}
+                  </span>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      void session.logout();
+                    }}
+                  >
+                    로그아웃
+                  </Button>
+                </>
+              ) : (
+                <Button variant="outline" asChild>
+                  <Link to="/login">관리자 로그인</Link>
+                </Button>
+              ))}
             <span className="header-timestamp">
               {isApi ? '관측·응답 시각은 각 조회 영역에 표시' : dateTime(DEMO_AS_OF) + ' KST 기준'}
             </span>

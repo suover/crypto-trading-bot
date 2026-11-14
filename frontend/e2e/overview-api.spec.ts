@@ -12,6 +12,10 @@ test.beforeEach(async ({ page }) => {
       await route.abort();
       throw new Error('Unexpected external origin');
     }
+    if (url.pathname === '/api/v1/auth/me') {
+      await route.fulfill({ json: { username: 'fixture-admin' } });
+      return;
+    }
     if (url.pathname.startsWith('/api/')) {
       expect(route.request().method()).toBe('GET');
       expect(url.pathname).toMatch(
@@ -27,7 +31,7 @@ test('DEMO opt-in, exact values, server filters/pages, missing capabilities and 
 }) => {
   const urls: string[] = [];
   page.on('request', (r) => {
-    if (r.url().includes('/api/')) urls.push(r.url());
+    if (r.url().includes('/api/') && !r.url().includes('/auth/')) urls.push(r.url());
   });
   await page.goto('/overview');
   await expect(page.getByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' })).toBeVisible();
@@ -71,13 +75,14 @@ for (const status of [401, 403, 500]) {
     );
     await page.goto('/overview');
     await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
+    if (status === 401) {
+      await expect(page.getByRole('heading', { name: '관리자 로그인' })).toBeVisible();
+      await expect(page.getByRole('table')).toHaveCount(0);
+      return;
+    }
     await expect(page.getByRole('alert')).toHaveCount(3);
     await expect(page.getByText('private exception')).toHaveCount(0);
     await expect(page.getByRole('table')).toHaveCount(0);
-    if (status === 401)
-      await expect(
-        page.getByRole('link', { name: '새 탭에서 관리자 인증' }).first(),
-      ).toHaveAttribute('href', '/api/v1/overview/summary');
   });
 }
 test('snapshot mismatch is bounded, never shown as empty holdings, and can recover', async ({

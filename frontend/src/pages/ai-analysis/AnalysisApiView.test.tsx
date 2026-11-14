@@ -1,3 +1,8 @@
+// These view regressions assume an existing server session. Auth flows have separate tests.
+vi.mock('@/services/auth-api', async (original) => ({
+  ...(await original<typeof import('@/services/auth-api')>()),
+  currentAdmin: vi.fn(async () => 'fixture-admin'),
+}));
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -134,6 +139,11 @@ describe('AI Analysis local read view', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private SQL', { status })));
       const { user } = setup();
       await enter(user);
+      if (status === 401) {
+        expect(await screen.findByRole('heading', { name: '관리자 로그인' })).toBeInTheDocument();
+        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        return;
+      }
       expect(await screen.findByRole('alert')).toBeInTheDocument();
       expect(screen.queryByRole('table')).not.toBeInTheDocument();
       expect(screen.queryByText('private SQL')).not.toBeInTheDocument();

@@ -16,6 +16,15 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @AutoConfigureMockMvc
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public abstract class PostgresFixtureTest {
+    protected static org.springframework.mock.web.MockHttpSession adminSession(
+            org.springframework.test.web.servlet.MockMvc mvc) throws Exception {
+        return (org.springframework.mock.web.MockHttpSession) mvc.perform(
+                org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/auth/login")
+                .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
+                .param("username", "fixture-admin").param("password", "admin-fixture-only"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNoContent())
+                .andReturn().getRequest().getSession();
+    }
     protected static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17")
             .withDatabaseName("backend_fixture").withUsername("fixture_owner").withPassword("fixture-only");
     protected static final String HASH = new BCryptPasswordEncoder().encode("admin-fixture-only");

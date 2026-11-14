@@ -1,3 +1,8 @@
+// These view regressions assume an existing server session. Auth flows have separate tests.
+vi.mock('@/services/auth-api', async (original) => ({
+  ...(await original<typeof import('@/services/auth-api')>()),
+  currentAdmin: vi.fn(async () => 'fixture-admin'),
+}));
 import { act, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -143,15 +148,16 @@ describe('Research API view', () => {
       vi.stubGlobal('fetch', fetcher);
       const { user } = setup();
       await enter(user);
+      if (status === 401) {
+        expect(await screen.findByRole('heading', { name: '관리자 로그인' })).toBeInTheDocument();
+        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        return;
+      }
       await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(4));
       expect(fetcher).toHaveBeenCalledTimes(4);
       expect(screen.queryByText('hidden exception')).not.toBeInTheDocument();
       expect(screen.queryByText('BASELINE', { exact: true })).not.toBeInTheDocument();
-      if (status === 401)
-        expect(screen.getAllByRole('link', { name: '새 탭에서 관리자 인증' })[0]).toHaveAttribute(
-          'href',
-          '/api/v1/research/summary',
-        );
+
       await user.click(screen.getAllByRole('button', { name: '다시 시도' })[0]);
       await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(5));
     },
