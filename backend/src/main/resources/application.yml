@@ -34,8 +34,5 @@ spring:
         jdbc:
           time_zone: UTC
 backend:
-  trading-user-id: ${BACKEND_TRADING_USER_ID}
   exchange: ${BACKEND_EXCHANGE:UPBIT}
   quote-asset: ${BACKEND_QUOTE_ASSET:KRW}
-  admin-username: ${BACKEND_ADMIN_USERNAME}
-  admin-password-hash: ${BACKEND_ADMIN_PASSWORD_HASH}

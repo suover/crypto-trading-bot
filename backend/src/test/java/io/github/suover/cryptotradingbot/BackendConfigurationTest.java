@@ -12,20 +12,12 @@ class BackendConfigurationTest {
     @EnableConfigurationProperties(BackendProperties.class)
     static class PropertyConfiguration {}
 
-    @Test void missingAdministratorPreventsContextStartup() {
+    @Test void marketConfigBindsWithoutAccountOrTradingUserId() {
         new ApplicationContextRunner().withUserConfiguration(PropertyConfiguration.class)
-                .withPropertyValues("backend.trading-user-id=1", "backend.exchange=UPBIT",
-                        "backend.quote-asset=KRW", "backend.admin-username=fixture-admin")
-                .run(context -> assertThat(context).hasFailed());
-    }
-    @Test void validAdministratorBindsWithoutExposingCredentials() {
-        new ApplicationContextRunner().withUserConfiguration(PropertyConfiguration.class)
-                .withPropertyValues("backend.trading-user-id=1", "backend.exchange=UPBIT",
-                        "backend.quote-asset=KRW", "backend.admin-username=fixture-admin",
-                        "backend.admin-password-hash=" + ResearchReadServiceTest.HASH)
+                .withPropertyValues("backend.exchange=UPBIT", "backend.quote-asset=KRW")
                 .run(context -> {
                     assertThat(context).hasNotFailed();
-                    assertThat(context.getBean(BackendProperties.class).tradingUserId()).isEqualTo(1);
+                    assertThat(context.getBean(BackendProperties.class).exchange()).isEqualTo("UPBIT");
                 });
     }
     @Test void databaseCredentialsCannotBeEmptyOrUseFallbackDatabase() {

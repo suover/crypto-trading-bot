@@ -23,13 +23,11 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(controllers = OverviewController.class, properties = {
-        "backend.trading-user-id=1", "backend.exchange=UPBIT", "backend.quote-asset=KRW",
-        "backend.admin-username=fixture-admin",
-        "backend.admin-password-hash=$2a$10$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-})
+@WebMvcTest(controllers = OverviewController.class)
 @Import(SecurityConfiguration.class)
 class OverviewControllerTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.security.core.userdetails.UserDetailsService dashboardAccounts;
     @Autowired MockMvc mvc;
     @MockitoBean OverviewReadService service;
     static final Scope SCOPE = new Scope("1", "UPBIT", "KRW");

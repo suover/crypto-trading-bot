@@ -20,13 +20,11 @@ import org.springframework.context.annotation.Import;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(controllers = ResearchController.class, properties = {
-        "backend.trading-user-id=1", "backend.exchange=UPBIT", "backend.quote-asset=KRW",
-        "backend.admin-username=fixture-admin",
-        "backend.admin-password-hash=$2a$10$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-})
+@WebMvcTest(controllers = ResearchController.class)
 @Import(SecurityConfiguration.class)
 class ResearchControllerTest {
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.security.core.userdetails.UserDetailsService dashboardAccounts;
     @Autowired MockMvc mvc;
     @MockitoBean ResearchReadService service;
     static final Scope SCOPE = new Scope(1, "UPBIT", "KRW");

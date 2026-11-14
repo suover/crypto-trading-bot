@@ -5,7 +5,7 @@ import com.querydsl.core.types.OrderSpecifier;
 import com.querydsl.core.types.Projections;
 import com.querydsl.jpa.JPAExpressions;
 import com.querydsl.jpa.impl.JPAQueryFactory;
-import io.github.suover.cryptotradingbot.global.config.BackendProperties;
+import io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope;
 import io.github.suover.cryptotradingbot.research.dto.CandidateSearch;
 import io.github.suover.cryptotradingbot.research.dto.ResearchResponses.*;
 import io.github.suover.cryptotradingbot.research.entity.*;
@@ -20,18 +20,16 @@ public class ResearchReadRepository {
     private static final QReplaySnapshot S = QReplaySnapshot.replaySnapshot;
     private static final QAutomationState A = QAutomationState.automationState;
     private final JPAQueryFactory query;
-    private final BackendProperties scope;
 
-    public ResearchReadRepository(JPAQueryFactory query, BackendProperties scope) {
+    public ResearchReadRepository(JPAQueryFactory query) {
         this.query = query;
-        this.scope = scope;
     }
 
-    private BooleanBuilder candidateScope() {
+    private BooleanBuilder candidateScope(Scope scope) {
         return new BooleanBuilder(C.userId.eq(scope.tradingUserId()))
                 .and(C.exchange.eq(scope.exchange())).and(C.quoteAsset.eq(scope.quoteAsset()));
     }
-    private BooleanBuilder snapshotScope() {
+    private BooleanBuilder snapshotScope(Scope scope) {
         return new BooleanBuilder(S.userId.eq(scope.tradingUserId()))
                 .and(S.exchange.eq(scope.exchange())).and(S.quoteAsset.eq(scope.quoteAsset()));
     }
@@ -44,23 +42,23 @@ public class ResearchReadRepository {
                 .and(E.effectiveTopN.eq(C.effectiveTopN));
     }
 
-    public long candidateCount() {
-        return query.select(C.id.count()).from(C).where(candidateScope()).fetchOne();
+    public long candidateCount(Scope scope) {
+        return query.select(C.id.count()).from(C).where(candidateScope(scope)).fetchOne();
     }
-    public long enrollmentCount() {
-        return query.select(C.id.count()).from(C).where(candidateScope(),
+    public long enrollmentCount(Scope scope) {
+        return query.select(C.id.count()).from(C).where(candidateScope(scope),
                 JPAExpressions.selectOne().from(E).where(enrollmentMatch()).exists()).fetchOne();
     }
-    public long snapshotCount() {
-        return query.select(S.id.count()).from(S).where(snapshotScope()).fetchOne();
+    public long snapshotCount(Scope scope) {
+        return query.select(S.id.count()).from(S).where(snapshotScope(scope)).fetchOne();
     }
-    public Optional<SnapshotItem> latestSnapshot() {
+    public Optional<SnapshotItem> latestSnapshot(Scope scope) {
         return Optional.ofNullable(query.select(snapshotProjection()).from(S)
-                .where(snapshotScope()).orderBy(S.capturedAt.desc(), S.id.desc()).fetchFirst());
+                .where(snapshotScope(scope)).orderBy(S.capturedAt.desc(), S.id.desc()).fetchFirst());
     }
 
-    private BooleanBuilder filter(CandidateSearch search) {
-        BooleanBuilder where = candidateScope();
+    private BooleanBuilder filter(Scope scope, CandidateSearch search) {
+        BooleanBuilder where = candidateScope(scope);
         if (search.keyword() != null && !search.keyword().isEmpty()) {
             where.and(C.scenarioName.containsIgnoreCase(search.keyword()));
         }
@@ -73,10 +71,10 @@ public class ResearchReadRepository {
         return where;
     }
 
-    public long candidateCount(CandidateSearch search) {
-        return query.select(C.id.count()).from(C).where(filter(search)).fetchOne();
+    public long candidateCount(Scope scope, CandidateSearch search) {
+        return query.select(C.id.count()).from(C).where(filter(scope, search)).fetchOne();
     }
-    public List<CandidateItem> candidates(CandidateSearch search) {
+    public List<CandidateItem> candidates(Scope scope, CandidateSearch search) {
         boolean asc = search.sort().endsWith(",asc");
         OrderSpecifier<?> primary = switch (search.sort().split(",")[0]) {
             case "id" -> asc ? C.id.asc() : C.id.desc();
@@ -86,16 +84,16 @@ public class ResearchReadRepository {
         return query.select(Projections.constructor(CandidateItem.class, C.id, C.scenarioName,
                         C.registeredAt, C.exchange, C.quoteAsset, C.effectiveTopN,
                         JPAExpressions.selectOne().from(E).where(enrollmentMatch()).exists()))
-                .from(C).where(filter(search)).orderBy(primary, C.id.desc())
+                .from(C).where(filter(scope, search)).orderBy(primary, C.id.desc())
                 .offset((long) search.page() * search.size()).limit(search.size()).fetch();
     }
-    public Optional<ResearchCandidate> candidate(long id) {
-        return Optional.ofNullable(query.selectFrom(C).where(candidateScope(), C.id.eq(id)).fetchOne());
+    public Optional<ResearchCandidate> candidate(Scope scope, long id) {
+        return Optional.ofNullable(query.selectFrom(C).where(candidateScope(scope), C.id.eq(id)).fetchOne());
     }
-    public Optional<StoredEnrollment> enrollment(long candidateId) {
+    public Optional<StoredEnrollment> enrollment(Scope scope, long candidateId) {
         return Optional.ofNullable(query.select(Projections.constructor(StoredEnrollment.class,
                         E.id, E.shadowEnrolledAt, E.gateStatus, E.gateEvaluatedAt))
-                .from(C).join(E).on(enrollmentMatch()).where(candidateScope(), C.id.eq(candidateId))
+                .from(C).join(E).on(enrollmentMatch()).where(candidateScope(scope), C.id.eq(candidateId))
                 .fetchOne());
     }
     private com.querydsl.core.types.ConstructorExpression<SnapshotItem> snapshotProjection() {
@@ -103,11 +101,11 @@ public class ResearchReadRepository {
                 S.policySignature, S.researchCandidateCount, S.prefilterCandidateCount,
                 S.rankedCandidateCount, S.finalCandidateCount);
     }
-    public List<SnapshotItem> snapshots(int page, int size) {
-        return query.select(snapshotProjection()).from(S).where(snapshotScope())
+    public List<SnapshotItem> snapshots(Scope scope, int page, int size) {
+        return query.select(snapshotProjection()).from(S).where(snapshotScope(scope))
                 .orderBy(S.capturedAt.desc(), S.id.desc()).offset((long) page * size).limit(size).fetch();
     }
-    public List<AutomationState> automationStates() {
+    public List<AutomationState> automationStates(Scope scope) {
         return query.selectFrom(A).where(A.id.userId.eq(scope.tradingUserId()),
                         A.id.exchange.eq(scope.exchange()), A.id.quoteAsset.eq(scope.quoteAsset()))
                 .orderBy(A.id.datasetSchemaVersion.asc(), A.id.baselinePolicySignature.asc(),

@@ -4,7 +4,7 @@
 
 ## 실행과 접근 경계
 
-Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 기존 Spring Security 세션 ADMIN 인증과 서버에 설정된 active user/exchange/quote scope를 요구합니다. Frontend는 개발 환경의 명시적 opt-in으로 이 GET 3개만 로컬 Vite proxy를 통해 조회합니다. 실행 절차는 [Frontend README](../../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
+Repository root에서 `cd backend` 후 [Backend README](../README.md)의 로컬 PostgreSQL 및 관리자 설정으로 실행합니다. 모든 endpoint는 Spring Security ADMIN 세션을 요구하고, 계정에 연결된 활성 거래 사용자와 서버의 거래소·기준 통화로 조회 범위를 정합니다. Frontend는 개발 환경의 명시적 opt-in으로 이 GET 3개만 로컬 Vite proxy를 통해 조회합니다. 실행 절차는 [Frontend README](../../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. 운영 DB·권한·secret 설정은 자동 변경하지 않습니다.
 
 `@Transactional(readOnly=true, isolation=REPEATABLE_READ)`, SELECT-only Repository, `@Immutable`, `ddl-auto=validate`를 유지합니다. 한 HTTP 요청 안의 count/items/관련 기록은 같은 DB snapshot을 사용합니다. 별도 HTTP 요청 사이의 동일 snapshot은 보장하지 않으며 각 응답에 `generatedAt`을 제공합니다.
 
@@ -50,7 +50,7 @@ scope, recommendation, analysis, finalDecisionReason, recommendedAmountKrw, reco
 
 추천의 `universe_candidate_id` FK가 검증의 시작점입니다. 해당 후보와 그 부모 Universe 실행에 대해 다음을 모두 확인합니다.
 
-- candidate.user_id = universe_run.user_id = configured user
+- candidate.user_id = universe_run.user_id = 로그인 계정에 연결된 거래 사용자 ID
 - candidate.exchange/quote_asset = configured exchange/quote
 - candidate.market = recommendation.market
 - 두 분석 실행의 nonblank pipeline_run_id 일치

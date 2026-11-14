@@ -21,18 +21,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 class ResearchPostgresTest extends io.github.suover.cryptotradingbot.support.PostgresFixtureTest {
-    @Autowired ResearchReadService service;
+    ResearchReadService service() {
+        return new ResearchReadService(new io.github.suover.cryptotradingbot.research.repository.ResearchReadRepository(
+                new com.querydsl.jpa.impl.JPAQueryFactory(entityManager)),
+                fixtureScope(entityManager, 1, "UPBIT", "KRW"), java.time.Clock.systemUTC());
+    }
     @Autowired DataSource dataSource;
     @Autowired MockMvc mvc;
     @Autowired jakarta.persistence.EntityManager entityManager;
-    @Autowired io.github.suover.cryptotradingbot.research.repository.TradingUserRepository users;
 
     @Test void activeUserWithoutDataHasEmptyResults() {
-        var properties = new io.github.suover.cryptotradingbot.global.config.BackendProperties(
-                4, "UPBIT", "KRW", "fixture-admin", HASH);
         var repository = new io.github.suover.cryptotradingbot.research.repository.ResearchReadRepository(
-                new com.querydsl.jpa.impl.JPAQueryFactory(entityManager), properties);
-        var empty = new ResearchReadService(repository, users, properties, java.time.Clock.systemUTC());
+                new com.querydsl.jpa.impl.JPAQueryFactory(entityManager));
+        var empty = new ResearchReadService(repository, fixtureScope(entityManager, 4, "UPBIT", "KRW"), java.time.Clock.systemUTC());
         assertThat(empty.summary().candidateCount()).isZero();
         assertThat(empty.summary().latestSnapshotId()).isNull();
         assertThat(empty.summary().snapshotCount()).isZero();
@@ -45,7 +46,7 @@ class ResearchPostgresTest extends io.github.suover.cryptotradingbot.support.Pos
         return new CandidateSearch(keyword, null, null, enrolled, page, size, null);
     }
     @Test void alembicSchemaAndScopeSummary() {
-        var summary = service.summary();
+        var summary = service().summary();
         assertThat(summary.candidateCount()).isEqualTo(3);
         assertThat(summary.shadowEnrollmentCount()).isEqualTo(1);
         assertThat(summary.snapshotCount()).isEqualTo(3);
@@ -61,54 +62,54 @@ class ResearchPostgresTest extends io.github.suover.cryptotradingbot.support.Pos
                 .andExpect(status().isNotFound());
     }
     @Test void queryDslKeywordOnlyLiteralWildcardsAndNoResults() {
-        assertThat(service.candidates(search("mOmEnTuM", null, 0, 20)).items())
+        assertThat(service().candidates(search("mOmEnTuM", null, 0, 20)).items())
                 .extracting("id").containsExactly(202L, 201L);
-        assertThat(service.candidates(search("%", null, 0, 20)).items()).isEmpty();
-        assertThat(service.candidates(search("_", null, 0, 20)).items()).isEmpty();
-        assertThat(service.candidates(search("missing", null, 0, 20)).totalElements()).isZero();
+        assertThat(service().candidates(search("%", null, 0, 20)).items()).isEmpty();
+        assertThat(service().candidates(search("_", null, 0, 20)).items()).isEmpty();
+        assertThat(service().candidates(search("missing", null, 0, 20)).totalElements()).isZero();
     }
     @Test void registeredPeriodIncludesBothEndpoints() {
         Instant time = Instant.parse("2026-01-01T00:00:00Z");
-        var result = service.candidates(new CandidateSearch(null, time, time, null, 0, 20, null));
+        var result = service().candidates(new CandidateSearch(null, time, time, null, 0, 20, null));
         assertThat(result.items()).extracting("id").containsExactly(202L, 201L);
         assertThat(result.totalElements()).isEqualTo(2);
     }
     @ParameterizedTest @CsvSource({"true,1", "false,2"})
     void enrollmentExistsWithoutCountMultiplication(boolean enrolled, int expected) {
-        var result = service.candidates(search(null, enrolled, 0, 20));
+        var result = service().candidates(search(null, enrolled, 0, 20));
         assertThat(result.totalElements()).isEqualTo(expected);
         assertThat(result.items()).hasSize(expected);
         assertThat(result.items()).allMatch(item -> item.shadowEnrolled() == enrolled);
     }
     @Test void combinedConditionsAndStablePageBoundary() {
-        var result = service.candidates(new CandidateSearch("momentum",
+        var result = service().candidates(new CandidateSearch("momentum",
                 Instant.parse("2026-01-01T00:00:00Z"), Instant.parse("2026-01-02T00:00:00Z"),
                 true, 0, 20, "registeredAt,desc"));
         assertThat(result.items()).extracting("id").containsExactly(201L);
-        assertThat(service.candidates(search(null, null, 0, 1)).items()).extracting("id").containsExactly(203L);
-        assertThat(service.candidates(search(null, null, 1, 1)).items()).extracting("id").containsExactly(202L);
-        assertThat(service.candidates(search(null, null, 2, 1)).items()).extracting("id").containsExactly(201L);
-        assertThat(service.candidates(search(null, null, 3, 1)).items()).isEmpty();
-        assertThat(service.candidates(search(null, null, 3, 1)).totalElements()).isEqualTo(3);
+        assertThat(service().candidates(search(null, null, 0, 1)).items()).extracting("id").containsExactly(203L);
+        assertThat(service().candidates(search(null, null, 1, 1)).items()).extracting("id").containsExactly(202L);
+        assertThat(service().candidates(search(null, null, 2, 1)).items()).extracting("id").containsExactly(201L);
+        assertThat(service().candidates(search(null, null, 3, 1)).items()).isEmpty();
+        assertThat(service().candidates(search(null, null, 3, 1)).totalElements()).isEqualTo(3);
     }
     @Test void alternativeSortIsDeterministic() {
-        assertThat(service.candidates(new CandidateSearch(null, null, null, null, 0, 20, "id,asc")).items())
+        assertThat(service().candidates(new CandidateSearch(null, null, null, null, 0, 20, "id,asc")).items())
                 .extracting("id").containsExactly(201L, 202L, 203L);
-        assertThat(service.candidates(new CandidateSearch(null, null, null, null, 0, 20, "policyName,desc")).items())
+        assertThat(service().candidates(new CandidateSearch(null, null, null, null, 0, 20, "policyName,desc")).items())
                 .extracting("id").containsExactly(203L, 202L, 201L);
     }
     @Test void jsonbPrecisionTimeAndHistoricalGate() {
-        var detail = service.candidate(201);
+        var detail = service().candidate(201);
         assertThat(detail.componentWeights().get("liquidity"))
                 .isEqualByComparingTo("0.123456789012345678901234567890");
         assertThat(detail.enrollment().storedGateStatus()).isEqualTo("ELIGIBLE_FOR_REVIEW");
         assertThat(detail.registeredAt()).isEqualTo(Instant.parse("2026-01-01T00:00:00Z"));
-        assertThat(service.candidate(202).enrollment()).isNull();
+        assertThat(service().candidate(202).enrollment()).isNull();
     }
     @Test void numericJsonbAlsoPreservesDecimalPrecision() throws Exception {
         ownerSql("UPDATE research_policy_candidates SET component_weights = '{\"liquidity\": 0.123456789012345678901234567890}'::jsonb WHERE id=202");
         try {
-            assertThat(service.candidate(202).componentWeights().get("liquidity"))
+            assertThat(service().candidate(202).componentWeights().get("liquidity"))
                     .isEqualByComparingTo("0.123456789012345678901234567890");
         } finally {
             ownerSql("UPDATE research_policy_candidates SET component_weights = '{\"liquidity\": \"0.123456789012345678901234567890\", \"momentum\": \"0.5\"}'::jsonb WHERE id=202");
@@ -116,25 +117,25 @@ class ResearchPostgresTest extends io.github.suover.cryptotradingbot.support.Pos
     }
     @Test void foreignUsersAndExchangesAreNotFound() {
         for (long id : List.of(204L, 205L, 206L, 999L)) {
-            assertThatThrownBy(() -> service.candidate(id)).isInstanceOf(ResearchNotFoundException.class);
+            assertThatThrownBy(() -> service().candidate(id)).isInstanceOf(ResearchNotFoundException.class);
         }
     }
     @Test void compositeKeyReturnsEveryScopedStateAndNullCheckpoints() {
-        var result = service.automationStatus();
+        var result = service().automationStatus();
         assertThat(result.observed()).isTrue();
         assertThat(result.states()).hasSize(2).extracting("effectiveTopN").containsExactly(7, 5);
         assertThat(result.states()).allMatch(s -> s.lastRegisteredAt() == null && s.lastStatus() == null);
     }
     @Test void snapshotsStablePaginationAndNoOtherUser() {
-        assertThat(service.snapshots(0, 2).items()).extracting("id").containsExactly(103L, 102L);
-        assertThat(service.snapshots(1, 2).items()).extracting("id").containsExactly(101L);
-        assertThat(service.snapshots(2, 2).items()).isEmpty();
-        assertThat(service.snapshots(2, 2).totalElements()).isEqualTo(3);
+        assertThat(service().snapshots(0, 2).items()).extracting("id").containsExactly(103L, 102L);
+        assertThat(service().snapshots(1, 2).items()).extracting("id").containsExactly(101L);
+        assertThat(service().snapshots(2, 2).items()).isEmpty();
+        assertThat(service().snapshots(2, 2).totalElements()).isEqualTo(3);
     }
     @Test void inactiveUserIsRejected() throws Exception {
         ownerSql("UPDATE users SET is_active=false WHERE id=1");
         try {
-            assertThatThrownBy(service::summary).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            assertThatThrownBy(service()::summary).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
         } finally {
             ownerSql("UPDATE users SET is_active=true WHERE id=1");
         }

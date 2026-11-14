@@ -12,7 +12,7 @@ Repository root에서 `cd backend` 후 Java 21 / Gradle Wrapper를 사용합니�
 
 ## 범위와 공통 응답 계약
 
-`BACKEND_TRADING_USER_ID`, `BACKEND_EXCHANGE`, `BACKEND_QUOTE_ASSET`으로 서버 범위를 정합니다. 요청으로 변경할 수 없으며, 설정한 사용자가 없거나 비활성이면 403입니다. `scope`는 `{ "userId": "1", "exchange": "UPBIT", "quoteAsset": "KRW" }` 형태입니다.
+로그인 계정에 연결된 거래 사용자와 `BACKEND_EXCHANGE`, `BACKEND_QUOTE_ASSET`으로 조회 범위를 정합니다. 요청으로 변경할 수 없으며, 설정한 사용자가 없거나 비활성이면 403입니다. `scope`는 `{ "userId": "1", "exchange": "UPBIT", "quoteAsset": "KRW" }` 형태입니다.
 
 - 모든 Long ID는 JSON 문자열입니다. JS safe integer를 넘는 값도 보존합니다.
 - 금액·수량·가격·비율·성과 지표는 `BigDecimal.toPlainString()` 문자열 또는 `null`입니다. 지수 표기와 double 변환을 사용하지 않습니다.

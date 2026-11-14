@@ -2,13 +2,11 @@ package io.github.suover.cryptotradingbot.overview;
 
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
-import io.github.suover.cryptotradingbot.global.config.BackendProperties;
+import io.github.suover.cryptotradingbot.global.security.CurrentTradingScope;
 import io.github.suover.cryptotradingbot.overview.dto.OverviewQuery;
 import io.github.suover.cryptotradingbot.overview.entity.*;
 import io.github.suover.cryptotradingbot.overview.repository.OverviewReadRepository;
 import io.github.suover.cryptotradingbot.overview.service.OverviewReadService;
-import io.github.suover.cryptotradingbot.research.entity.TradingUser;
-import io.github.suover.cryptotradingbot.research.repository.TradingUserRepository;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
@@ -22,14 +20,11 @@ class OverviewReadServiceTest {
     static final Instant NOW = Instant.parse("2026-02-01T00:00:00Z");
     static final long BIG = 9007199254740993L;
     final OverviewReadRepository repository = mock(OverviewReadRepository.class);
-    final TradingUserRepository users = mock(TradingUserRepository.class);
-    final OverviewReadService service = new OverviewReadService(repository, users,
-            new BackendProperties(1, "UPBIT", "KRW", "fixture", "$2a$10$" + "a".repeat(53)),
-            Clock.fixed(NOW, ZoneOffset.UTC));
+    final CurrentTradingScope tradingScope = mock(CurrentTradingScope.class);
+    static final CurrentTradingScope.Scope SCOPE = new CurrentTradingScope.Scope(1, "UPBIT", "KRW");
+    final OverviewReadService service = new OverviewReadService(repository, tradingScope, Clock.fixed(NOW, ZoneOffset.UTC));
     @BeforeEach void active() {
-        var user = mock(TradingUser.class);
-        when(user.getIsActive()).thenReturn(true);
-        when(users.findById(1L)).thenReturn(Optional.of(user));
+        when(tradingScope.resolve()).thenReturn(SCOPE);
     }
     PortfolioSnapshot portfolio(String status) {
         var s = mock(PortfolioSnapshot.class);
@@ -37,7 +32,7 @@ class OverviewReadServiceTest {
         when(s.getCapturedAt()).thenReturn(NOW.minusSeconds(3600));
         when(s.getValuationStatus()).thenReturn(status);
         when(s.getKnownTotalValueKrw()).thenReturn(new BigDecimal("12345678901234567890.1234567890"));
-        when(repository.latestPortfolio()).thenReturn(Optional.of(s));
+        when(repository.latestPortfolio(SCOPE)).thenReturn(Optional.of(s));
         return s;
     }
     @Test void noSnapshotIsNotAZeroAccountAndPnlRemainsIndependent() {
@@ -47,11 +42,11 @@ class OverviewReadServiceTest {
         assertThat(result.botPnl()).isNull();
         assertThat(result.generatedAt()).isEqualTo(NOW);
         assertThat(result.scope().userId()).isEqualTo("1");
-        verify(repository, never()).performance(anyLong());
+        verify(repository, never()).performance(any(), anyLong());
         var positions = service.positions();
         assertThat(positions.portfolio()).isNull();
         assertThat(positions.items()).isEmpty();
-        verify(repository, never()).positions(anyLong());
+        verify(repository, never()).positions(any(), anyLong());
     }
     @Test void partialDoesNotUseKnownTotalAsCompleteTotal() {
         portfolio("PARTIAL");
@@ -61,7 +56,7 @@ class OverviewReadServiceTest {
         assertThat(result.portfolio().knownTotalValueKrw()).isEqualTo("12345678901234567890.1234567890");
         assertThat(result.portfolio().valuationStatus()).isEqualTo("PARTIAL");
         assertThat(result.performance()).isNull();
-        verify(repository).performance(BIG);
+        verify(repository).performance(SCOPE, BIG);
     }
     @Test void completeZeroAndMissingPerformanceRemainDistinct() {
         var s = portfolio("COMPLETE");
@@ -81,7 +76,7 @@ class OverviewReadServiceTest {
         when(p.getCumulativeReturnPercentage()).thenReturn(status.equals("PARTIAL") ? null :
                 new BigDecimal(status.equals("BASELINE") ? "0" : "1.1234567890"));
         when(p.getCalculatedAt()).thenReturn(NOW.minusSeconds(60));
-        when(repository.performance(BIG)).thenReturn(Optional.of(p));
+        when(repository.performance(SCOPE, BIG)).thenReturn(Optional.of(p));
         var result = service.summary().performance();
         assertThat(result.portfolioSnapshotId()).isEqualTo(Long.toString(BIG));
         assertThat(result.performanceStatus()).isEqualTo(status);
@@ -98,7 +93,7 @@ class OverviewReadServiceTest {
         when(b.getAccountingStatus()).thenReturn(status);
         when(b.getRecognizedRealizedPnlKrw()).thenReturn(new BigDecimal("-12345.6789000000"));
         when(b.getCalculatedAt()).thenReturn(NOW.minusSeconds(600));
-        when(repository.botPnl()).thenReturn(Optional.of(b));
+        when(repository.botPnl(SCOPE)).thenReturn(Optional.of(b));
         var result = service.summary();
         assertThat(result.portfolio()).isNull();
         assertThat(result.botPnl().accountingStatus()).isEqualTo(status);
@@ -112,19 +107,16 @@ class OverviewReadServiceTest {
         when(p.getCurrency()).thenReturn("APENFT");
         when(p.getValuationStatus()).thenReturn("UNPRICED");
         when(p.getTotalQuantity()).thenReturn(new BigDecimal("0.1234567890"));
-        when(repository.positions(BIG)).thenReturn(List.of(p));
+        when(repository.positions(SCOPE, BIG)).thenReturn(List.of(p));
         var result = service.positions().items().getFirst();
         assertThat(result.market()).isNull();
         assertThat(result.markPrice()).isNull();
         assertThat(result.totalQuantity()).isEqualTo("0.1234567890");
         assertThat(result.valuationStatus()).isEqualTo("UNPRICED");
-        verify(repository).positions(BIG);
+        verify(repository).positions(SCOPE, BIG);
     }
-    @ParameterizedTest @ValueSource(booleans = {false, true})
-    void inactiveAndMissingUserDenyEveryReadBeforeDataQueries(boolean missing) {
-        var u = mock(TradingUser.class);
-        when(u.getIsActive()).thenReturn(false);
-        when(users.findById(1L)).thenReturn(missing ? Optional.empty() : Optional.of(u));
+    @Test void inactiveAndMissingUserDenyEveryReadBeforeDataQueries() {
+        when(tradingScope.resolve()).thenThrow(new AccessDeniedException("Unavailable"));
         assertThatThrownBy(service::summary).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(service::positions).isInstanceOf(AccessDeniedException.class);
         assertThatThrownBy(() -> service.performance(new OverviewQuery.Performance(null, null, 0, 90)))
@@ -134,13 +126,13 @@ class OverviewReadServiceTest {
         verifyNoInteractions(repository);
     }
     @Test void databaseFailureIsNotConvertedToEmpty() {
-        when(repository.latestPortfolio()).thenThrow(new IllegalStateException("fixture database failure"));
+        when(repository.latestPortfolio(SCOPE)).thenThrow(new IllegalStateException("fixture database failure"));
         assertThatThrownBy(service::summary).isInstanceOf(IllegalStateException.class);
     }
     @Test void countMetadataAndReadOnlyIsolation() {
         var query = new OverviewQuery.Performance(null, null, 1, 2);
-        when(repository.performanceHistory(query)).thenReturn(List.of());
-        when(repository.performanceCount(query)).thenReturn(5L);
+        when(repository.performanceHistory(SCOPE, query)).thenReturn(List.of());
+        when(repository.performanceCount(SCOPE, query)).thenReturn(5L);
         var result = service.performance(query);
         assertThat(result.totalElements()).isEqualTo(5);
         assertThat(result.totalPages()).isEqualTo(3);

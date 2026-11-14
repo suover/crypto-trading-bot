@@ -22,14 +22,12 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-@WebMvcTest(controllers = AnalysisController.class, properties = {
-        "backend.trading-user-id=1", "backend.exchange=UPBIT", "backend.quote-asset=KRW",
-        "backend.admin-username=fixture-admin",
-        "backend.admin-password-hash=$2a$10$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-})
+@WebMvcTest(controllers = AnalysisController.class)
 @Import(SecurityConfiguration.class)
 class AnalysisControllerTest {
     static final String ROOT = "/api/v1/ai-trade-analysis/recommendations";
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.security.core.userdetails.UserDetailsService dashboardAccounts;
     @Autowired MockMvc mvc;
     @MockitoBean AnalysisReadService service;
     @Test void listDefaultsAndExplicitFiltersReachTypedContract() throws Exception {

@@ -4,7 +4,7 @@
 
 - Base URL: 로컬 기본 `http://127.0.0.1:8080/api/v1/research`.
 - 모든 endpoint는 세션 인증된 ADMIN에게만 허용합니다. 공개 HTTP 사용은 금지하고 외부 서비스 전환 전 TLS를 구성합니다.
-- 서버의 `BACKEND_TRADING_USER_ID`, `BACKEND_EXCHANGE`(UPBIT), `BACKEND_QUOTE_ASSET`(KRW)가 범위를 결정합니다. 요청으로 사용자나 범위를 바꿀 수 없으며 알 수 없는 query parameter는 400입니다.
+- 인증 DB에 저장된 로그인 계정의 거래 사용자 연결과 서버의 `BACKEND_EXCHANGE`(UPBIT), `BACKEND_QUOTE_ASSET`(KRW)가 범위를 결정합니다. 요청으로 사용자나 범위를 바꿀 수 없으며 알 수 없는 query parameter는 400입니다.
 - user가 없거나 inactive이면 403입니다. 범위 내 다른 schema/policy/Top N의 기록을 임의로 하나로 합쳐 자동화 상태를 판단하지 않습니다.
 - UTC ISO-8601 시각과 JSON number를 사용합니다. ID는 Java Long, 가중치는 BigDecimal입니다. 클라이언트는 JS number 변환의 정밀도 제한을 고려해야 합니다.
 - `generatedAt`은 응답 생성 시각이며 데이터의 관측 시각이 아닙니다. `capturedAt`, `registeredAt`, `storedGateEvaluatedAt`, 체크포인트 시각을 함께 해석하세요.

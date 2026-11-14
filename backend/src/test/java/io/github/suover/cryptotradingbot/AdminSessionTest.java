@@ -16,26 +16,28 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import tools.jackson.databind.ObjectMapper;
 
-@WebMvcTest(controllers = AdminAuthController.class, properties = {
-        "backend.trading-user-id=1", "backend.exchange=UPBIT", "backend.quote-asset=KRW",
-        "backend.admin-username=fixture-admin"
-})
+@WebMvcTest(controllers = AdminAuthController.class)
 @Import(SecurityConfiguration.class)
 class AdminSessionTest {
     @Autowired MockMvc mvc;
     @Autowired ObjectMapper mapper;
     private static int client;
     private RequestPostProcessor address;
-    @DynamicPropertySource static void credentials(DynamicPropertyRegistry registry) {
-        registry.add("backend.admin-password-hash", () -> new BCryptPasswordEncoder().encode("fixture-only-password"));
-    }
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    io.github.suover.cryptotradingbot.global.security.CurrentTradingScope tradingScope;
+    @org.springframework.test.context.bean.override.mockito.MockitoBean
+    org.springframework.security.core.userdetails.UserDetailsService dashboardAccounts;
+
     @BeforeEach void client() {
+        org.mockito.Mockito.when(dashboardAccounts.loadUserByUsername("fixture-admin")).thenReturn(
+                org.springframework.security.core.userdetails.User.withUsername("fixture-admin")
+                        .password(new BCryptPasswordEncoder().encode("fixture-only-password")).roles("ADMIN").build());
+        org.mockito.Mockito.when(dashboardAccounts.loadUserByUsername("missing"))
+                .thenThrow(new org.springframework.security.core.userdetails.UsernameNotFoundException("Missing"));
         String ip = "192.0.2." + ++client;
         address = request -> { request.setRemoteAddr(ip); return request; };
     }

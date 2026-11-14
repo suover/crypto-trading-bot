@@ -9,8 +9,8 @@ Java 21 / Spring Boot 기반 관리자 전용 Research / Overview / AI Trade Ana
                                           ↓ SELECT only
                                  PostgreSQL (Python/Alembic 소유)
 src/main/java/io/github/suover/cryptotradingbot/
-  global/config/       서버 범위, QueryDSL, UTC Clock
-  global/security/     단일 관리자 BCrypt / Spring Security 세션 인증
+  global/config/       DB 연결, 시장 설정, QueryDSL, UTC Clock
+  global/security/     인증 DB 계정, BCrypt, Spring Security 세션 및 거래 사용자 연결
   global/exception/    민감정보 없는 공통 오류
   research/controller/
   research/service/
@@ -109,14 +109,11 @@ Unix checkout에서 Wrapper 실행권한이 없다면 `./gradlew` 대신 `bash .
 | `BACKEND_DB_URL` | 필수 JDBC PostgreSQL URL, 예: `jdbc:postgresql://127.0.0.1:5432/local_research` |
 | `BACKEND_DB_USERNAME` | 필수 SELECT 전용 사용자 |
 | `BACKEND_DB_PASSWORD` | 해당 계정 비밀번호, 안전하게 환경 주입 |
-| `BACKEND_TRADING_USER_ID` | 필수 양의 정수, 기존 active users.id |
-| `BACKEND_ADMIN_USERNAME` | 필수 단일 관리자 이름 |
-| `BACKEND_ADMIN_PASSWORD_HASH` | BCrypt 해시, cost 10–16, 실제 plaintext 금지 |
 | `BACKEND_SESSION_COOKIE_SECURE` | 기본 `true`. 로컬 loopback HTTP 개발에서만 `false` |
 | `BACKEND_EXCHANGE` | 기본 `UPBIT`, 대문자 영숫자 |
 | `BACKEND_QUOTE_ASSET` | 기본 `KRW`, 대문자 영숫자 |
 
-Python의 `.env`/`.secrets/`를 읽거나 공유하지 않습니다. 필수 설정 누락/잘못된 사용자 범위/잘못된 BCrypt 형식은 시작 실패입니다. 시작 후 해당 Trading User가 없거나 비활성이면 조회도 403으로 거부합니다. DB 장애는 500이며 0건으로 변환하지 않습니다.
+Python의 `.env`/`.secrets/`를 읽거나 공유하지 않습니다. 필수 DB 연결 설정이 없거나 인증 스키마를 읽을 수 없으면 시작에 실패합니다. 인증 테이블이 비어 있어도 시작할 수 있습니다. 로그인 계정 또는 연결된 거래 사용자가 비활성이면 403으로 조회를 거부합니다. DB 장애는 500이며 0건으로 변환하지 않습니다.
 
 ```bash
 # 환경변수는 운영체제의 안전한 설정 수단으로 준비한 뒤:
@@ -127,31 +124,42 @@ Python의 `.env`/`.secrets/`를 읽거나 공유하지 않습니다. 필수 설�
 
 기본 주소는 `127.0.0.1:8080`입니다. 관리자 HTTP Basic은 세션 인증으로 전환되었습니다. 기존 Basic 클라이언트는 아래 로그인 절차로 전환해야 합니다. Production Compose나 배포 스크립트에는 서비스를 추가하지 않았습니다.
 
-### 관리자 로그인 설정
+### 인증 스키마와 권한 준비
 
-DB 계정과 대시보드 관리자 계정은 별개입니다. 기존 관리자 이름/BCrypt 해시 설정을 사용하며 회원가입이나 계정 테이블을 만들지 않습니다. `BACKEND_TRADING_USER_ID`는 로그인 이름으로 선택하거나 변경할 수 없습니다.
+`crypto_trading_bot` DB의 `public`에는 기존 거래 테이블이 있고, `auth.accounts`에는 대시보드 계정이 있습니다. Alembic head를 적용하면 인증 스키마와 테이블을 준비합니다. Revision `c2f84b7a931e`는 기존 인증 테이블의 이름을 바꾸면서 계정, 외래 키와 권한을 보존합니다. `trading_user_id`는 `public.users.id`를 참조하며 연결된 거래 사용자가 삭제되는 것을 막습니다. 연결 대상이 비활성이면 조회도 거부합니다.
 
-PowerShell에서 JDK 21 `JAVA_HOME`을 설정한 뒤 다음 명령으로 비밀번호를 두 번 숨겨 입력합니다. 비밀번호는 파일/명령 인수에 기록되지 않고 해시만 출력합니다.
+DB 관리자는 기존 절차대로 대상 환경에 Alembic head를 적용한 뒤, 계정 등록용 PostgreSQL 역할을 준비합니다. 이미 역할이 있으면 생성 단계를 건너뜁니다. `\password`는 비밀번호를 숨겨 입력받는 psql 명령입니다.
+
+```sql
+CREATE ROLE dashboard_auth_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+\password dashboard_auth_writer
+ALTER ROLE dashboard_auth_writer LOGIN;
+```
+
+기존 `backend_reader` 역할과 새 등록 역할이 있을 때, DB 관리자가 아래 권한 스크립트를 적용합니다. 로컬 Docker 예시는 `backend` 디렉터리에서 실행합니다.
 
 ```powershell
-.\scripts\create_admin_password_hash.ps1
-# 가짜 비밀번호로 도구만 검증:
-.\scripts\create_admin_password_hash.ps1 -SelfTest
+Get-Content -Raw .\scripts\dashboard_auth_permissions.sql | docker exec -i crypto-trading-postgres psql -X -U trading_user -d crypto_trading_bot -v ON_ERROR_STOP=1
 ```
 
-Unix에서는 같은 JDK의 터미널에서 실행합니다.
+`backend_reader`는 인증 계정과 기존 거래 데이터를 읽습니다. `dashboard_auth_writer`는 인증 계정 등록에 필요한 세 컬럼에만 INSERT가 가능합니다. 운영에서 역할을 추가할 때는 역할 상속·PUBLIC 권한·객체 소유권을 포함해 기존 거래 테이블에 대한 쓰기 권한이 없는지 확인합니다. 예전 독립 인증 DB에 계정이 남아 있다면, 해당 계정을 동일 비밀번호로 재등록하거나 검증된 연결과 해시를 유지해 이전한 후 기존 DB를 정리합니다.
 
-```bash
-java --class-path "$(bash ./gradlew --no-daemon --console=plain -q adminHashClasspath)" tools/CreateAdminHash.java
+### 관리자 계정 등록과 로그인
+
+IntelliJ 터미널의 PowerShell에서 다음을 실행합니다. `BACKEND_DB_USERNAME`은 기존 거래 DB의 읽기 계정입니다. `-TradingUserId 1`은 기존 거래 사용자 `1`을 사용하는 로컬 예시입니다.
+
+```powershell
+$env:BACKEND_DB_URL = 'jdbc:postgresql://127.0.0.1:5432/crypto_trading_bot'
+$env:BACKEND_DB_USERNAME = 'backend_reader'
+$env:DASHBOARD_AUTH_WRITER_USERNAME = 'dashboard_auth_writer'
+.\scripts\create_dashboard_account.ps1 -TradingUserId 1
 ```
 
-IntelliJ `Run → Edit Configurations → CryptoTradingBotApplication → Environment variables`에서 기존 DB 설정을 유지하고 다음을 입력합니다. 실행 설정을 프로젝트 파일로 공유하거나 커밋하지 않습니다.
+로그인 아이디와 두 PostgreSQL 역할의 접속 비밀번호, 새 대시보드 비밀번호를 대화식으로 입력합니다. 등록 명령이 거래 사용자의 활성 상태를 확인하고 비밀번호 해시와 사용자 연결을 저장합니다. 같은 아이디와 존재하지 않는 거래 사용자 연결은 DB에서 거부합니다. Unix에서는 동일한 환경변수를 export하고 `java --class-path "$(bash ./gradlew --no-daemon --console=plain -q dashboardAccountClasspath)" tools/CreateDashboardAccount.java 1`을 실행합니다.
 
-- `BACKEND_ADMIN_USERNAME`: 사용할 관리자 아이디 (예: `local-admin`).
-- `BACKEND_ADMIN_PASSWORD_HASH`: 생성된 60자 BCrypt 전체. 따옴표/`{bcrypt}` 접두어 없이 입력.
-- `BACKEND_SESSION_COOKIE_SECURE=false`: `127.0.0.1` HTTP 로컬 개발에서만 사용. 운영 HTTPS는 기본 `true` 유지.
+IntelliJ의 `CryptoTradingBotApplication` 실행 설정에서는 기존 `BACKEND_DB_URL`, `BACKEND_DB_USERNAME`, `BACKEND_DB_PASSWORD`를 사용합니다. 이전 `DASHBOARD_AUTH_DB_*`, 고정 거래 사용자 ID와 관리자 아이디·해시 설정은 제거할 수 있습니다. 로컬 HTTP에는 `BACKEND_SESSION_COOKIE_SECURE=false`를 사용합니다.
 
-서버를 재시작하고 API flag를 켠 frontend의 `http://127.0.0.1:5173/login`에서 **원래 비밀번호**로 로그인합니다. 해시나 DB 비밀번호를 로그인 화면에 입력하지 않습니다.
+서버를 시작하고 API flag를 켠 frontend의 `http://127.0.0.1:5173/login`에서 등록한 아이디와 원래 비밀번호로 로그인합니다. 보호된 조회마다 활성 계정과 로그인 당시 거래 사용자 연결을 확인합니다. 계정이 비활성화되거나 연결이 바뀌면 기존 세션의 조회가 거부됩니다.
 
 ### 세션과 인증 API
 
@@ -166,7 +174,7 @@ Spring Security 기본 로그인 필터가 인증·세션 ID 교체·SecurityCon
 
 세션은 서버 메모리에 보관하며 유휴 30분, 로그인 후 최대 8시간입니다. 서버 재시작/배포 시 다시 로그인해야 합니다. 쿠키는 `HttpOnly`, `SameSite=Strict`, 기본 `Secure`이며 URL 세션 ID는 사용하지 않습니다. 로그인은 연결 원격 주소별 1분 10회로 제한하며 429/Retry-After를 반환합니다. 클라이언트가 보낸 `X-Forwarded-For`는 신뢰하지 않습니다. 이 제한은 단일 인스턴스용이고 reverse proxy 뒤에서는 여러 사용자가 한 주소로 집계될 수 있습니다.
 
-운영 공개는 별도 승인/배포 단계입니다. HTTPS 동일 출처 reverse proxy, 직접 backend 접근 차단, 신뢰할 proxy/forwarded-header 정책, proxy의 로그인 시도 제한과 민감정보 없는 로그를 검토해야 합니다. 다중 인스턴스에서는 공유 세션 저장소가 필요하며 현재 읽기 전용 거래 DB에 세션을 쓰지 않습니다. CORS나 JWT/localStorage 인증은 도입하지 않습니다.
+운영 공개는 별도 승인/배포 단계입니다. HTTPS 동일 출처 reverse proxy, 직접 backend 접근 차단, 신뢰할 proxy/forwarded-header 정책, proxy의 로그인 시도 제한과 민감정보 없는 로그를 검토해야 합니다. 다중 인스턴스에서는 공유 세션 저장소가 필요하며 대시보드는 DB에 세션을 쓰지 않습니다. CORS나 JWT/localStorage 인증은 도입하지 않습니다.
 
 ## API
 
@@ -184,11 +192,7 @@ Spring Security 기본 로그인 필터가 인증·세션 ID 교체·SecurityCon
 | `/api/v1/overview/performance` | 저장된 Modified Dietz 성과 이력 |
 | `/api/v1/overview/recommendations` | scoped BUY/SELL/HOLD 추천 이력 |
 
-```bash
-# -u에는 사용자 이름만 전달하면 curl이 비밀번호를 대화식으로 요청합니다.
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/research/summary"
-curl -u "$BACKEND_ADMIN_USERNAME" "http://127.0.0.1:8080/api/v1/research/candidates?keyword=momentum&shadowEnrolled=true&page=0&size=20"
-```
+로그인한 브라우저의 frontend origin에서 위 GET API를 조회할 수 있습니다.
 
 파라미터/응답/오류의 전체 계약은 [Research Read API v1](docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](docs/OVERVIEW_READ_API_V1.md)을 참고하세요. Overview는 nullable 지표와 PARTIAL/BASELINE을 보존하며 성과를 재계산하지 않습니다. Bot PnL은 계좌 수익률이 아닌 user/exchange 단위 FIFO 인식 실현손익입니다.
 

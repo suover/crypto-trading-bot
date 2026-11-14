@@ -5,11 +5,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import com.querydsl.jpa.impl.JPAQueryFactory;
-import io.github.suover.cryptotradingbot.global.config.BackendProperties;
 import io.github.suover.cryptotradingbot.overview.dto.OverviewQuery;
 import io.github.suover.cryptotradingbot.overview.repository.OverviewReadRepository;
 import io.github.suover.cryptotradingbot.overview.service.OverviewReadService;
-import io.github.suover.cryptotradingbot.research.repository.TradingUserRepository;
 import io.github.suover.cryptotradingbot.support.PostgresFixtureTest;
 import jakarta.persistence.EntityManager;
 import java.sql.*;
@@ -26,22 +24,20 @@ import org.springframework.test.web.servlet.MockMvc;
 
 class OverviewPostgresTest extends PostgresFixtureTest {
     static final long BIG = 9007199254740993L;
-    @Autowired OverviewReadService service;
+    OverviewReadService service() { return scoped(1, "UPBIT", "KRW"); }
     @Autowired OverviewReadRepository repository;
     @Autowired EntityManager entityManager;
-    @Autowired TradingUserRepository users;
     @Autowired DataSource dataSource;
     @Autowired MockMvc mvc;
     OverviewReadService scoped(long user, String exchange, String quote) {
-        var props = new BackendProperties(user, exchange, quote, "fixture-admin", HASH);
-        return new OverviewReadService(new OverviewReadRepository(new JPAQueryFactory(entityManager), props),
-                users, props, Clock.systemUTC());
+        return new OverviewReadService(new OverviewReadRepository(new JPAQueryFactory(entityManager)),
+                fixtureScope(entityManager, user, exchange, quote), Clock.systemUTC());
     }
     OverviewQuery.Performance history(int page, int size) {
         return new OverviewQuery.Performance(null, null, page, size);
     }
     @Test void latestUsesCapturedTimeThenIdNotMaximumId() {
-        var result = service.summary();
+        var result = service().summary();
         assertThat(result.portfolio().snapshotId()).isEqualTo(Long.toString(BIG));
         assertThat(result.portfolio().capturedAt()).isEqualTo(Instant.parse("2026-01-04T00:00:00Z"));
         assertThat(result.performance().portfolioSnapshotId()).isEqualTo(result.portfolio().snapshotId());
@@ -50,7 +46,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         assertThat(result.botPnl().calculatedAt()).isEqualTo(Instant.parse("2026-01-01T02:00:00Z"));
     }
     @Test void partialTotalStaysNullDespiteKnownValueAndFifoValue() {
-        var s = service.summary();
+        var s = service().summary();
         assertThat(s.portfolio().totalValueKrw()).isNull();
         assertThat(s.portfolio().knownTotalValueKrw()).isEqualTo("12345678901234567890.1234567890");
         assertThat(s.portfolio().unpricedAssetCount()).isEqualTo(1);
@@ -94,7 +90,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         assertThat(present.items()).isEmpty();
     }
     @Test void positionsUseParentOwnershipAndDoNotLoseUnpricedAssets() {
-        var p = service.positions();
+        var p = service().positions();
         assertThat(p.portfolio().snapshotId()).isEqualTo(Long.toString(BIG));
         assertThat(p.items()).extracting("currency").containsExactly("BTC", "ETH", "APENFT");
         assertThat(p.items()).allMatch(item -> item.portfolioSnapshotId().equals(Long.toString(BIG)));
@@ -104,22 +100,22 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         assertThat(p.items().get(2).valuationStatus()).isEqualTo("UNPRICED");
         assertThat(p.items().get(2).market()).isNull();
         assertThat(p.items().get(2).marketValueKrw()).isNull();
-        assertThat(repository.positions(2001)).isEmpty();
-        assertThat(repository.positions(2002)).isEmpty();
-        assertThat(repository.positions(2003)).isEmpty();
-        assertThat(repository.performance(1004)).isEmpty();
-        assertThat(repository.performance(1005)).isEmpty();
-        assertThat(repository.performance(2004)).isEmpty();
+        assertThat(repository.positions(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 2001)).isEmpty();
+        assertThat(repository.positions(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 2002)).isEmpty();
+        assertThat(repository.positions(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 2003)).isEmpty();
+        assertThat(repository.performance(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 1004)).isEmpty();
+        assertThat(repository.performance(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 1005)).isEmpty();
+        assertThat(repository.performance(new io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope(1, "UPBIT", "KRW"), 2004)).isEmpty();
     }
     @Test void historyParentQuoteAndBothOwnerFieldsAreScopedWithStablePages() {
-        assertThat(service.performance(history(0, 2)).items()).extracting("id")
+        assertThat(service().performance(history(0, 2)).items()).extracting("id")
                 .containsExactly(Long.toString(BIG), "1002");
-        var p = service.performance(history(1, 2));
+        var p = service().performance(history(1, 2));
         assertThat(p.items()).extracting("id").containsExactly(Long.toString(BIG + 1), "1001");
         assertThat(p.totalElements()).isEqualTo(4);
         assertThat(p.totalPages()).isEqualTo(2);
-        assertThat(service.performance(history(2, 2)).items()).isEmpty();
-        assertThat(service.performance(history(2, 2)).totalElements()).isEqualTo(4);
+        assertThat(service().performance(history(2, 2)).items()).isEmpty();
+        assertThat(service().performance(history(2, 2)).totalElements()).isEqualTo(4);
         assertThat(p.items().getLast().performanceStatus()).isEqualTo("BASELINE");
         assertThat(p.items().getLast().cumulativeReturnPercentage()).isEqualTo("0.0000000000");
         assertThat(p.items().getLast().periodReturnPercentage()).isNull();
@@ -127,10 +123,10 @@ class OverviewPostgresTest extends PostgresFixtureTest {
     }
     @Test void periodEndRangeIncludesBothEndpointsAndEmptyIsAnEmptyPage() {
         Instant at = Instant.parse("2026-01-04T00:00:00Z");
-        var exact = service.performance(new OverviewQuery.Performance(at, at, 0, 90));
+        var exact = service().performance(new OverviewQuery.Performance(at, at, 0, 90));
         assertThat(exact.totalElements()).isEqualTo(2);
         assertThat(exact.items()).extracting("id").containsExactly(Long.toString(BIG), "1002");
-        assertThat(service.performance(new OverviewQuery.Performance(at.plusSeconds(1), null, 0, 90)).totalElements()).isZero();
+        assertThat(service().performance(new OverviewQuery.Performance(at.plusSeconds(1), null, 0, 90)).totalElements()).isZero();
     }
     @ParameterizedTest @CsvSource({"2,UPBIT,KRW,2001", "1,BINANCE,KRW,2002", "1,UPBIT,BTC,2003"})
     void alternativeScopeDoesNotMixOwnersExchangesOrQuotes(long user, String exchange, String quote, String latest) {
@@ -144,7 +140,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         }
     }
     @Test void recommendationPrefixSortPrecisionAndCount() {
-        var p = service.recommendations(new OverviewQuery.Recommendations(null, 0, 2));
+        var p = service().recommendations(new OverviewQuery.Recommendations(null, 0, 2));
         assertThat(p.totalElements()).isEqualTo(4);
         assertThat(p.totalPages()).isEqualTo(2);
         assertThat(p.items()).extracting("id").containsExactly("4003", "4002");
@@ -153,7 +149,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
         assertThat(p.items().get(1).confidence()).isEqualTo("0.9876");
         assertThat(p.items().get(1).tradeRatio()).isEqualTo("0.123456789");
         assertThat(p.items().get(1).status()).isEqualTo("APPROVED");
-        var next = service.recommendations(new OverviewQuery.Recommendations(null, 1, 2));
+        var next = service().recommendations(new OverviewQuery.Recommendations(null, 1, 2));
         assertThat(next.items()).extracting("id").containsExactly("4001", Long.toString(BIG + 10));
         assertThat(next.items().getLast().analysisRunId()).isEqualTo(Long.toString(BIG + 10));
         assertThat(scoped(1, "UPBIT", "BTC").recommendations(new OverviewQuery.Recommendations(null, 0, 10)).items())
@@ -162,7 +158,7 @@ class OverviewPostgresTest extends PostgresFixtureTest {
     }
     @ParameterizedTest @CsvSource({"BUY,2", "SELL,1", "HOLD,1"})
     void actionFilterCounts(String action, int count) {
-        var result = service.recommendations(new OverviewQuery.Recommendations(action, 0, 10));
+        var result = service().recommendations(new OverviewQuery.Recommendations(action, 0, 10));
         assertThat(result.totalElements()).isEqualTo(count);
         assertThat(result.items()).allMatch(r -> r.action().equals(action));
     }

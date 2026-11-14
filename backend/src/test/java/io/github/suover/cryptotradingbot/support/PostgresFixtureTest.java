@@ -1,12 +1,16 @@
 package io.github.suover.cryptotradingbot.support;
 
 import java.nio.file.*;
+import java.sql.DriverManager;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import io.github.suover.cryptotradingbot.global.security.CurrentTradingScope;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.AfterAll;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -18,16 +22,46 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 public abstract class PostgresFixtureTest {
     protected static org.springframework.mock.web.MockHttpSession adminSession(
             org.springframework.test.web.servlet.MockMvc mvc) throws Exception {
+        return adminSession(mvc, "fixture-admin");
+    }
+    protected static org.springframework.mock.web.MockHttpSession adminSession(
+            org.springframework.test.web.servlet.MockMvc mvc, String username) throws Exception {
         return (org.springframework.mock.web.MockHttpSession) mvc.perform(
                 org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/auth/login")
                 .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
-                .param("username", "fixture-admin").param("password", "admin-fixture-only"))
+                .param("username", username).param("password", "admin-fixture-only"))
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isNoContent())
                 .andReturn().getRequest().getSession();
     }
     protected static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:17")
             .withDatabaseName("backend_fixture").withUsername("fixture_owner").withPassword("fixture-only");
     protected static final String HASH = new BCryptPasswordEncoder().encode("admin-fixture-only");
+
+    protected static CurrentTradingScope fixtureScope(EntityManager entityManager, long user, String exchange, String quote) {
+        return new CurrentTradingScope(null, null, null) {
+            @Override public Scope resolve() {
+                var linked = entityManager.find(io.github.suover.cryptotradingbot.research.entity.TradingUser.class, user);
+                if (linked == null || !linked.getIsActive()) throw new AccessDeniedException("Fixture user unavailable");
+                return new Scope(user, exchange, quote);
+            }
+        };
+    }
+
+    private static void prepareAuth(Path root) throws Exception {
+        try (var c = DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+             var sql = c.createStatement()) {
+            sql.execute("CREATE ROLE dashboard_auth_writer LOGIN PASSWORD 'writer-fixture-only'");
+            String permissions = Files.readString(root.resolve("backend/scripts/dashboard_auth_permissions.sql"));
+            sql.execute(permissions.substring(permissions.indexOf("BEGIN;"))
+                    .replace(":\"DBNAME\"", "\"backend_fixture\""));
+            try (var insert = c.prepareStatement(
+                    "INSERT INTO auth.accounts(username, password_hash, trading_user_id) VALUES (?, ?, ?)")) {
+                insert.setString(2, HASH);
+                insert.setString(1, "fixture-admin"); insert.setLong(3, 1); insert.executeUpdate();
+                insert.setString(1, "fixture-other"); insert.setLong(3, 20); insert.executeUpdate();
+            }
+        }
+    }
 
     @DynamicPropertySource
     protected static void database(DynamicPropertyRegistry registry) throws Exception {
@@ -74,6 +108,7 @@ public abstract class PostgresFixtureTest {
             if (process.exitValue() != 0) {
                 throw new IllegalStateException("Alembic fixture preparation failed; see build/alembic-test.log");
             }
+            prepareAuth(root);
         } catch (Exception failure) {
             POSTGRES.stop();
             throw failure;
@@ -81,11 +116,8 @@ public abstract class PostgresFixtureTest {
         registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
         registry.add("spring.datasource.username", () -> "backend_reader");
         registry.add("spring.datasource.password", () -> "reader-fixture-only");
-        registry.add("backend.trading-user-id", () -> 1);
         registry.add("backend.exchange", () -> "UPBIT");
         registry.add("backend.quote-asset", () -> "KRW");
-        registry.add("backend.admin-username", () -> "fixture-admin");
-        registry.add("backend.admin-password-hash", () -> HASH);
     }
     @AfterAll protected static void stopDatabase() { POSTGRES.stop(); }
 }

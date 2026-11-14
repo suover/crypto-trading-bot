@@ -1,6 +1,5 @@
 package io.github.suover.cryptotradingbot.global.security;
 
-import io.github.suover.cryptotradingbot.global.config.BackendProperties;
 import io.github.suover.cryptotradingbot.global.exception.ApiError;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -9,10 +8,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.servlet.util.matcher.PathPatternRequestMatcher;
@@ -21,11 +17,6 @@ import tools.jackson.databind.ObjectMapper;
 @Configuration
 public class SecurityConfiguration {
     @Bean BCryptPasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
-
-    @Bean UserDetailsService administrators(BackendProperties properties) {
-        return new InMemoryUserDetailsManager(User.withUsername(properties.adminUsername())
-                .password(properties.adminPasswordHash()).roles("ADMIN").build());
-    }
 
     @Bean SecurityFilterChain security(HttpSecurity http, ObjectMapper mapper) throws Exception {
         // Only authentication changes session state. Business APIs remain SELECT-only.

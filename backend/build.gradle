@@ -32,9 +32,11 @@ tasks.withType(Test).configureEach {
 }
 tasks.withType(JavaCompile).configureEach { options.compilerArgs += '-parameters' }
 
-// Used by the local, console-only password hash tool; no server or DB is started.
-tasks.register('adminHashClasspath') {
+// Print the existing JDBC and BCrypt jars for the console-only account command.
+tasks.register('dashboardAccountClasspath') {
     doLast {
-        println configurations.runtimeClasspath.files.find { it.name.startsWith('spring-security-crypto-') }.absolutePath
+        println configurations.runtimeClasspath.files.findAll {
+            it.name.startsWith('spring-security-crypto-') || it.name.startsWith('postgresql-')
+        }.collect { it.absolutePath }.join(File.pathSeparator)
     }
 }

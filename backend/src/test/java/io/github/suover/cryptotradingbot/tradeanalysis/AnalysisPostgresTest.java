@@ -5,8 +5,6 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 import com.querydsl.jpa.impl.JPAQueryFactory;
-import io.github.suover.cryptotradingbot.global.config.BackendProperties;
-import io.github.suover.cryptotradingbot.research.repository.TradingUserRepository;
 import io.github.suover.cryptotradingbot.support.PostgresFixtureTest;
 import io.github.suover.cryptotradingbot.tradeanalysis.dto.AnalysisQuery;
 import io.github.suover.cryptotradingbot.tradeanalysis.repository.AnalysisReadRepository;
@@ -31,15 +29,13 @@ class AnalysisPostgresTest extends PostgresFixtureTest {
     static final String ROOT = "/api/v1/ai-trade-analysis/recommendations";
     @Autowired EntityManager entityManager;
     @Autowired EntityManagerFactory entityManagerFactory;
-    @Autowired TradingUserRepository users;
     @Autowired StoredFeatureProjection features;
     @Autowired DataSource dataSource;
     @Autowired ObjectMapper mapper;
     @Autowired MockMvc mvc;
     AnalysisReadService scoped(long user, String exchange, String quote) {
-        var p = new BackendProperties(user, exchange, quote, "fixture-admin", HASH);
-        return new AnalysisReadService(new AnalysisReadRepository(new JPAQueryFactory(entityManager), p),
-                users, p, features, Clock.systemUTC());
+        return new AnalysisReadService(new AnalysisReadRepository(new JPAQueryFactory(entityManager)),
+                fixtureScope(entityManager, user, exchange, quote), features, Clock.systemUTC());
     }
     AnalysisReadService service() { return scoped(20, "UPBIT", "KRW"); }
     AnalysisQuery.Search search(int page, int size) { return new AnalysisQuery.Search(null, null, null, null, page, size); }
