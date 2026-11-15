@@ -185,6 +185,8 @@ Unix에서는 `bash ./gradlew bootRun`을 실행합니다. IntelliJ를 사용하
 
 개발 서버 없이 배포용 프론트 산출물에서 로그인·조회 전환을 확인하는 방법은 [API 연결용 빌드 로컬 확인](../frontend/README.md#api-연결용-빌드-로컬-확인)을 참고하세요. 같은 로컬 Spring Boot와 계정을 사용합니다.
 
+프론트와 백엔드를 함께 실행하는 웹 전용 Docker Compose, HTTPS 검증과 수동 Deploy Web은 [Web Deployment](../docs/WEB_DEPLOYMENT.md)를 참고하세요. 기존 엔진 배포와 독립적이며 운영 DB 권한·계정·인증서는 별도 준비합니다.
+
 ### 세션과 인증 API
 
 | Method / URL | 의미 |

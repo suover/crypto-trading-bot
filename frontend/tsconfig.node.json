@@ -13,5 +13,11 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts", "playwright.config.ts", "e2e"]
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts",
+    "playwright.web.config.ts",
+    "e2e",
+    "e2e-web"
+  ]
 }

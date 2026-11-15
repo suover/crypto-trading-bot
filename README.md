@@ -389,6 +389,7 @@ bash -n scripts/backup_db.sh
 | [Policy Promotion](docs/POLICY_PROMOTION.md) | candidate → shadow → approval → Full LIVE lifecycle |
 | [Operations](docs/OPERATIONS.md) | 일상 server/runtime operation과 diagnostics |
 | [Production LIVE](docs/PRODUCTION_LIVE.md) | Production deployment와 LIVE runtime |
+| [Web Deployment](docs/WEB_DEPLOYMENT.md) | 프론트·백엔드 HTTPS 실행, 웹 전용 수동 Deploy Web |
 | [LIVE Runbook](docs/LIVE_RUNBOOK.md) | 첫 제한적 실제 주문 절차 |
 | [Trading Engine](trading-engine/README.md) | engine 개발 명령과 directory boundary |
 

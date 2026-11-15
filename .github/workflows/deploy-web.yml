@@ -1,0 +1,115 @@
+name: Deploy Web
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type DEPLOY WEB to deploy this exact main commit"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: crypto-trading-bot-web-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy frontend and backend only
+    runs-on: ubuntu-24.04
+    environment: web-production
+    env:
+      EXPECTED_SHA: ${{ github.sha }}
+      GH_TOKEN: ${{ github.token }}
+      WEB_HOST: ${{ secrets.WEB_HOST }}
+      WEB_USER: ${{ secrets.WEB_USER }}
+      WEB_SSH_PORT: ${{ secrets.WEB_SSH_PORT }}
+      WEB_PUBLIC_URL: ${{ vars.WEB_PUBLIC_URL }}
+    steps:
+      - name: Require main, confirmation and successful exact-SHA CI
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$CONFIRMATION" == 'DEPLOY WEB' ]]
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" == "$EXPECTED_SHA" ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$EXPECTED_SHA&branch=main&event=push" \
+            --jq '.workflow_runs | sort_by(.run_number, .run_attempt) | last | [.status, .conclusion] | join(" ")' > "$RUNNER_TEMP/ci-status"
+          [[ "$(cat "$RUNNER_TEMP/ci-status")" == 'completed success' ]] || {
+            echo 'The latest CI run for this main SHA must complete successfully before Deploy Web.' >&2
+            exit 1
+          }
+          [[ "$WEB_PUBLIC_URL" =~ ^https://[A-Za-z0-9.-]+(:[0-9]+)?$ ]]
+          [[ "$WEB_HOST" =~ ^[A-Za-z0-9.-]+$ && "$WEB_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "${WEB_SSH_PORT:-22}" =~ ^[0-9]+$ ]]
+
+      - name: Checkout exact release
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Build web images on runner
+        run: |
+          set -euo pipefail
+          docker build --label "org.opencontainers.image.revision=$EXPECTED_SHA" -t "crypto-trading-web-backend:$EXPECTED_SHA" backend
+          docker build --build-arg "WEB_RELEASE_SHA=$EXPECTED_SHA" --label "org.opencontainers.image.revision=$EXPECTED_SHA" -t "crypto-trading-web-frontend:$EXPECTED_SHA" frontend
+          mkdir "$RUNNER_TEMP/web-release"
+          docker save "crypto-trading-web-backend:$EXPECTED_SHA" "crypto-trading-web-frontend:$EXPECTED_SHA" | gzip > "$RUNNER_TEMP/web-release/images.tar.gz"
+          cp docker-compose.web.yml "$RUNNER_TEMP/web-release/"
+          cp scripts/web/deploy_web.sh "$RUNNER_TEMP/web-release/"
+          tar -czf "$RUNNER_TEMP/web-release.tar.gz" -C "$RUNNER_TEMP/web-release" .
+
+      - name: Configure verified web-only SSH credentials
+        env:
+          WEB_SSH_PRIVATE_KEY: ${{ secrets.WEB_SSH_PRIVATE_KEY }}
+          WEB_SSH_KNOWN_HOSTS: ${{ secrets.WEB_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ -n "$WEB_SSH_PRIVATE_KEY" && -n "$WEB_SSH_KNOWN_HOSTS" ]]
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$WEB_SSH_PRIVATE_KEY" > "$HOME/.ssh/web_key"
+          printf '%s\n' "$WEB_SSH_KNOWN_HOSTS" > "$HOME/.ssh/web_known_hosts"
+          chmod 600 "$HOME/.ssh/web_key" "$HOME/.ssh/web_known_hosts"
+
+      - name: Transfer and deploy separate web release
+        run: |
+          set -euo pipefail
+          # Recheck after builds; refuse a main commit superseded while building.
+          [[ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')" == "$EXPECTED_SHA" ]]
+          opts=(-i "$HOME/.ssh/web_key" -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$HOME/.ssh/web_known_hosts")
+          port="${WEB_SSH_PORT:-22}"
+          digest="$(sha256sum "$RUNNER_TEMP/web-release.tar.gz" | cut -d ' ' -f 1)"
+          ssh "${opts[@]}" -p "$port" "$WEB_USER@$WEB_HOST" 'mkdir -p "$HOME/apps/crypto-trading-web/releases"'
+          scp "${opts[@]}" -P "$port" "$RUNNER_TEMP/web-release.tar.gz" "$WEB_USER@$WEB_HOST:apps/crypto-trading-web/incoming-$EXPECTED_SHA.tar.gz"
+          ssh "${opts[@]}" -p "$port" "$WEB_USER@$WEB_HOST" "bash -s -- '$EXPECTED_SHA' '$digest'" <<'REMOTE'
+          set -euo pipefail
+          sha="$1"; digest="$2"
+          root="$HOME/apps/crypto-trading-web"
+          archive="$root/incoming-$sha.tar.gz"
+          printf '%s  %s\n' "$digest" "$archive" | sha256sum --check --status
+          release="$(mktemp -d "$root/releases/$sha.XXXXXXXX")"
+          tar -xzf "$archive" -C "$release"
+          rm -- "$archive"
+          cd "$release"
+          bash ./deploy_web.sh --expected-sha "$sha" --config "$root/config/web.env"
+          REMOTE
+
+      - name: Verify public HTTPS and unauthenticated API boundary
+        run: |
+          set -euo pipefail
+          # No -k, no redirects, and no administrator credentials in Actions.
+          for path in /healthz /overview /login /api/v1/auth/csrf; do
+            [[ "$(curl --proto '=https' --max-time 20 -sS -o /dev/null -w '%{http_code}' "$WEB_PUBLIC_URL$path")" == 200 ]]
+          done
+          [[ "$(curl --proto '=https' --max-time 20 -sS -o /dev/null -w '%{http_code}' "$WEB_PUBLIC_URL/api/v1/auth/me")" == 401 ]]
+          [[ "$(curl --proto '=https' --max-time 20 -fsS "$WEB_PUBLIC_URL/release.json" | jq -r '.revision')" == "$EXPECTED_SHA" ]]
+          echo 'Web deployment verified. No engine service or database schema was changed.'
+
+      - name: Remove runner SSH material
+        if: always()
+        run: rm -f "$HOME/.ssh/web_key" "$HOME/.ssh/web_known_hosts"

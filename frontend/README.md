@@ -47,6 +47,8 @@ npm run preview
 
 ### 배포 시 동일 출처 구성
 
+프론트·백엔드 컨테이너를 함께 배포하는 기본 절차는 [Web Deployment](../docs/WEB_DEPLOYMENT.md)입니다. 웹 전용 Compose와 수동 Deploy Web을 사용하고, 격리 DB를 통한 실제 HTTPS 로그인 검증을 제공합니다. 아래 설정은 Spring을 같은 호스트에서 직접 실행할 때의 별도 예시입니다.
+
 `dist/`의 **내용**을 같은 호스트의 HTTPS 웹 서버에 제공합니다. [Nginx 설정 예시](deploy/dashboard.locations.conf)는 HTTPS `server` 블록에 포함하는 설정으로, 정적 파일과 화면 경로를 제공하고 `/api/`를 loopback Spring Boot에 전달합니다. 예시의 정적 파일 위치는 `/var/www/crypto-trading-dashboard`입니다. HTTPS 서버 이름과 인증서는 배포 환경에서 설정합니다.
 
 백엔드와 PostgreSQL에는 브라우저가 직접 접근하지 않도록 하고, 백엔드는 DB 읽기 역할과 기본 `Secure` 세션 쿠키를 사용합니다. `/api/`는 공유 캐시에서 제외하고 Spring Security가 세션·CSRF·조회 경로를 검증합니다. 예시 프록시는 클라이언트가 보낸 전달 헤더를 제거합니다. 현재 백엔드 로그인 제한은 연결 주소 기준이므로 이 구성에서는 프록시 주소에 합산됩니다. 공개 배포 전에는 대상 환경의 로그인 제한과 TLS 구성도 확인합니다. 웹 서버는 기존 거래 엔진 배포와 별도로 준비합니다.

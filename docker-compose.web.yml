@@ -1,0 +1,87 @@
+# Independent project: never combine this with the trading engine Compose files.
+services:
+  backend:
+    image: crypto-trading-web-backend:${WEB_IMAGE_TAG:?Set exact release SHA}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    mem_limit: 768m
+    cpus: 1.0
+    environment:
+      BACKEND_DB_URL: ${WEB_DB_URL:?Set read-only JDBC URL}
+      BACKEND_DB_USERNAME: ${WEB_DB_USERNAME:?Set read-only DB role}
+      SPRING_CONFIG_IMPORT: configtree:/run/secrets/
+    # Command-line settings cannot be weakened by a supplied environment file.
+    command:
+      - --server.address=0.0.0.0
+      - --server.forward-headers-strategy=native
+      - '--server.tomcat.remoteip.internal-proxies=172\.30\.83\.2'
+      - --server.tomcat.remoteip.remote-ip-header=X-Forwarded-For
+      - --server.tomcat.remoteip.protocol-header=X-Forwarded-Proto
+      - --server.servlet.session.cookie.secure=true
+      - --spring.jpa.hibernate.ddl-auto=validate
+      - --spring.datasource.hikari.read-only=true
+    secrets:
+      - source: backend_password
+        target: BACKEND_DB_PASSWORD
+    networks:
+      web_private:
+        ipv4_address: 172.30.83.3
+      database: {}
+    healthcheck:
+      test: [CMD-SHELL, 'test "$$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/api/v1/auth/me)" = 401']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  web:
+    image: crypto-trading-web-frontend:${WEB_IMAGE_TAG:?Set exact release SHA}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: ["/tmp:size=32m,mode=1777"]
+    mem_limit: 128m
+    cpus: 0.5
+    ports:
+      - "${WEB_BIND_ADDRESS:-127.0.0.1}:${WEB_HTTPS_PORT:-8443}:8443"
+    secrets: [tls_certificate, tls_key]
+    networks:
+      web_private:
+        ipv4_address: 172.30.83.2
+      web_ingress: {}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, 'wget --no-check-certificate -q -O /dev/null https://127.0.0.1:8443/healthz']
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+networks:
+  web_ingress: {}
+  web_private:
+    internal: true
+    ipam:
+      config: [{subnet: 172.30.83.0/28}]
+  database:
+    external: true
+    name: ${WEB_DB_NETWORK:?Set existing PostgreSQL Docker network}
+
+secrets:
+  backend_password:
+    file: ${WEB_DB_PASSWORD_FILE:?Set absolute DB password file}
+  tls_certificate:
+    file: ${WEB_TLS_CERTIFICATE_FILE:?Set absolute fullchain file}
+  tls_key:
+    file: ${WEB_TLS_KEY_FILE:?Set absolute TLS key file}
