@@ -5,4 +5,3 @@ export const OverviewSourceContext = createContext<{
   available: boolean;
 }>({ source: 'demo', available: false });
 export const useOverviewSource = () => useContext(OverviewSourceContext);
-export const overviewApiAvailable = (dev: boolean, flag: unknown) => dev && flag === 'true';

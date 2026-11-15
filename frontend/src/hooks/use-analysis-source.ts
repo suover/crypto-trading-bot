@@ -5,4 +5,3 @@ export const AnalysisSourceContext = createContext<{
   available: boolean;
 }>({ source: 'demo', available: false });
 export const useAnalysisSource = () => useContext(AnalysisSourceContext);
-export const analysisApiAvailable = (dev: boolean, flag: unknown) => dev && flag === 'true';

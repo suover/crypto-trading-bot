@@ -1,13 +1,11 @@
 import { type ReactNode } from 'react';
 import { useAdminSession } from './use-admin-session';
-import { OverviewSourceContext, overviewApiAvailable } from './use-overview-source';
+import { OverviewSourceContext } from './use-overview-source';
+import { dashboardApis } from '@/lib/dashboard-api-config';
 
 export function OverviewSourceProvider({ children }: { children: ReactNode }) {
   const session = useAdminSession();
-  const available = overviewApiAvailable(
-    import.meta.env.DEV,
-    import.meta.env.VITE_ENABLE_OVERVIEW_API,
-  );
+  const available = dashboardApis().overview;
   return (
     <OverviewSourceContext.Provider
       value={{

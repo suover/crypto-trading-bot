@@ -1,16 +1,12 @@
+import { dashboardApis } from '@/lib/dashboard-api-config';
+
 export const SESSION_EXPIRED = 'ctb:session-expired';
 export function reportUnauthorized(status: number, signal?: AbortSignal) {
   if (status === 401 && !signal?.aborted) window.dispatchEvent(new Event(SESSION_EXPIRED));
 }
 export function authAvailable() {
-  return (
-    import.meta.env.DEV &&
-    [
-      import.meta.env.VITE_ENABLE_RESEARCH_API,
-      import.meta.env.VITE_ENABLE_OVERVIEW_API,
-      import.meta.env.VITE_ENABLE_AI_ANALYSIS_API,
-    ].some((flag) => flag === 'true')
-  );
+  const { research, overview, analysis } = dashboardApis();
+  return research || overview || analysis;
 }
 export class AuthError extends Error {
   constructor(public readonly status?: number) {

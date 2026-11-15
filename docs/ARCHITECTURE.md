@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | `trading-engine/` | 구현됨 | Python trading, analytics, research engine |
 | `backend/` | 구현됨 | Java 21 / Spring Boot Research / Overview / AI Trade Analysis 조회 전용 API |
-| `frontend/` | 구현됨 | React/TypeScript DEMO 대시보드, 개발 환경의 opt-in Research / Overview / AI Analysis GET API 조회 |
+| `frontend/` | 구현됨 | React/TypeScript 대시보드, 비로그인 DEMO 및 세션 기반 Research / Overview / AI Analysis 조회 |
 
 Root에는 Compose, 운영 shell script, 문서, `.env.example`이 있습니다. Python package는 `trading-engine/crypto_trading_bot`, 실행 module은 `trading-engine/scripts`입니다.
 
@@ -16,13 +16,13 @@ Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 Qu
 
 Overview는 `portfolio_snapshots`의 `captured_at DESC, id DESC`로 최신 계좌를 선택합니다. Position과 Performance는 부모 snapshot을 JOIN해 소유자와 quote를 검증하며 현재 성과는 정확히 같은 snapshot에 연결된 행만 반환합니다. 오래된 성과로 대체하지 않습니다. 독립적인 `bot_trading_pnl_summaries`는 user/exchange 단위 KRW 회계이며 snapshot 시각이나 quote별 수익률로 해석하지 않습니다. KRW 이외 quote에서는 Bot PnL을 제공하지 않습니다. 추천은 user/exchange와 검증된 Upbit `QUOTE-` prefix로 제한합니다. 모든 지표는 저장 값이고 PARTIAL/null/BASELINE을 보존합니다. Overview JSON의 Long ID와 BigDecimal은 문자열, 시각은 UTC이며 raw AI payload는 읽거나 노출하지 않습니다. 거래소·OpenAI·Telegram 호출은 없습니다.
 
-Frontend Research는 기본 DEMO를 유지하며 개발 환경의 명시적 flag와 사용자 선택으로만 `LOCAL API · READ ONLY` 모드를 사용합니다. 별도의 read model/client/Query/view가 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. Vite는 허용된 업무 GET 및 인증 GET/POST만 `127.0.0.1:8080`으로 전달합니다. 로그인 화면이 비밀번호를 제출하면 Spring Security가 세션을 생성하며 이후 same-origin HttpOnly 쿠키로 인증합니다. 비밀번호를 영구 저장하거나 Authorization header를 생성하지 않습니다. CSRF 보호를 사용하며 업무 쓰기는 계속 거부합니다. Production build에서는 이 모드를 허용하지 않습니다.
+프론트는 비로그인일 때 DEMO를 표시하고, 유효한 세션이 있으면 Research, Overview, AI Analysis의 사용자 데이터로 자동 전환합니다. 배포용 빌드는 같은 출처의 `/api`를 사용합니다. 개발 서버에서는 화면별 플래그를 켜면 API 연결을 사용할 수 있습니다. 로컬 Vite 프록시는 허용된 업무 GET 및 인증 GET/POST만 로컬 Spring Boot로 전달합니다. Spring Security가 세션과 HttpOnly 쿠키를 발급하고 로그인·로그아웃의 CSRF를 검증합니다. 업무 API는 조회 전용입니다.
 
-Research 응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 연구 Gate·연구 성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. AI Analysis / Portfolio / Operations 및 각 DEMO 모드는 그대로 Mock repository를 사용합니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
+Frontend Research는 별도의 read model/client/Query/view로 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. 응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 연구 Gate·연구 성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. Portfolio와 Operations의 실제 조회는 미연동이며, 데모 화면의 데이터는 Mock repository에서 가져옵니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
 
-Frontend Overview는 별도 `VITE_ENABLE_OVERVIEW_API=true`와 화면 선택으로 활성화합니다. Vite는 Overview 4개 GET만 추가 허용하며 인증·고정 loopback 경계는 동일합니다. Summary 이후 Positions를 조회하고 scope/snapshot ID/관측 시각을 대조합니다. Snapshot 불일치는 1회 재조회 후 갱신 필요 상태로 표시하며 서로 다른 계좌 자료를 혼합하지 않습니다. 성과 이력과 추천은 독립 Query로 기간·action·page 조건을 포함합니다. 금융 값은 문자열과 BigInt로 표시하고 차트 좌표만 Number로 변환합니다. 저장된 성과 index를 사용하며 PARTIAL·새 BASELINE·연속성 미확인 구간은 연결하지 않습니다. 현재 페이지를 전체 기간으로 표현하지 않으며 전일 증감·worker·현재 정책 등 미제공 값은 DEMO로 채우지 않습니다.
+Frontend Overview는 로그인한 계정의 Overview GET API 4개를 사용합니다. Summary 이후 Positions를 조회하고 scope/snapshot ID/관측 시각을 대조합니다. Snapshot 불일치는 1회 재조회 후 갱신 필요 상태로 표시하며 서로 다른 계좌 자료를 혼합하지 않습니다. 성과 이력과 추천은 독립 Query로 기간·action·page 조건을 포함합니다. 금융 값은 문자열과 BigInt로 표시하고 차트 좌표만 Number로 변환합니다. 저장된 성과 index를 사용하며 PARTIAL·새 BASELINE·연속성 미확인 구간은 연결하지 않습니다. 현재 페이지를 전체 기간으로 표현하지 않으며 전일 증감·worker·현재 정책 등 미제공 값은 DEMO로 채우지 않습니다.
 
-AI Trade Analysis는 별도 ADMIN GET 3개로 추천 목록·상세·당시 후보를 읽습니다. 추천과 분석 실행의 소유권을 함께 검증하고, 선택 후보 FK가 가리키는 Universe 실행의 user/pipeline/type/status와 후보 exchange/quote/market을 확인합니다. 같은 pipeline의 최신 실행으로 대체하지 않습니다. 저장된 최종 판단 사유, 승인 기록, MOCK/LIVE 주문 시도와 정규화 체결 요약은 분리합니다. feature JSON은 허용한 시간봉·지표만 projection하며 raw AI/거래소 응답, callback token, Telegram 식별정보는 노출하지 않습니다. 기존 10개 테이블 읽기 권한에 관련 5개 테이블의 최소 컬럼 SELECT만 추가하고 DB 쓰기·외부 API·재계산은 없습니다. Frontend AI Analysis는 기본 DEMO와 독립적인 로컬 API 모드를 제공합니다. 추천 ID 상세와 검증된 당시 후보를 조회하고 응답 간 scope/Universe 연결을 검증합니다. 승인·주문·취소 동작은 없으며 읽기 품질과 데이터 품질을 구분합니다. 계약과 권한은 [AI Trade Analysis Read API v1](../backend/docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요.
+AI Trade Analysis는 별도 ADMIN GET 3개로 추천 목록·상세·당시 후보를 읽습니다. 추천과 분석 실행의 소유권을 함께 검증하고, 선택 후보 FK가 가리키는 Universe 실행의 user/pipeline/type/status와 후보 exchange/quote/market을 확인합니다. 같은 pipeline의 최신 실행으로 대체하지 않습니다. 저장된 최종 판단 사유, 승인 기록, MOCK/LIVE 주문 시도와 정규화 체결 요약은 분리합니다. feature JSON은 허용한 시간봉·지표만 projection하며 raw AI/거래소 응답, callback token, Telegram 식별정보는 노출하지 않습니다. 기존 10개 테이블 읽기 권한에 관련 5개 테이블의 최소 컬럼 SELECT만 추가하고 DB 쓰기·외부 API·재계산은 없습니다. 인증된 화면은 추천 ID 상세와 검증된 당시 후보를 조회하고 응답 간 scope/Universe 연결을 검증합니다. 승인·주문·취소 동작은 없으며 읽기 품질과 데이터 품질을 구분합니다. 계약과 권한은 [AI Trade Analysis Read API v1](../backend/docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요.
 
 ## Package structure
 

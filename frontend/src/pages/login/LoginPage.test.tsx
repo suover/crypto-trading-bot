@@ -104,7 +104,7 @@ async function enterCredentials(
 }
 it('shows guest demo, automatically selects user data on login, and clears it on logout', async () => {
   const { user, client } = setup('/overview');
-  await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' });
+  await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }, { timeout: 5000 });
   await user.click(screen.getByRole('link', { name: '관리자 로그인' }));
   await screen.findByLabelText('관리자 아이디');
   expect(businessReads).toEqual([]);
@@ -162,8 +162,10 @@ it('failed logout hides data without claiming that the server session ended', as
   expect(screen.queryByRole('table', { name: 'API 보유 자산' })).not.toBeInTheDocument();
   expect(authenticated).toBe(true);
 });
-it('production/disabled API remains DEMO-only with no auth calls', async () => {
-  vi.stubEnv('DEV', false);
+it('keeps the development login route in DEMO when all local flags are off', async () => {
+  vi.stubEnv('VITE_ENABLE_OVERVIEW_API', '');
+  vi.stubEnv('VITE_ENABLE_AI_ANALYSIS_API', '');
+  vi.stubEnv('VITE_ENABLE_RESEARCH_API', '');
   setup();
   await screen.findByText(/이 환경은 DEMO 전용/);
   expect(fetch).not.toHaveBeenCalled();
@@ -205,7 +207,7 @@ it.each([
     await user.click(screen.getByRole('link', { name: '관리자 로그인' }));
     await enterCredentials(user);
     await screen.findByRole('table', { name: table });
-    expect(screen.queryByRole('button', { name: 'LOCAL API · READ ONLY' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'API · READ ONLY' })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '로그아웃' }));
     await screen.findByRole('heading', { name: heading });
     expect(screen.queryByRole('table', { name: table })).not.toBeInTheDocument();

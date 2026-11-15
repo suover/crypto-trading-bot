@@ -30,7 +30,7 @@ export default function AnalysisApiView() {
   return (
     <div className="page-stack">
       <SectionHeading
-        eyebrow="LOCAL API · READ ONLY"
+        eyebrow="API · READ ONLY"
         title="AI 추천과 처리 기록"
         description="저장된 추천·당시 후보·승인·체결을 분리하여 조회합니다. 주문이나 승인은 실행하지 않습니다."
       />
@@ -181,7 +181,7 @@ export default function AnalysisApiView() {
         </p>
       </Panel>
       <DetailDrawer
-        sourceLabel="DETAIL VIEW · LOCAL API · READ ONLY"
+        sourceLabel="DETAIL VIEW · API · READ ONLY"
         open={id !== null}
         onOpenChange={(open) => {
           if (!open)

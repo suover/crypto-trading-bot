@@ -385,7 +385,7 @@ function Candidates() {
           }}
         >
           <DialogHeader>
-            <span className="eyebrow">LOCAL API · READ ONLY</span>
+            <span className="eyebrow">API · READ ONLY</span>
             <DialogTitle>연구 후보 상세</DialogTitle>
             <DialogDescription>저장된 등록 정보와 과거 Gate 기록을 조회합니다.</DialogDescription>
           </DialogHeader>
@@ -550,9 +550,9 @@ export default function ResearchApiView() {
   return (
     <div className="page-stack research-api-view">
       <SectionHeading
-        eyebrow="LOCAL RESEARCH · READ ONLY"
+        eyebrow="RESEARCH API · READ ONLY"
         title="저장된 연구 데이터를 조회합니다."
-        description="로컬 Spring Boot Research API · 주문·승인·정책 변경 없음"
+        description="Spring Boot Research API · 주문·승인·정책 변경 없음"
         action={
           <Button
             variant="outline"

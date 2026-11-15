@@ -22,7 +22,6 @@ import {
   analysisUniverse,
 } from '@/test/analysis-api-fixtures';
 import { overviewFixtureResponse, overviewScope } from '@/test/overview-api-fixtures';
-import { analysisApiAvailable } from '@/hooks/use-analysis-source';
 const requests: string[] = [];
 const json = (value: unknown) =>
   new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
@@ -75,13 +74,13 @@ function setup(path = '/ai-analysis') {
 }
 
 describe('AI Analysis local read view', () => {
-  it('keeps DEMO with API disabled outside development', async () => {
+  it('reads AI analysis in the production build without a development flag', async () => {
     vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_ENABLE_AI_ANALYSIS_API', '');
     setup();
-    await screen.findByRole('heading', { name: '판단의 근거를, 한눈에' });
-    expect(requests).toEqual([]);
-    expect(analysisApiAvailable(false, 'true')).toBe(false);
-    expect(analysisApiAvailable(true, '')).toBe(false);
+    await screen.findByRole('table', { name: 'API AI 추천' }, { timeout: 5000 });
+    expect(requests.some((path) => path.startsWith('/api/v1/ai-trade-analysis/'))).toBe(true);
   });
   it('opens authenticated real-ID deep links automatically without DEMO mixing', async () => {
     setup(`/ai-analysis?recommendation=${analysisBigId}`);
@@ -223,11 +222,13 @@ describe('AI Analysis local read view', () => {
   it('links Overview recommendations to API detail, never a demo analysis ID', async () => {
     vi.stubEnv('VITE_ENABLE_OVERVIEW_API', 'true');
     const { user } = setup('/overview');
-    const link = (await screen.findAllByRole('link', { name: /실제 추천 상세/ }))[0]!;
+    const link = (
+      await screen.findAllByRole('link', { name: /실제 추천 상세/ }, { timeout: 5000 })
+    )[0]!;
     expect(link.getAttribute('href')).toContain('?recommendation=');
     await user.click(link);
     // The fixtures deliberately have different scopes: cross-scope data is rejected.
-    expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent(
+    expect(await within(await screen.findByRole('dialog')).findByRole('alert')).toHaveTextContent(
       '조회 데이터 연결이 일치하지 않습니다',
     );
     expect(screen.queryByText('DETAIL VIEW · DEMO')).not.toBeInTheDocument();

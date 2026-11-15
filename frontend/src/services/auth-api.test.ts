@@ -62,9 +62,10 @@ it('does not publish 401 from an aborted old request', () => {
   expect(listener).toHaveBeenCalledTimes(1);
   window.removeEventListener(SESSION_EXPIRED, listener);
 });
-it('never sends auth requests in production mode', async () => {
-  vi.stubEnv('DEV', false);
-  vi.stubEnv('VITE_ENABLE_RESEARCH_API', 'true');
+it('never sends auth requests when development API access is disabled', async () => {
+  vi.stubEnv('VITE_ENABLE_RESEARCH_API', '');
+  vi.stubEnv('VITE_ENABLE_OVERVIEW_API', '');
+  vi.stubEnv('VITE_ENABLE_AI_ANALYSIS_API', '');
   vi.stubGlobal('fetch', vi.fn());
   await expect(currentAdmin()).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();

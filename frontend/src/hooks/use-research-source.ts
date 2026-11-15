@@ -5,7 +5,3 @@ export const ResearchSourceContext = createContext<{
   available: boolean;
 }>({ source: 'demo', available: false });
 export const useResearchSource = () => useContext(ResearchSourceContext);
-
-export function researchApiAvailable(dev: boolean, flag: unknown): boolean {
-  return dev && flag === 'true';
-}

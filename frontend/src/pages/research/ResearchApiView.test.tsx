@@ -19,7 +19,6 @@ import {
   pageBody,
   emptyAutomationBody,
 } from '@/test/research-api-fixtures';
-import { researchApiAvailable } from '@/hooks/use-research-source';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 const requests: string[] = [];
@@ -69,20 +68,13 @@ describe('Research API view', () => {
     expect(screen.queryByRole('group', { name: '연구 데이터 출처' })).not.toBeInTheDocument();
     expect(requests).toEqual([]);
   });
-  it('keeps production DEMO without HTTP and gates availability', async () => {
+  it('reads Research in the production build without a development flag', async () => {
     vi.stubEnv('DEV', false);
+    vi.stubEnv('PROD', true);
+    vi.stubEnv('VITE_ENABLE_RESEARCH_API', '');
     setup();
-    expect(
-      await screen.findByRole(
-        'heading',
-        { name: '증거를 쌓고, 정책을 검증합니다.' },
-        { timeout: 5000 },
-      ),
-    ).toBeInTheDocument();
-    expect(requests).toEqual([]);
-    expect(researchApiAvailable(false, 'true')).toBe(false);
-    expect(researchApiAvailable(true, 'false')).toBe(false);
-    expect(researchApiAvailable(true, 'true')).toBe(true);
+    await screen.findByRole('table', { name: 'API 연구 후보 목록' }, { timeout: 5000 });
+    expect(requests.some((path) => path.startsWith('/api/v1/research/'))).toBe(true);
   });
   it('renders all API sections without fictitious evidence and marks unconnected pages after navigation', async () => {
     const { user } = setup();

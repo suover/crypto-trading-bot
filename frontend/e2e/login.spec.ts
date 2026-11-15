@@ -40,6 +40,7 @@ for (const width of [375, 1440]) {
       return route.fulfill({ contentType: 'application/json', body: overviewFixtureResponse(url) });
     });
     await page.goto('/overview');
+    await expect(page.getByText('DEMO', { exact: true })).toBeVisible();
     await page.getByRole('link', { name: '관리자 로그인' }).click();
     await expect(page).toHaveURL(/\/login$/);
     expect(reads).toBe(0);
@@ -68,7 +69,7 @@ for (const width of [375, 1440]) {
   });
 }
 
-test('Vite continues to reject business writes and unlisted authentication routes', async ({
+test('the local gateway rejects business writes and unlisted authentication routes', async ({
   request,
 }) => {
   for (const path of ['/api/v1/research/candidates', '/api/v1/orders', '/api/v1/auth/register']) {
@@ -76,4 +77,7 @@ test('Vite continues to reject business writes and unlisted authentication route
   }
   expect((await request.get('/api/v1/auth/logout')).status()).toBe(403);
   expect((await request.put('/api/v1/auth/login')).status()).toBe(403);
+  const unknown = await request.get('/api/v1/unknown', { headers: { Accept: 'text/html' } });
+  expect(unknown.status()).toBe(403);
+  expect(unknown.headers()['cache-control']).toBe('no-store');
 });

@@ -426,7 +426,7 @@ export default function OverviewApiView() {
   return (
     <div className="page-stack overview-api">
       <SectionHeading
-        eyebrow="LOCAL API · READ ONLY"
+        eyebrow="API · READ ONLY"
         title="저장된 계좌와 성과를 확인합니다."
         description="PostgreSQL에 기록된 관측값입니다. 실시간 잔고나 거래소 실시간 상태를 의미하지 않습니다."
         action={
@@ -530,7 +530,7 @@ export default function OverviewApiView() {
           화면에서 조회하지 않습니다. DEMO 값으로 채우거나 운영 정상 상태로 추정하지 않습니다.
         </p>
         <p className="small text-muted">
-          다른 화면으로 이동하면 해당 화면의 DEMO / LOCAL API 출처를 확인하세요. 거래·승인·정책 변경
+          다른 화면으로 이동하면 해당 화면의 DEMO / API 출처를 확인하세요. 거래·승인·정책 변경
           기능은 없습니다.
         </p>
       </Panel>

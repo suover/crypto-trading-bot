@@ -20,7 +20,6 @@ import {
   performanceRow,
   overviewBigId,
 } from '@/test/overview-api-fixtures';
-import { overviewApiAvailable } from '@/hooks/use-overview-source';
 const requests: string[] = [];
 const json = (data: unknown) =>
   new Response(JSON.stringify(data), { headers: { 'content-type': 'application/json' } });
@@ -74,7 +73,7 @@ describe('Overview API view', () => {
       ),
     );
     setup();
-    await waitFor(() => expect(signals).toHaveLength(3));
+    await waitFor(() => expect(signals).toHaveLength(3), { timeout: 5000 });
     act(() => window.dispatchEvent(new Event(SESSION_EXPIRED)));
     await waitFor(() => expect(signals.every((s) => s.aborted)).toBe(true));
     expect(
@@ -86,8 +85,6 @@ describe('Overview API view', () => {
     setup();
     await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }, { timeout: 5000 });
     expect(requests).toEqual([]);
-    expect(overviewApiAvailable(false, 'true')).toBe(false);
-    expect(overviewApiAvailable(true, 'false')).toBe(false);
   });
   it('hides the switch without opt-in', async () => {
     vi.stubEnv('VITE_ENABLE_OVERVIEW_API', '');

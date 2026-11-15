@@ -117,7 +117,7 @@ export function AppShell() {
   const sourceLabel = isDemo
     ? 'DEMO'
     : isApi
-      ? 'LOCAL API · READ ONLY'
+      ? 'API · READ ONLY'
       : isAuthenticated
         ? '실제 데이터 미연동'
         : '인증 상태 확인';
