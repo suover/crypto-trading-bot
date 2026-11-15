@@ -179,7 +179,7 @@ Unix에서는 `bash ./gradlew bootRun`을 실행합니다. IntelliJ를 사용하
 
 ### 프론트엔드 실행과 로그인
 
-확인할 화면의 API 플래그를 켜고 프론트엔드 개발 서버를 시작합니다. 화면별 설정은 [Research](../frontend/README.md#local-api-실행과-인증), [Overview](../frontend/README.md#overview-local-api-v1), [AI Analysis](../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. [로컬 로그인 화면](http://127.0.0.1:5173/login)에서 등록한 아이디와 계정 등록 때 정한 대시보드 비밀번호로 로그인합니다. 해당 화면에서 **LOCAL API · READ ONLY**를 선택하면 연결된 거래 사용자의 로컬 DB 데이터를 조회할 수 있습니다.
+확인할 화면의 API 플래그를 켜고 프론트엔드 개발 서버를 시작합니다. 화면별 설정은 [Research](../frontend/README.md#local-api-실행과-인증), [Overview](../frontend/README.md#overview-local-api-v1), [AI Analysis](../frontend/README.md#ai-analysis-local-api-v1)를 참고하세요. [로컬 로그인 화면](http://127.0.0.1:5173/login)에서 등록한 아이디와 계정 등록 때 정한 대시보드 비밀번호로 로그인합니다. 로그인하면 API 플래그가 켜진 화면은 연결된 거래 사용자의 로컬 DB 데이터로 자동 전환합니다. 비로그인과 로그아웃 후에는 DEMO를 표시하고, 유효한 세션이 있으면 새로고침 후에도 사용자 데이터를 조회합니다.
 
 보호된 조회마다 활성 계정과 로그인 당시의 거래 사용자 연결을 확인합니다. 계정이나 거래 사용자가 비활성이거나 연결이 바뀌면 조회가 거부됩니다. DB 장애는 HTTP `500`으로 반환됩니다.
 

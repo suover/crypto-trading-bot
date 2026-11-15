@@ -1,8 +1,8 @@
 # Crypto Trading Bot Dashboard
 
-Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경의 Research, Overview, AI Analysis 화면은 각각 명시적으로 LOCAL API 모드로 전환할 수 있습니다.
+Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 개발 환경에서 API 연결을 활성화하면 비로그인은 DEMO, 로그인 후에는 연결된 거래 사용자의 Research, Overview, AI Analysis 데이터로 자동 전환합니다.
 
-DEMO의 모든 금액·상태·시각은 합성 데이터이며 실제 API를 호출하지 않습니다. LOCAL API는 로컬 Spring Boot Research / Overview / AI Trade Analysis GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
+DEMO의 모든 금액·상태·시각은 합성 데이터입니다. API flag가 모두 꺼져 있으면 인증 요청도 하지 않습니다. API 연결 환경에서는 진입 시 서버 세션을 확인하고, 비로그인 상태에서는 업무 API를 호출하지 않습니다. LOCAL API는 로컬 Spring Boot Research / Overview / AI Trade Analysis GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다. DEMO 실행에 `.env`나 API key는 필요하지 않습니다.
 
 ## 기술 스택
 
@@ -41,7 +41,7 @@ npm run build
 npm run preview
 ```
 
-`dist/`가 생성되며 preview도 localhost에만 바인딩합니다. Production build에서는 LOCAL API 선택이 비활성화됩니다. 이 명령은 Production 배포가 아닙니다. GitHub Actions는 frontend 검증과 build를 수행하지만 배포하지 않으며 root Docker Compose도 변경하지 않습니다.
+`dist/`가 생성되며 preview도 localhost에만 바인딩합니다. Production build는 기존처럼 DEMO 전용입니다. 이 명령은 Production 배포가 아닙니다. GitHub Actions는 frontend 검증과 build를 수행하지만 배포하지 않으며 root Docker Compose도 변경하지 않습니다.
 
 ## 다섯 화면
 
@@ -53,7 +53,7 @@ npm run preview
 | `/research`    | 전략 연구     | Runtime 정책, 11단계 lifecycle, 후보 목록, 가중치 비교, Historical/Forward/Shadow evidence, Gate 상세 |
 | `/operations`  | 운영 모니터링 | 모의 worker 상태, 분석 일정, Research Lifecycle 처리 현황, 이벤트와 경고                              |
 
-위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시합니다. Research, Overview, AI Analysis의 선택은 독립적이며 Portfolio / Operations는 DEMO입니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
+위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **LOCAL API · READ ONLY**를 표시합니다. Research, Overview, AI Analysis는 세션 상태에 따라 출처가 함께 전환됩니다. 로그인 후 Portfolio / Operations 및 API flag가 꺼진 화면에는 **실제 데이터 미연동** 안내를 표시합니다. 해당 화면의 데모는 로그아웃 상태에서만 표시합니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
 
 Sidebar는 데스크톱에서 접을 수 있고 모바일에서는 Drawer로 열립니다. 모바일 메뉴를 선택하면 Drawer가 닫힙니다. 다크 테마가 기본이며 라이트 테마로 전환할 수 있습니다. 선택한 테마만 브라우저 localStorage에 저장합니다.
 
@@ -131,6 +131,18 @@ ResearchPage → ResearchApiView → useResearch* Query
 
 ## LOCAL API 실행과 인증
 
+세 화면을 함께 확인하려면 로컬 Backend를 실행한 뒤 repository root의 PowerShell에서 다음을 실행합니다. 파일이나 운영 설정을 변경하지 않습니다.
+
+```powershell
+cd frontend
+$env:VITE_ENABLE_OVERVIEW_API = 'true'
+$env:VITE_ENABLE_RESEARCH_API = 'true'
+$env:VITE_ENABLE_AI_ANALYSIS_API = 'true'
+npm run dev
+```
+
+[대시보드](http://127.0.0.1:5173/overview)에서 비로그인 DEMO → 관리자 로그인 → 사용자 데이터 → 로그아웃 → DEMO 순서로 확인합니다. 세션 확인 오류나 로그아웃 실패에는 데이터를 숨기고 재확인 안내를 표시합니다. 사용자 범위는 기존 Backend가 `auth.accounts.trading_user_id`로 결정하며 브라우저에서 사용자 ID를 지정하지 않습니다. Spring Security 세션·CSRF와 API 쓰기 차단은 유지합니다. 운영 빌드/API 배포는 이번 자동 전환과 별도 단계입니다.
+
 먼저 [Backend README](../backend/README.md)의 절차로 **별도 로컬 PostgreSQL**, 기존 Alembic schema, SELECT 전용 DB 계정, active Trading User scope와 관리자 BCrypt 설정을 준비하고 Spring Boot를 `127.0.0.1:8080`에서 실행합니다. 이 frontend는 서버를 자동 시작하거나 관리자 자격 증명을 생성하지 않습니다. Production DB/자격 증명은 개발·테스트에 사용하지 않습니다.
 
 Frontend 터미널에서 파일 수정 없이 일회성 환경변수로 허용합니다.
@@ -148,14 +160,14 @@ $env:VITE_ENABLE_RESEARCH_API = "true"
 try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_RESEARCH_API }
 ```
 
-`VITE_ENABLE_RESEARCH_API`는 비밀이 아닌 opt-in flag이며 기본 비활성입니다. `import.meta.env.DEV`도 참이어야 합니다. mode 선택은 React 메모리에만 보관하고 새로고침하면 DEMO로 돌아갑니다. localStorage, sessionStorage, URL에 mode나 credential을 저장하지 않습니다. 기존 테마 저장 기능은 유지합니다.
+`VITE_ENABLE_RESEARCH_API`는 비밀이 아닌 opt-in flag이며 기본 비활성입니다. `import.meta.env.DEV`도 참이어야 합니다. 데이터 출처는 서버 세션 확인 결과로 결정합니다. 새로고침 시에도 유효한 세션이 있으면 해당 API 화면을 자동으로 복원합니다. localStorage, sessionStorage, URL에 mode나 credential을 저장하지 않습니다. 기존 테마 저장 기능은 유지합니다.
 
 1. Backend README의 관리자 설정과 로컬 HTTP용 `BACKEND_SESSION_COOKIE_SECURE=false`로 서버를 시작합니다.
-2. [http://127.0.0.1:5173/research](http://127.0.0.1:5173/research)를 엽니다. DEMO는 로그인 없이 사용하며 **LOCAL API · READ ONLY** 선택 시 세션을 확인합니다.
-3. 미인증이면 `/login`으로 이동합니다. 관리자 아이디와 원래 비밀번호를 입력하면 선택한 API 화면으로 돌아옵니다. 직접 `/login`을 열어 로그인할 수도 있습니다.
-4. 새로고침 후에도 서버 세션은 유지되지만 화면의 데이터 출처 선택은 DEMO로 초기화됩니다. 헤더의 **로그아웃**은 서버 세션을 종료하고 진행 중인 조회/캐시를 제거합니다.
+2. [http://127.0.0.1:5173/research](http://127.0.0.1:5173/research)를 엽니다. 진입 시 세션을 확인하고, 비로그인이면 DEMO를 표시합니다. 확인 중에는 DEMO/API 수치를 표시하지 않습니다.
+3. 헤더의 **관리자 로그인**을 누르고 계정을 입력하면 원래 페이지의 사용자 데이터로 전환합니다. 실제 추천 상세 주소도 유지합니다. 직접 `/login`을 열어 로그인하면 Overview로 이동합니다.
+4. 새로고침 후 유효한 세션이면 사용자 데이터를 다시 조회합니다. 헤더의 **로그아웃**은 서버 세션을 종료하고 진행 중인 조회/캐시를 제거한 뒤 같은 페이지의 DEMO로 돌아갑니다.
 
-로그인 화면만 비밀번호를 일시적으로 입력받고 제출 시 입력값을 지웁니다. URL, localStorage/sessionStorage, 번들에 credential을 보관하지 않습니다. `credentials: same-origin` 세션 쿠키를 사용하고 React는 HttpOnly 쿠키를 읽지 않습니다. API 401 시 캐시를 제거하고 재로그인을 요구하며, 403/서버 장애를 로그아웃 성공이나 DEMO 응답으로 바꾸지 않습니다. 로그아웃 실패 시 실제 데이터를 숨기고 상태 재확인을 안내합니다.
+로그인 화면만 비밀번호를 일시적으로 입력받고 제출 시 입력값을 지웁니다. URL, localStorage/sessionStorage, 번들에 credential을 보관하지 않습니다. `credentials: same-origin` 세션 쿠키를 사용하고 React는 HttpOnly 쿠키를 읽지 않습니다. API 401 시 조회를 취소하고 캐시를 제거한 뒤 DEMO로 전환하며, 403/서버 장애를 로그아웃 성공이나 DEMO 응답으로 바꾸지 않습니다. 로그아웃 실패 시 실제 데이터를 숨기고 상태 재확인을 안내합니다.
 
 주소의 `localhost`와 `127.0.0.1`을 혼용하지 마세요. 로컬 UI/API는 `127.0.0.1:5173`의 같은 origin으로 사용합니다. 서버 세션 만료는 다음 인증/조회 요청에서 확인됩니다. 다른 탭에서 로그아웃한 경우 현재 탭은 다음 요청 전까지 이미 표시된 데이터를 가지고 있을 수 있습니다.
 
@@ -197,11 +209,11 @@ try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_OVERVIEW_API }
 
 Unix에서는 `cd frontend` 후 `VITE_ENABLE_OVERVIEW_API=true npm run dev`를 사용합니다. Research도 함께 사용하려면 별도로 `VITE_ENABLE_RESEARCH_API=true`를 지정하세요. 두 flag는 credential이 아니며 기본 OFF, development에서만 동작합니다. Production build에서는 사용할 수 없습니다.
 
-1. [http://127.0.0.1:5173/overview](http://127.0.0.1:5173/overview)를 열고 **LOCAL API · READ ONLY**를 선택합니다.
-2. 미인증이면 로그인 화면으로 이동합니다. 관리자 세션을 생성한 뒤 원래 Overview API 화면으로 돌아옵니다.
+1. [http://127.0.0.1:5173/overview](http://127.0.0.1:5173/overview)를 엽니다. 비로그인이면 DEMO가 표시됩니다.
+2. 헤더에서 로그인하면 Overview API 화면으로 자동 전환합니다. 이미 유효한 세션이 있으면 바로 사용자 데이터를 조회합니다.
 3. JSON 조회를 확인하고 화면에서 다시 시도합니다. 인증은 브라우저가 관리하며 React는 credential을 수집·저장하지 않습니다.
 
-새로고침하면 DEMO로 돌아갑니다. 메모리의 모드 선택은 저장하지 않으며, API 화면을 벗어나면 요청을 취소하고 사용하지 않는 Query cache를 제거합니다. 다른 화면으로 이동할 때 그 화면의 출처 표시를 확인하세요.
+새로고침하면 서버 세션을 다시 확인합니다. API 화면을 벗어나면 요청을 취소하고 사용하지 않는 Query cache를 제거합니다. 다른 화면으로 이동할 때 그 화면의 출처 표시를 확인하세요.
 
 | GET endpoint                       | 화면 및 기준                                                                        |
 | ---------------------------------- | ----------------------------------------------------------------------------------- |
@@ -218,7 +230,7 @@ PARTIAL의 known total을 전체 총액으로 대체하지 않습니다. BASELIN
 
 UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분합니다. AI Analysis opt-in이 활성화된 경우 실제 추천 상세로 이동하며 DEMO 상세로 대체하지 않습니다. 현재 Runtime 정책/Gate·worker 상태·주문/체결 상세 등은 **현재 API 미제공**으로 표시합니다.
 
-조회 오류·401·403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치를 구분하며 오류 원문을 노출하지 않습니다. 오류 시 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
+401은 세션 만료로 처리하여 캐시를 비우고 DEMO로 전환합니다. 403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치는 조회 오류로 구분하며 오류 원문을 노출하지 않습니다. 이 경우 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
 
 Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium 조회/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 Production 인증/배포 검증을 대신하지 않습니다.
 
@@ -234,15 +246,15 @@ $env:VITE_ENABLE_AI_ANALYSIS_API = "true"
 try { npm run dev } finally { Remove-Item Env:VITE_ENABLE_AI_ANALYSIS_API }
 ```
 
-Unix에서는 `cd frontend` 후 `VITE_ENABLE_AI_ANALYSIS_API=true npm run dev`를 사용합니다. flag는 기본 OFF이며 development에서만 허용합니다. `/ai-analysis`에서 **LOCAL API · READ ONLY**를 선택합니다. 미인증이면 로그인 화면에서 세션 인증 후 원래 화면으로 돌아옵니다. API 401은 캐시를 제거하고 재로그인을 요구합니다. 비밀번호는 로그인 제출에만 사용하고 저장하지 않습니다. Production build의 API 모드, preview API, 외부 backend target, redirect, 업무 쓰기 method는 허용하지 않습니다. 인증용 POST 두 개만 예외입니다.
+Unix에서는 `cd frontend` 후 `VITE_ENABLE_AI_ANALYSIS_API=true npm run dev`를 사용합니다. flag는 기본 OFF이며 development에서만 허용합니다. `/ai-analysis`에서 비로그인은 DEMO, 로그인한 사용자는 API 화면을 표시합니다. 헤더에서 로그인하면 원래 경로와 추천 상세 query로 돌아옵니다. API 401은 캐시를 제거하고 DEMO로 돌아갑니다. 비밀번호는 로그인 제출에만 사용하고 저장하지 않습니다. Production build의 API 모드, preview API, 외부 backend target, redirect, 업무 쓰기 method는 허용하지 않습니다. 인증용 POST 두 개만 예외입니다.
 
 - 목록: 추천 생성 시각의 KST 기간, 정확한 market, BUY/SELL/HOLD, 서버 pagination. 최신순 고정이며 승인 상태 필터·전체 행동별 집계는 제공하지 않습니다. 목록 행마다 상세를 호출하지 않습니다.
-- 상세 주소는 `?recommendation=<추천 ID>`입니다. DEMO의 `?analysis=<분석 ID>`와 다릅니다. 직접 주소 입력·reload는 DEMO 기본값을 유지하며 API를 명시적으로 선택해야 실제 상세를 읽습니다. Overview의 실제 추천 상세 링크는 이 flag가 켜진 경우만 제공하고 API 모드로 전환합니다.
+- 상세 주소는 `?recommendation=<추천 ID>`입니다. DEMO의 `?analysis=<분석 ID>`와 다릅니다. 직접 주소 입력·reload 시 유효한 세션이 있으면 실제 상세를 읽습니다. 비로그인이면 DEMO에 실제 추천 링크 안내를 표시하고 로그인 후 원래 상세로 돌아옵니다. Overview의 실제 추천 상세 링크는 이 flag가 켜진 경우만 제공합니다.
 - 추천과 분석 실행 ID, 최종 판단 사유, 추천 sizing, 당시 후보, 승인 기록, MOCK/LIVE 시도와 체결 요약을 구분합니다. 최종 판단 사유는 애플리케이션 안전 규칙 반영 후 기록이며 원본 AI 응답이 아닙니다.
 - Universe의 VERIFIED / NO_REFERENCE / INVALID_REFERENCE를 구분하고, VERIFIED일 때만 후보 페이지를 조회합니다. 상세·후보 응답의 사용자 범위와 Universe 실행/선택 후보 ID를 대조합니다. 불일치하면 해당 영역을 차단하고 다른 분석으로 대체하지 않습니다. 별도 HTTP 요청이 하나의 DB snapshot이라는 보장은 없습니다.
 - 금액·수량·ID는 문자열, 큰 count는 lossless JSON/BigInt로 유지합니다. 지표는 원본 단위이며 저장 당시 가격을 현재가로 표현하지 않습니다. 없는 지표는 미기록, 데이터 품질과 파싱 품질은 별도로 표시합니다. 후보 eligibility는 분석 당시 값입니다.
 - HOLD는 정상적인 관망 판단, LIVE_UNKNOWN은 미확정, LIVE_EXECUTED_CANCELLED는 **실거래 체결 확인 (미체결 잔량 취소)**로 표시합니다. 미기록 체결을 0으로 채우거나 추천값으로 보충하지 않습니다. 검증된 관련 기록 부재는 실제 주문 부재의 증명이 아닙니다.
-- API 실패는 DEMO로 대체하지 않습니다. 새 요청 중/갱신 실패에는 이전 성공값을 현재 정상값처럼 표시하지 않습니다. 화면·상세·출처 전환 시 요청을 취소하고 미사용 cache를 제거합니다. 자동 polling/자동 오류 retry는 없습니다.
+- 401 세션 만료는 캐시를 제거하고 DEMO로 전환합니다. 그 외 API 실패는 DEMO로 대체하지 않습니다. 새 요청 중/갱신 실패에는 이전 성공값을 현재 정상값처럼 표시하지 않습니다. 화면·상세·출처 전환 시 요청을 취소하고 미사용 cache를 제거합니다. 자동 polling/자동 오류 retry는 없습니다.
 
 사용자 조작은 조회·필터·페이지 이동·새로고침뿐입니다. 승인/거절/주문/취소/reconciliation 기능, 개별 fills·FIFO·성과 재계산, Runtime 정책·worker 상태, Production 인증·배포는 포함하지 않습니다.
 
@@ -275,7 +287,7 @@ npm run test:e2e
 Remove-Item Env:PLAYWRIGHT_CHANNEL
 ```
 
-테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 Research/Overview/AI Analysis flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. Research/Overview/AI Analysis API는 정밀도 경계를 포함한 mock response로 가로채고 외부 origin 요청은 차단합니다. 기본 E2E에는 실제 Backend·관리자 credential·Production DB가 필요하지 않습니다. 기존 DEMO 및 API 검색·페이지·오류·snapshot 불일치·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
+테스트용 browser 설치는 개발 도구 다운로드이며 거래 API 연결이 아닙니다. E2E는 Research/Overview/AI Analysis flag가 설정된 `127.0.0.1:5173` Vite를 자체 시작하므로 해당 포트를 비워 두세요. 이미 실행 중인 서버는 재사용하지 않습니다. 로컬 개발 서버를 유지하려면 PowerShell에서 `$env:PLAYWRIGHT_PORT = "5184"`를 지정해 별도 포트에서 E2E를 실행할 수 있습니다. Research/Overview/AI Analysis API는 정밀도 경계를 포함한 mock response로 가로채고 외부 origin 요청은 차단합니다. 기본 E2E에는 실제 Backend·관리자 credential·Production DB가 필요하지 않습니다. 기존 DEMO 및 API 검색·페이지·오류·snapshot 불일치·테마·모바일 검증을 함께 실행합니다. `test-results/`와 `playwright-report/`는 Git ignored입니다.
 
 개발 도구의 transitive `minimatch`는 `package.json`의 override로 `11.0.1`에 고정합니다. [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)의 glob pattern amplification 문제를 수정한 버전을 사용하기 위한 설정이며 runtime application dependency를 추가하지 않습니다. 변경 시 lockfile과 실제 ESLint 실행의 호환성을 함께 검증합니다.
 

@@ -7,6 +7,8 @@ test.beforeEach(async ({ page }) => {
     if (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost') {
       throw new Error(`Unexpected external request: ${url.origin}`);
     }
+    if (url.pathname === '/api/v1/auth/me') return route.fulfill({ status: 401, json: {} });
+    if (url.pathname.startsWith('/api/')) throw new Error('Guest made a protected API request');
     return route.continue();
   });
 });

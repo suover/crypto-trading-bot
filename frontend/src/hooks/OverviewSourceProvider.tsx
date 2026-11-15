@@ -1,11 +1,9 @@
-import { useState, type ReactNode } from 'react';
-import {
-  OverviewSourceContext,
-  overviewApiAvailable,
-  type OverviewSource,
-} from './use-overview-source';
+import { type ReactNode } from 'react';
+import { useAdminSession } from './use-admin-session';
+import { OverviewSourceContext, overviewApiAvailable } from './use-overview-source';
+
 export function OverviewSourceProvider({ children }: { children: ReactNode }) {
-  const [source, setSource] = useState<OverviewSource>('demo');
+  const session = useAdminSession();
   const available = overviewApiAvailable(
     import.meta.env.DEV,
     import.meta.env.VITE_ENABLE_OVERVIEW_API,
@@ -13,9 +11,8 @@ export function OverviewSourceProvider({ children }: { children: ReactNode }) {
   return (
     <OverviewSourceContext.Provider
       value={{
-        source: available ? source : 'demo',
+        source: available && session.status === 'authenticated' ? 'api' : 'demo',
         available,
-        setSource: (v) => setSource(available ? v : 'demo'),
       }}
     >
       {children}

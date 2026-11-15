@@ -4,7 +4,7 @@ import { fixtureResponse, bigId } from '../src/test/research-api-fixtures';
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5173') {
+    if (url.origin !== test.info().project.use.baseURL) {
       await route.abort();
       throw new Error('Unexpected external request: ' + url.origin);
     }
@@ -22,7 +22,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('DEMO defaults, server filters and pages, exact detail and non-persistent mode', async ({
+test('session-selected API, server filters and pages, exact detail and session restoration', async ({
   page,
 }) => {
   const urls: string[] = [];
@@ -31,11 +31,6 @@ test('DEMO defaults, server filters and pages, exact detail and non-persistent m
       urls.push(request.url());
   });
   await page.goto('/research');
-  await expect(
-    page.getByRole('heading', { name: '증거를 쌓고, 정책을 검증합니다.' }),
-  ).toBeVisible();
-  expect(urls).toEqual([]);
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('table', { name: 'API 연구 후보 목록' })).toBeVisible();
   await expect(page.getByText('baseline-a', { exact: true })).toBeVisible();
   await expect(page.getByText('baseline-b', { exact: true })).toBeVisible();
@@ -64,11 +59,7 @@ test('DEMO defaults, server filters and pages, exact detail and non-persistent m
   await page.getByRole('button', { name: '다음 Snapshot 페이지' }).click();
   await expect.poll(() => urls.at(-1)).toContain('snapshots?page=1');
   await page.reload();
-  await expect(page.getByText('DEMO', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'DEMO 화면' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('table', { name: 'API 연구 후보 목록' })).toBeVisible();
 });
 
 for (const [status, message] of [
@@ -81,10 +72,11 @@ for (const [status, message] of [
       route.fulfill({ status, body: 'private exception' }),
     );
     await page.goto('/research');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     if (status === 401) {
-      await expect(page.getByRole('heading', { name: '관리자 로그인' })).toBeVisible();
-      await expect(page.getByRole('table')).toHaveCount(0);
+      await expect(
+        page.getByRole('heading', { name: '증거를 쌓고, 정책을 검증합니다.' }),
+      ).toBeVisible();
+      await expect(page.getByRole('table', { name: 'API 연구 후보 목록' })).toHaveCount(0);
       return;
     }
     await expect(page.getByRole('alert')).toHaveCount(4);
@@ -101,7 +93,6 @@ test('invalid schema and detail not found are explicit', async ({ page }) => {
     route.fulfill({ status: 404 }),
   );
   await page.goto('/research');
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('잘못된 API 데이터');
   await page.getByRole('button', { name: 'API Policy API 상세보기', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText(
@@ -115,7 +106,6 @@ for (const width of [375, 1440]) {
     page.on('pageerror', (e) => errors.push(e.message));
     await page.setViewportSize({ width, height: 900 });
     await page.goto('/research');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     await expect(page.getByRole('table', { name: 'API 연구 후보 목록' })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))

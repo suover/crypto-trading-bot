@@ -9,7 +9,7 @@ for (const width of [375, 1440]) {
     await page.route('**/api/**', async (route) => {
       const request = route.request();
       const url = new URL(request.url());
-      expect(url.origin).toBe('http://127.0.0.1:5173');
+      expect(url.origin).toBe(test.info().project.use.baseURL);
       if (url.pathname === '/api/v1/auth/me') {
         return route.fulfill({
           status: loggedIn ? 200 : 401,
@@ -40,7 +40,7 @@ for (const width of [375, 1440]) {
       return route.fulfill({ contentType: 'application/json', body: overviewFixtureResponse(url) });
     });
     await page.goto('/overview');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
+    await page.getByRole('link', { name: '관리자 로그인' }).click();
     await expect(page).toHaveURL(/\/login$/);
     expect(reads).toBe(0);
     await page.screenshot({ path: info.outputPath('admin-login.png'), fullPage: true });
@@ -53,23 +53,18 @@ for (const width of [375, 1440]) {
     expect(storage).not.toContain('fixture-only-password');
     expect(storage).not.toContain('masked-fixture');
     await page.reload();
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     await expect(page.getByRole('button', { name: '로그아웃' })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
     await page.getByRole('button', { name: '로그아웃' }).click();
-    await expect(page).toHaveURL(/\/login$/);
-    await expect(page.getByRole('table')).toHaveCount(0);
-    await expect(page.getByLabel('비밀번호')).toHaveValue('');
+    await expect(page).toHaveURL(/\/overview$/);
+    await expect(page.getByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' })).toBeVisible();
+    await expect(page.getByRole('table', { name: 'API 성과 이력' })).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    await page.getByRole('link', { name: 'DEMO 대시보드로 이동' }).click();
-    await expect(page.getByRole('button', { name: 'DEMO 화면' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    await expect(page.getByText('DEMO', { exact: true })).toBeVisible();
   });
 }
 

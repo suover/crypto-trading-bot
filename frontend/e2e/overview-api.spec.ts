@@ -8,7 +8,7 @@ import {
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5173') {
+    if (url.origin !== test.info().project.use.baseURL) {
       await route.abort();
       throw new Error('Unexpected external origin');
     }
@@ -26,7 +26,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('DEMO opt-in, exact values, server filters/pages, missing capabilities and reload', async ({
+test('session-selected API, exact values, server filters/pages, missing capabilities and reload', async ({
   page,
 }) => {
   const urls: string[] = [];
@@ -34,9 +34,6 @@ test('DEMO opt-in, exact values, server filters/pages, missing capabilities and 
     if (r.url().includes('/api/') && !r.url().includes('/auth/')) urls.push(r.url());
   });
   await page.goto('/overview');
-  await expect(page.getByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' })).toBeVisible();
-  expect(urls).toEqual([]);
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('table', { name: 'API 보유 자산' })).toBeVisible();
   await expect(
     page.getByText('12,345,678,901,234,567,890.123456789원', { exact: true }),
@@ -63,10 +60,7 @@ test('DEMO opt-in, exact values, server filters/pages, missing capabilities and 
   await expect.poll(() => urls.at(-1)).toContain('action=HOLD');
   await expect(page.getByRole('table', { name: 'API 최근 추천' }).getByText('BUY')).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'DEMO 화면' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('table', { name: 'API 보유 자산' })).toBeVisible();
 });
 for (const status of [401, 403, 500]) {
   test(`HTTP ${status} without fake fallback`, async ({ page }) => {
@@ -74,10 +68,11 @@ for (const status of [401, 403, 500]) {
       route.fulfill({ status, body: 'private exception' }),
     );
     await page.goto('/overview');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     if (status === 401) {
-      await expect(page.getByRole('heading', { name: '관리자 로그인' })).toBeVisible();
-      await expect(page.getByRole('table')).toHaveCount(0);
+      await expect(
+        page.getByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }),
+      ).toBeVisible();
+      await expect(page.getByRole('table', { name: 'API 보유 자산' })).toHaveCount(0);
       return;
     }
     await expect(page.getByRole('alert')).toHaveCount(3);
@@ -106,7 +101,6 @@ test('snapshot mismatch is bounded, never shown as empty holdings, and can recov
     });
   });
   await page.goto('/overview');
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('조회 기준이 변경되었습니다');
   expect(calls).toBe(2);
   await expect(page.getByRole('table', { name: 'API 보유 자산' })).toHaveCount(0);
@@ -121,7 +115,6 @@ test('partial endpoint failure preserves independent panels; invalid schema is e
     route.fulfill({ contentType: 'application/json', body: '{}' }),
   );
   await page.goto('/overview');
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('잘못된 API 데이터');
   await expect(page.getByRole('table', { name: 'API 최근 추천' })).toBeVisible();
   await expect(page.getByRole('heading', { name: '계좌 평가와 성과' })).toBeVisible();
@@ -145,7 +138,6 @@ test('no portfolio is distinct from a zero valued portfolio', async ({ page }) =
     }),
   );
   await page.goto('/overview');
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('heading', { name: '계좌 snapshot이 없습니다' })).toBeVisible();
   await expect(page.getByText('0원', { exact: true })).toHaveCount(0);
 });
@@ -157,7 +149,6 @@ for (const width of [375, 1440]) {
     page.on('pageerror', (e) => errors.push(e.message));
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/overview');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     await expect(page.getByRole('table', { name: 'API 성과 이력' })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))

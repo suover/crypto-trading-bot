@@ -1,9 +1,10 @@
+import { SESSION_EXPIRED } from '@/services/auth-api';
 // These view regressions assume an existing server session. Auth flows have separate tests.
 vi.mock('@/services/auth-api', async (original) => ({
   ...(await original<typeof import('@/services/auth-api')>()),
   currentAdmin: vi.fn(async () => 'fixture-admin'),
 }));
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -55,14 +56,9 @@ function setup(scenario: 'normal' | 'error' | 'loading' = 'normal') {
   );
   return { ...ui, client, user: userEvent.setup() };
 }
-async function enter(user: ReturnType<typeof userEvent.setup>) {
-  // The first route render includes lazy module loading, especially on a cold test run.
-  await user.click(
-    await screen.findByRole('button', { name: 'LOCAL API · READ ONLY' }, { timeout: 5000 }),
-  );
-}
+
 describe('Overview API view', () => {
-  it('cancels in-flight API requests when switching back to DEMO', async () => {
+  it('cancels in-flight API requests when session expiration', async () => {
     const signals: AbortSignal[] = [];
     vi.stubGlobal(
       'fetch',
@@ -77,16 +73,16 @@ describe('Overview API view', () => {
           }),
       ),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     await waitFor(() => expect(signals).toHaveLength(3));
-    await user.click(screen.getByRole('button', { name: 'DEMO 화면' }));
+    act(() => window.dispatchEvent(new Event(SESSION_EXPIRED)));
     await waitFor(() => expect(signals.every((s) => s.aborted)).toBe(true));
     expect(
       await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }),
     ).toBeInTheDocument();
   });
-  it('keeps DEMO as default and never fetches without explicit selection', async () => {
+  it('keeps disabled API in DEMO and requires development opt-in', async () => {
+    vi.stubEnv('VITE_ENABLE_OVERVIEW_API', '');
     setup();
     await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }, { timeout: 5000 });
     expect(requests).toEqual([]);
@@ -101,8 +97,7 @@ describe('Overview API view', () => {
     expect(requests).toEqual([]);
   });
   it('renders partial values, exact decimals, small quantities and no fabricated cards or detail links', async () => {
-    const { user } = setup();
-    await enter(user);
+    setup();
     await screen.findByRole('table', { name: 'API 보유 자산' });
     expect(screen.getByText('12,345,678,901,234,567,890.123456789원')).toBeInTheDocument();
     expect(screen.getByText('-12,345.6789원')).toHaveClass('negative');
@@ -117,8 +112,7 @@ describe('Overview API view', () => {
     expect(screen.getByRole('table', { name: 'API 최근 추천' })).toHaveTextContent('APPROVED');
   });
   it.each(['error', 'loading'] as const)('does not depend on global DEMO %s', async (scenario) => {
-    const { user } = setup(scenario);
-    await enter(user);
+    setup(scenario);
     expect(await screen.findByRole('table', { name: 'API 보유 자산' })).toBeInTheDocument();
     expect(screen.queryByText('데모 데이터를 불러오지 못했습니다')).not.toBeInTheDocument();
   });
@@ -145,8 +139,7 @@ describe('Overview API view', () => {
               }),
       ),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     expect(
       await screen.findByText('이 snapshot에 저장된 보유 자산이 없습니다'),
     ).toBeInTheDocument();
@@ -167,8 +160,7 @@ describe('Overview API view', () => {
               }),
       ),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     await screen.findByText('계좌 snapshot이 없습니다');
     expect(screen.queryByText('0원')).not.toBeInTheDocument();
     expect(screen.queryByRole('table', { name: 'API 보유 자산' })).not.toBeInTheDocument();
@@ -178,11 +170,12 @@ describe('Overview API view', () => {
     async (status) => {
       const fetcher = vi.fn(async () => new Response('private-password', { status }));
       vi.stubGlobal('fetch', fetcher);
-      const { user } = setup();
-      await enter(user);
+      setup();
       if (status === 401) {
-        expect(await screen.findByRole('heading', { name: '관리자 로그인' })).toBeInTheDocument();
-        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        expect(
+          await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole('table', { name: 'API 보유 자산' })).not.toBeInTheDocument();
         return;
       }
       await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(3));
@@ -193,7 +186,6 @@ describe('Overview API view', () => {
   );
   it('keeps independent sections on failure and hides stale success after refresh failure', async () => {
     const { user } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API 보유 자산' });
     vi.stubGlobal(
       'fetch',
@@ -235,7 +227,6 @@ describe('Overview API view', () => {
       }),
     );
     const { user } = setup();
-    await enter(user);
     await screen.findByText(/조회 기준이 변경되었습니다/);
     expect(count).toBe(2);
     expect(screen.queryByRole('table', { name: 'API 보유 자산' })).not.toBeInTheDocument();
@@ -245,7 +236,6 @@ describe('Overview API view', () => {
   });
   it('uses server paging and explicit KST filters without relabelling row counts as days', async () => {
     const { user } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API 성과 이력' });
     await user.click(screen.getByRole('button', { name: '다음 성과 페이지' }));
     await waitFor(() => expect(requests.some((u) => u.includes('performance?page=1'))).toBe(true));
@@ -265,11 +255,10 @@ describe('Overview API view', () => {
       ).not.toBeInTheDocument(),
     );
   });
-  it('clears API queries on DEMO switch and labels navigation to other DEMO screens', async () => {
+  it('clears API queries on session expiration and labels navigation to other DEMO screens', async () => {
     const { user, client } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API 보유 자산' });
-    await user.click(screen.getByRole('button', { name: 'DEMO 화면' }));
+    act(() => window.dispatchEvent(new Event(SESSION_EXPIRED)));
     await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' });
     await waitFor(() =>
       expect(client.getQueryCache().findAll({ queryKey: ['overview-local-api'] })).toHaveLength(0),

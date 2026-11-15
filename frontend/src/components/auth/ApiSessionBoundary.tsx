@@ -3,13 +3,20 @@ import { Navigate, useLocation } from 'react-router';
 import { useAdminSession } from '@/hooks/use-admin-session';
 import { Button } from '@/components/ui/button';
 
-export function ApiSessionBoundary({ children }: { children: ReactNode }) {
+export function ApiSessionBoundary({
+  children,
+  allowGuest = false,
+}: {
+  children: ReactNode;
+  allowGuest?: boolean;
+}) {
   const session = useAdminSession();
   const { status, check } = session;
   const location = useLocation();
   useEffect(() => {
     if (status === 'unchecked') check();
   }, [status, check]);
+  if (allowGuest && (!session.available || status === 'guest')) return children;
   if (session.status === 'authenticated') return children;
   if (session.status === 'guest')
     return (

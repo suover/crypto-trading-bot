@@ -389,7 +389,6 @@ function Recommendations({ expectedScope }: { expectedScope?: Scope }) {
                               className="text-button"
                               to={`/ai-analysis?recommendation=${r.id}`}
                               state={{ analysisReference: { id: r.id, scope: data.scope } }}
-                              onClick={() => analysis.setSource('api')}
                               aria-label={`${r.id} 실제 추천 상세`}
                             >
                               상세 조회

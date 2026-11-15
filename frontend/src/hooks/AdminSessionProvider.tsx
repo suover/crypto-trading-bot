@@ -56,9 +56,14 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
       window.removeEventListener(SESSION_EXPIRED, expired);
     };
   }, [clear]);
+  useEffect(() => {
+    // Restore the server session on entry, before choosing a dashboard data source.
+    check();
+  }, [check]);
   async function login(name: string, password: string) {
     const version = ++epoch.current;
     checking.current = false;
+    setStatus('checking');
     clear();
     try {
       const admin = await loginAdmin(name, password);

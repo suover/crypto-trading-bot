@@ -1,12 +1,9 @@
-import { useState, type ReactNode } from 'react';
-import {
-  ResearchSourceContext,
-  researchApiAvailable,
-  type ResearchSource,
-} from './use-research-source';
+import { type ReactNode } from 'react';
+import { useAdminSession } from './use-admin-session';
+import { ResearchSourceContext, researchApiAvailable } from './use-research-source';
 
 export function ResearchSourceProvider({ children }: { children: ReactNode }) {
-  const [source, setSource] = useState<ResearchSource>('demo');
+  const session = useAdminSession();
   const available = researchApiAvailable(
     import.meta.env.DEV,
     import.meta.env.VITE_ENABLE_RESEARCH_API,
@@ -14,9 +11,8 @@ export function ResearchSourceProvider({ children }: { children: ReactNode }) {
   return (
     <ResearchSourceContext.Provider
       value={{
-        source: available ? source : 'demo',
+        source: available && session.status === 'authenticated' ? 'api' : 'demo',
         available,
-        setSource: (value) => setSource(available ? value : 'demo'),
       }}
     >
       {children}

@@ -11,7 +11,7 @@ import { overviewFixtureResponse } from '../src/test/overview-api-fixtures';
 test.beforeEach(async ({ page }) => {
   await page.route('**/*', async (route) => {
     const url = new URL(route.request().url());
-    if (url.origin !== 'http://127.0.0.1:5173') {
+    if (url.origin !== test.info().project.use.baseURL) {
       await route.abort();
       throw new Error('Unexpected external origin');
     }
@@ -33,7 +33,7 @@ test.beforeEach(async ({ page }) => {
     } else await route.continue();
   });
 });
-test('explicit opt-in, server filters/pages and historical detail with no demo mixing', async ({
+test('authenticated API, server filters/pages and historical detail with no demo mixing', async ({
   page,
 }) => {
   const requests: string[] = [];
@@ -41,9 +41,6 @@ test('explicit opt-in, server filters/pages and historical detail with no demo m
     if (r.url().includes('/api/') && !r.url().includes('/auth/')) requests.push(r.url());
   });
   await page.goto('/ai-analysis');
-  await expect(page.getByRole('heading', { name: '판단의 근거를, 한눈에' })).toBeVisible();
-  expect(requests).toEqual([]);
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('table', { name: 'API AI 추천' })).toBeVisible();
   // Development StrictMode can cancel/remount the first list request; no row-level details are fetched.
   expect(requests.length).toBeGreaterThan(0);
@@ -67,10 +64,7 @@ test('explicit opt-in, server filters/pages and historical detail with no demo m
   await expect.poll(() => requests.at(-1)).toContain('page=0&size=20&market=KRW-BTC&action=HOLD');
   await expect(page.getByRole('table', { name: 'API AI 추천' }).getByText('BUY')).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'DEMO 화면' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  );
+  await expect(page.getByRole('table', { name: 'API AI 추천' })).toBeVisible();
 });
 for (const status of [401, 403, 404, 500]) {
   test(`HTTP ${status} is explicit and does not expose raw failure`, async ({ page }) => {
@@ -78,10 +72,9 @@ for (const status of [401, 403, 404, 500]) {
       route.fulfill({ status, body: 'private SQL error' }),
     );
     await page.goto('/ai-analysis');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     if (status === 401) {
-      await expect(page.getByRole('heading', { name: '관리자 로그인' })).toBeVisible();
-      await expect(page.getByRole('table')).toHaveCount(0);
+      await expect(page.getByRole('heading', { name: '판단의 근거를, 한눈에' })).toBeVisible();
+      await expect(page.getByRole('table', { name: 'API AI 추천' })).toHaveCount(0);
       return;
     }
     await expect(page.getByRole('alert')).toBeVisible();
@@ -103,7 +96,6 @@ test('candidate scope mismatch is blocked without hiding independent execution s
     }),
   );
   await page.goto(`/ai-analysis?recommendation=${analysisBigId}`);
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText(
     '조회 데이터 연결이 일치하지 않습니다',
   );
@@ -112,7 +104,6 @@ test('candidate scope mismatch is blocked without hiding independent execution s
 });
 test('Overview actual link enters API mode with expected scope', async ({ page }) => {
   await page.goto('/overview');
-  await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
   await page
     .getByRole('link', { name: /실제 추천 상세/ })
     .first()
@@ -129,7 +120,6 @@ for (const width of [375, 1440]) {
     page.on('pageerror', (e) => errors.push(e.message));
     await page.setViewportSize({ width, height: 1000 });
     await page.goto('/ai-analysis');
-    await page.getByRole('button', { name: 'LOCAL API · READ ONLY', exact: true }).click();
     await expect(page.getByRole('table', { name: 'API AI 추천' })).toBeVisible();
     await expect
       .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))

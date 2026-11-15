@@ -1,3 +1,4 @@
+import { SESSION_EXPIRED } from '@/services/auth-api';
 // These view regressions assume an existing server session. Auth flows have separate tests.
 vi.mock('@/services/auth-api', async (original) => ({
   ...(await original<typeof import('@/services/auth-api')>()),
@@ -55,9 +56,7 @@ function setup(scenario: 'normal' | 'error' | 'loading' = 'normal') {
   );
   return { user: userEvent.setup(), client, ...ui };
 }
-async function enter(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: 'LOCAL API · READ ONLY' }));
-}
+
 describe('Research API view', () => {
   it('does not expose the switch or fetch without the opt-in flag', async () => {
     vi.stubEnv('VITE_ENABLE_RESEARCH_API', '');
@@ -70,7 +69,8 @@ describe('Research API view', () => {
     expect(screen.queryByRole('group', { name: '연구 데이터 출처' })).not.toBeInTheDocument();
     expect(requests).toEqual([]);
   });
-  it('defaults to DEMO without HTTP and gates production availability', async () => {
+  it('keeps production DEMO without HTTP and gates availability', async () => {
+    vi.stubEnv('DEV', false);
     setup();
     expect(
       await screen.findByRole(
@@ -84,9 +84,8 @@ describe('Research API view', () => {
     expect(researchApiAvailable(true, 'false')).toBe(false);
     expect(researchApiAvailable(true, 'true')).toBe(true);
   });
-  it('renders all API sections without fictitious evidence and restores demo after navigation', async () => {
+  it('renders all API sections without fictitious evidence and marks unconnected pages after navigation', async () => {
     const { user } = setup();
-    await enter(user);
     expect(await screen.findByRole('table', { name: 'API 연구 후보 목록' })).toBeInTheDocument();
     expect(screen.getByRole('table', { name: 'API Snapshot 목록' })).toBeInTheDocument();
     expect(screen.getByText('baseline-a')).toBeInTheDocument();
@@ -98,20 +97,16 @@ describe('Research API view', () => {
     expect(screen.queryByText('BASELINE', { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('데모 데이터 상태')).not.toBeInTheDocument();
     await user.click(screen.getByRole('link', { name: '대시보드' }));
-    expect(
-      await screen.findByRole('heading', { name: '시장을 읽고, 흐름을 한눈에.' }),
-    ).toBeInTheDocument();
-    expect(screen.getByText('DEMO', { exact: true })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '실제 데이터 미연동' })).toBeInTheDocument();
+    expect(screen.queryByText('DEMO', { exact: true })).not.toBeInTheDocument();
   });
   it.each(['error', 'loading'] as const)('is independent of global Mock %s', async (scenario) => {
-    const { user } = setup(scenario);
-    await enter(user);
+    setup(scenario);
     expect(await screen.findByRole('table', { name: 'API 연구 후보 목록' })).toBeInTheDocument();
     expect(screen.queryByText('데모 데이터를 불러오지 못했습니다')).not.toBeInTheDocument();
   });
   it('uses server paging, search, sorting and snapshot page keys', async () => {
     const { user } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API 연구 후보 목록' });
     await user.click(screen.getByRole('button', { name: '다음 후보 페이지' }));
     await screen.findByText('API Policy 20');
@@ -129,7 +124,6 @@ describe('Research API view', () => {
   });
   it('loads exact detail ID, preserves weights, explains historical Gate and restores focus', async () => {
     const { user } = setup();
-    await enter(user);
     const open = await screen.findByRole('button', { name: 'API Policy API 상세보기' });
     await user.click(open);
     const dialog = screen.getByRole('dialog', { name: '연구 후보 상세' });
@@ -147,10 +141,11 @@ describe('Research API view', () => {
       const fetcher = vi.fn(async () => new Response('hidden exception', { status }));
       vi.stubGlobal('fetch', fetcher);
       const { user } = setup();
-      await enter(user);
       if (status === 401) {
-        expect(await screen.findByRole('heading', { name: '관리자 로그인' })).toBeInTheDocument();
-        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        expect(
+          await screen.findByRole('heading', { name: '증거를 쌓고, 정책을 검증합니다.' }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole('table', { name: 'API 연구 후보 목록' })).not.toBeInTheDocument();
         return;
       }
       await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(4));
@@ -177,14 +172,12 @@ describe('Research API view', () => {
           ),
       ),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     expect(await screen.findByText('조회된 후보가 없습니다')).toBeInTheDocument();
     expect(screen.getByText('미관찰 · 저장된 체크포인트가 없습니다')).toBeInTheDocument();
   });
   it('does not relabel stale success as current success after failed refresh', async () => {
     const { user } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API 연구 후보 목록' });
     vi.stubGlobal(
       'fetch',
@@ -194,7 +187,7 @@ describe('Research API view', () => {
     await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(4));
     expect(screen.queryByRole('table', { name: 'API 연구 후보 목록' })).not.toBeInTheDocument();
   });
-  it('cancels obsolete requests when leaving API mode', async () => {
+  it('cancels obsolete requests on session expiration', async () => {
     const signals: AbortSignal[] = [];
     vi.stubGlobal(
       'fetch',
@@ -209,11 +202,10 @@ describe('Research API view', () => {
           }),
       ),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     await waitFor(() => expect(signals).toHaveLength(4));
     expect(screen.getAllByText('API 데이터 조회 중…')).toHaveLength(4);
-    await user.click(screen.getByRole('button', { name: 'DEMO 화면' }));
+    act(() => window.dispatchEvent(new Event(SESSION_EXPIRED)));
     await waitFor(() => expect(signals.every((s) => s.aborted)).toBe(true));
   });
   it('does not let a late old filter response replace the new result', async () => {
@@ -236,7 +228,6 @@ describe('Research API view', () => {
       }),
     );
     const { user } = setup();
-    await enter(user);
     await waitFor(() => expect(releaseOld).toBeDefined());
     await user.type(screen.getByLabelText('정책명 검색'), 'new result');
     await user.click(screen.getByRole('button', { name: '검색 적용' }));

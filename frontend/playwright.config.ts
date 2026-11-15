@@ -1,5 +1,11 @@
 import { defineConfig } from '@playwright/test';
 
+const port = Number(process.env.PLAYWRIGHT_PORT || 5173);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+  throw new Error('PLAYWRIGHT_PORT must be an integer between 1024 and 65535');
+}
+const baseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -7,7 +13,7 @@ export default defineConfig({
   retries: 0,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:5173',
+    baseURL,
     channel: process.env.PLAYWRIGHT_CHANNEL || undefined,
     viewport: { width: 1440, height: 1000 },
     reducedMotion: 'reduce',
@@ -20,8 +26,8 @@ export default defineConfig({
       VITE_ENABLE_OVERVIEW_API: 'true',
       VITE_ENABLE_AI_ANALYSIS_API: 'true',
     },
-    command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1',
-    url: 'http://127.0.0.1:5173',
+    command: `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port ${port}`,
+    url: baseURL,
     reuseExistingServer: false,
   },
 });

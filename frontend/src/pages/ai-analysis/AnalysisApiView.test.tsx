@@ -1,3 +1,4 @@
+import { SESSION_EXPIRED } from '@/services/auth-api';
 // These view regressions assume an existing server session. Auth flows have separate tests.
 vi.mock('@/services/auth-api', async (original) => ({
   ...(await original<typeof import('@/services/auth-api')>()),
@@ -72,25 +73,18 @@ function setup(path = '/ai-analysis') {
       }),
   };
 }
-async function enter(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(
-    await screen.findByRole('button', { name: 'LOCAL API · READ ONLY' }, { timeout: 5000 }),
-  );
-}
+
 describe('AI Analysis local read view', () => {
-  it('keeps DEMO default and disables opt-in outside development', async () => {
+  it('keeps DEMO with API disabled outside development', async () => {
+    vi.stubEnv('DEV', false);
     setup();
     await screen.findByRole('heading', { name: '판단의 근거를, 한눈에' });
     expect(requests).toEqual([]);
     expect(analysisApiAvailable(false, 'true')).toBe(false);
     expect(analysisApiAvailable(true, '')).toBe(false);
   });
-  it('keeps real-ID deep links out of DEMO and requires explicit opt-in', async () => {
-    const { user } = setup(`/ai-analysis?recommendation=${analysisBigId}`);
-    await screen.findByText(/실제 추천 상세 링크입니다/);
-    expect(requests).toEqual([]);
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    await enter(user);
+  it('opens authenticated real-ID deep links automatically without DEMO mixing', async () => {
+    setup(`/ai-analysis?recommendation=${analysisBigId}`);
     expect(await screen.findByText('Application safety checked reason')).toBeInTheDocument();
     expect(
       within(screen.getByRole('dialog')).queryByText('DETAIL VIEW · DEMO'),
@@ -98,7 +92,6 @@ describe('AI Analysis local read view', () => {
   });
   it('shows precise stored values, held candidates and separate execution without write buttons', async () => {
     const { user } = setup();
-    await enter(user);
     await user.click(await screen.findByRole('button', { name: `${analysisBigId} 추천 상세` }));
     const dialog = screen.getByRole('dialog');
     expect(
@@ -120,7 +113,6 @@ describe('AI Analysis local read view', () => {
   });
   it('uses server pages and filters, with no per-row detail requests', async () => {
     const { user } = setup();
-    await enter(user);
     await screen.findByRole('table', { name: 'API AI 추천' });
     expect(requests).toHaveLength(1);
     await user.click(screen.getByRole('button', { name: '다음 추천 페이지' }));
@@ -137,11 +129,12 @@ describe('AI Analysis local read view', () => {
     'shows HTTP %s without fake fallback or raw errors',
     async (status) => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private SQL', { status })));
-      const { user } = setup();
-      await enter(user);
+      setup();
       if (status === 401) {
-        expect(await screen.findByRole('heading', { name: '관리자 로그인' })).toBeInTheDocument();
-        expect(screen.queryByRole('table')).not.toBeInTheDocument();
+        expect(
+          await screen.findByRole('heading', { name: '판단의 근거를, 한눈에' }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole('table', { name: 'API AI 추천' })).not.toBeInTheDocument();
         return;
       }
       expect(await screen.findByRole('alert')).toBeInTheDocument();
@@ -150,8 +143,7 @@ describe('AI Analysis local read view', () => {
     },
   );
   it('does not fetch candidates for HOLD without a verified universe', async () => {
-    const { user } = setup('/ai-analysis?recommendation=2');
-    await enter(user);
+    setup('/ai-analysis?recommendation=2');
     await screen.findByText('HOLD는 정상적인 관망 판단입니다. 승인 요청이 필요하지 않습니다.');
     expect(screen.getByText(/당시 Universe 참조가 기록되지/)).toBeInTheDocument();
     expect(requests.some((r) => r.includes('/candidates'))).toBe(false);
@@ -180,8 +172,7 @@ describe('AI Analysis local read view', () => {
             }),
       ),
     );
-    const { user } = setup(`/ai-analysis?recommendation=${analysisBigId}`);
-    await enter(user);
+    setup(`/ai-analysis?recommendation=${analysisBigId}`);
     expect(await screen.findByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
     expect(screen.getByText(/실거래 결과 미확정/)).toBeInTheDocument();
     expect(screen.getByText(/당시 Universe 연결 검증에 실패/)).toBeInTheDocument();
@@ -204,8 +195,7 @@ describe('AI Analysis local read view', () => {
         });
       }),
     );
-    const { user, navigate } = setup(`/ai-analysis?recommendation=${analysisBigId}`);
-    await enter(user);
+    const { navigate } = setup(`/ai-analysis?recommendation=${analysisBigId}`);
     await waitFor(() => expect(oldSignal).toBeDefined());
     navigate('/ai-analysis?recommendation=2');
     await screen.findByText('HOLD는 정상적인 관망 판단입니다. 승인 요청이 필요하지 않습니다.');
@@ -215,7 +205,7 @@ describe('AI Analysis local read view', () => {
     });
     expect(screen.queryByText('OLD PRIVATE REASON')).not.toBeInTheDocument();
   });
-  it('cancels list when switching to DEMO and suppresses mock loading in API mode', async () => {
+  it('cancels list on session expiration and suppresses mock loading in API mode', async () => {
     let signal: AbortSignal | undefined;
     vi.stubGlobal(
       'fetch',
@@ -224,17 +214,15 @@ describe('AI Analysis local read view', () => {
         return new Promise(() => {});
       }),
     );
-    const { user } = setup();
-    await enter(user);
+    setup();
     await waitFor(() => expect(signal).toBeDefined());
-    await user.click(screen.getByRole('button', { name: 'DEMO 화면' }));
+    act(() => window.dispatchEvent(new Event(SESSION_EXPIRED)));
     expect(signal?.aborted).toBe(true);
     await screen.findByRole('heading', { name: '판단의 근거를, 한눈에' });
   });
   it('links Overview recommendations to API detail, never a demo analysis ID', async () => {
     vi.stubEnv('VITE_ENABLE_OVERVIEW_API', 'true');
     const { user } = setup('/overview');
-    await enter(user);
     const link = (await screen.findAllByRole('link', { name: /실제 추천 상세/ }))[0]!;
     expect(link.getAttribute('href')).toContain('?recommendation=');
     await user.click(link);
@@ -259,7 +247,6 @@ describe('AI Analysis local read view', () => {
       }),
     );
     const { user } = setup('/overview');
-    await enter(user);
     const link = (await screen.findAllByRole('link', { name: /실제 추천 상세/ }))[0]!;
     const id = new URL(link.getAttribute('href')!, 'http://local').searchParams.get(
       'recommendation',
@@ -296,7 +283,6 @@ describe('AI Analysis local read view', () => {
       }),
     );
     const { user } = setup(`/ai-analysis?recommendation=${analysisBigId}`);
-    await enter(user);
     const firstPage = await screen.findByRole('table', { name: 'API 당시 후보' });
     expect(within(firstPage).getAllByRole('row')).toHaveLength(21);
     await user.click(screen.getByRole('button', { name: '다음 후보 페이지' }));

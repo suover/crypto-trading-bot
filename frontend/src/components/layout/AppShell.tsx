@@ -1,4 +1,5 @@
 import { useAdminSession } from '@/hooks/use-admin-session';
+import { ApiSessionBoundary } from '@/components/auth/ApiSessionBoundary';
 import { Suspense, useEffect, useState } from 'react';
 import {
   Activity,
@@ -17,7 +18,7 @@ import {
   Sun,
   Wallet,
 } from 'lucide-react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router';
+import { Link, NavLink, Outlet, useLocation, useMatch } from 'react-router';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -83,9 +84,13 @@ function Navigation({ onSelect }: { onSelect?: () => void }) {
 
 export function AppShell() {
   const location = useLocation();
+  // Match with the router's own decoding and trailing-slash rules.
+  const pageMatch = useMatch('/:page');
+  const pathname = pageMatch?.params.page
+    ? '/' + pageMatch.params.page.toLowerCase()
+    : location.pathname;
   const session = useAdminSession();
-  const pageTitle =
-    navigation.find((item) => item.to === location.pathname)?.label ?? '페이지 안내';
+  const pageTitle = navigation.find((item) => item.to === pathname)?.label ?? '페이지 안내';
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -99,15 +104,31 @@ export function AppShell() {
   const { source } = useResearchSource();
   const overview = useOverviewSource();
   const analysis = useAnalysisSource();
-  const isAnalysis = /^\/ai-analysis\/?$/.test(location.pathname);
-  const isResearch = /^\/research\/?$/.test(location.pathname);
-  const isOverview = /^\/overview\/?$/.test(location.pathname);
+  const isAnalysis = pathname === '/ai-analysis';
+  const isResearch = pathname === '/research';
+  const isOverview = pathname === '/overview';
   const isApi =
     (isResearch && source === 'api') ||
     (isOverview && overview.source === 'api') ||
     (isAnalysis && analysis.source === 'api');
   const apiName = isAnalysis ? 'AI Analysis' : isOverview ? 'Overview' : 'Research';
-  const query = useDashboardData(!isApi);
+  const isDemo = !session.available || session.status === 'guest';
+  const isAuthenticated = session.status === 'authenticated';
+  const sourceLabel = isDemo
+    ? 'DEMO'
+    : isApi
+      ? 'LOCAL API · READ ONLY'
+      : isAuthenticated
+        ? '실제 데이터 미연동'
+        : '인증 상태 확인';
+  const sourceDescription = isDemo
+    ? '현재 화면의 데이터는 Mock입니다.'
+    : isApi
+      ? `현재 ${apiName}는 로그인한 사용자 데이터입니다.`
+      : isAuthenticated
+        ? '이 화면의 실제 데이터 조회는 연결되지 않았습니다.'
+        : '인증 상태를 확인한 뒤 데이터를 표시합니다.';
+  const query = useDashboardData(isDemo);
   useEffect(() => {
     document.documentElement.classList.toggle('light', theme === 'light');
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -121,8 +142,7 @@ export function AppShell() {
     document.title = `${pageTitle} · Crypto Trading Bot`;
     window.scrollTo({ top: 0, behavior: 'instant' });
   }, [pageTitle]);
-  const isUnknownRoute =
-    !navigation.some((item) => item.to === location.pathname) && location.pathname !== '/';
+  const isUnknownRoute = !navigation.some((item) => item.to === pathname) && pathname !== '/';
   return (
     <div className={`app-shell${collapsed ? ' is-collapsed' : ''}`}>
       <a className="skip-link" href="#main-content">
@@ -135,9 +155,9 @@ export function AppShell() {
         <div className="sidebar-bottom">
           <div className="sidebar-note">
             <ShieldCheck size={20} />
-            <strong>{isApi ? `${apiName} API 조회` : '데모 워크스페이스'}</strong>
+            <strong>{isDemo ? '데모 워크스페이스' : '내 워크스페이스'}</strong>
             <p>
-              {isApi ? `현재 ${apiName}는 로컬 API입니다.` : '현재 화면의 데이터는 Mock입니다.'}
+              {sourceDescription}
               <br />
               거래·승인·정책 변경 없이
               <br />
@@ -173,13 +193,11 @@ export function AppShell() {
               </DialogTrigger>
               <DialogContent className="mobile-navigation">
                 <DialogTitle className="sr-only">주요 메뉴</DialogTitle>
-                <DialogDescription className="sr-only">
-                  조회 전용 데모 대시보드 메뉴
-                </DialogDescription>
+                <DialogDescription className="sr-only">조회 전용 대시보드 메뉴</DialogDescription>
                 <Brand onSelect={() => setMobileOpen(false)} />
                 <Navigation onSelect={() => setMobileOpen(false)} />
                 <p className="text-muted small" style={{ marginTop: 'auto' }}>
-                  {isApi ? `${apiName}: LOCAL API · 화면별 출처 확인` : 'Mock 데이터 · 조회 전용'}
+                  {sourceLabel} · 조회 전용
                 </p>
               </DialogContent>
             </Dialog>
@@ -205,15 +223,17 @@ export function AppShell() {
                 </>
               ) : (
                 <Button variant="outline" asChild>
-                  <Link to="/login">관리자 로그인</Link>
+                  <Link to="/login" state={{ returnTo: location.pathname + location.search }}>
+                    관리자 로그인
+                  </Link>
                 </Button>
               ))}
             <span className="header-timestamp">
-              {isApi ? '관측·응답 시각은 각 조회 영역에 표시' : dateTime(DEMO_AS_OF) + ' KST 기준'}
+              {isDemo ? dateTime(DEMO_AS_OF) + ' KST 기준' : '관측·응답 시각은 각 조회 영역에 표시'}
             </span>
             <span className="demo-pill">
               <span className="status-dot" />
-              {isApi ? 'LOCAL API · READ ONLY' : 'DEMO'}
+              {sourceLabel}
             </span>
             <span className="header-divider" />
             <Button
@@ -225,7 +245,7 @@ export function AppShell() {
               {theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}
             </Button>
             <Button variant="ghost" size="icon" asChild>
-              <Link to="/operations" aria-label="데모 운영 알림 보기">
+              <Link to="/operations" aria-label={isDemo ? '데모 운영 알림 보기' : '운영 화면 보기'}>
                 <Bell size={17} />
               </Link>
             </Button>
@@ -233,28 +253,37 @@ export function AppShell() {
         </header>
         <main id="main-content" className="main-content" tabIndex={-1}>
           <Suspense fallback={<LoadingSkeleton />}>
-            {isUnknownRoute || isResearch || isOverview || isAnalysis ? (
-              <Outlet />
-            ) : query.isPending ? (
-              <LoadingSkeleton />
-            ) : query.isError ? (
-              <ErrorState
-                onRetry={() => {
-                  void query.refetch();
-                }}
-              />
-            ) : (
-              <Outlet />
-            )}
+            <ApiSessionBoundary allowGuest>
+              {isAuthenticated && !isApi && !isUnknownRoute && pathname !== '/' ? (
+                <section className="card empty-state">
+                  <h1>{pageTitle}</h1>
+                  <h2>실제 데이터 미연동</h2>
+                  <p>이 화면은 아직 실제 데이터 조회가 연결되지 않았습니다.</p>
+                  <p>데모 데이터는 로그아웃 후 둘러볼 수 있습니다.</p>
+                </section>
+              ) : pathname === '/' || isUnknownRoute || isResearch || isOverview || isAnalysis ? (
+                <Outlet />
+              ) : query.isPending ? (
+                <LoadingSkeleton />
+              ) : query.isError ? (
+                <ErrorState
+                  onRetry={() => {
+                    void query.refetch();
+                  }}
+                />
+              ) : (
+                <Outlet />
+              )}
+            </ApiSessionBoundary>
           </Suspense>
           <footer className="app-footer">
             <span>
               Crypto Trading Bot <span aria-hidden="true">/</span>{' '}
-              {isApi
-                ? `현재 ${apiName}는 로컬 API 조회 전용입니다. 각 화면의 출처 표시를 확인하세요. 거래·승인·활성화는 실행하지 않습니다.`
-                : '모든 수치는 데모입니다. 실제 운영 데이터와 연결되지 않습니다.'}
+              {isDemo
+                ? '모든 수치는 데모입니다. 실제 운영 데이터와 연결되지 않습니다.'
+                : `${sourceDescription} 거래·승인·활성화는 실행하지 않습니다.`}
             </span>
-            {!isApi && (
+            {isDemo && (
               <label className="demo-controls">
                 데모 상태
                 <select

@@ -1,6 +1,3 @@
-import { useOverviewSource } from '@/hooks/use-overview-source';
-import { useResearchSource } from '@/hooks/use-research-source';
-import { useAnalysisSource } from '@/hooks/use-analysis-source';
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation } from 'react-router';
 import { useAdminSession } from '@/hooks/use-admin-session';
@@ -10,15 +7,13 @@ import './login.css';
 
 function returnPath(state: unknown) {
   const path = state && typeof state === 'object' && 'returnTo' in state ? state.returnTo : null;
-  return typeof path === 'string' && /^\/(overview|research|ai-analysis)(\?[^#\\]*)?$/.test(path)
+  return typeof path === 'string' &&
+    /^\/(overview|research|ai-analysis|portfolio|operations)(\?[^#\\]*)?$/.test(path)
     ? path
     : '/overview';
 }
 export default function LoginPage() {
   const session = useAdminSession();
-  const overview = useOverviewSource();
-  const research = useResearchSource();
-  const analysis = useAnalysisSource();
   const { status, check } = session;
   const location = useLocation();
   const [username, setUsername] = useState('');
@@ -105,15 +100,7 @@ export default function LoginPage() {
             </Button>
           </form>
         )}
-        <Link
-          className="text-button"
-          to="/overview"
-          onClick={() => {
-            overview.setSource('demo');
-            research.setSource('demo');
-            analysis.setSource('demo');
-          }}
-        >
+        <Link className="text-button" to="/overview">
           DEMO 대시보드로 이동
         </Link>
       </section>
