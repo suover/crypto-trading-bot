@@ -52,12 +52,12 @@ def prepare_trade_analysis(session, time):
                 "macd": "-0.0000000001",
                 "private_extra": "fixture-private-audit",
             },
-            "1h": {
+            "60m": {
                 "data_quality": "SUFFICIENT",
                 "candle_count": 50,
                 "trend_label": "상승 우위",
             },
-            "4h": {"data_quality": "UNAVAILABLE"},
+            "240m": {"data_quality": "UNAVAILABLE"},
             "1d": {"data_quality": "INSUFFICIENT", "candle_count": 3},
         },
         "position": {"private": "fixture-private-audit"},

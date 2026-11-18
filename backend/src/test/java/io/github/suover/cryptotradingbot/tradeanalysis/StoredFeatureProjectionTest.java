@@ -29,6 +29,30 @@ class StoredFeatureProjectionTest {
         assertThat(result.timeframes().getFirst().indicators()).doesNotContainKey("private");
         assertThat(result.timeframes().getLast().indicators().get("macd")).isNull();
     }
+    @Test void readsEngineMinuteKeysInApiOrder() {
+        var result = projection.read("""
+                {"data_quality":"SUFFICIENT","timeframes":{
+                    "1d":{"data_quality":"SUFFICIENT","rsi_14":"40.4"},
+                    "240m":{"data_quality":"SUFFICIENT","rsi_14":"30.3"},
+                    "15m":{"data_quality":"SUFFICIENT","rsi_14":"10.1"},
+                    "60m":{"data_quality":"SUFFICIENT","rsi_14":"20.2"}}}
+                """);
+        assertThat(result.projectionStatus()).isEqualTo("COMPLETE");
+        assertThat(result.timeframes()).extracting("timeframe").containsExactly("15m", "1h", "4h", "1d");
+        assertThat(result.timeframes()).extracting(frame -> frame.indicators().get("rsi_14"))
+                .containsExactly("10.1", "20.2", "30.3", "40.4");
+    }
+    @Test void keepsExistingHourKeysWhenBothSpellingsAreStored() {
+        var result = projection.read("""
+                {"data_quality":"SUFFICIENT","timeframes":{
+                    "60m":{"data_quality":"SUFFICIENT","candle_count":60},
+                    "1h":{"data_quality":"SUFFICIENT","candle_count":50},
+                    "240m":{"data_quality":"SUFFICIENT","candle_count":40},
+                    "4h":{"data_quality":"SUFFICIENT","candle_count":30}}}
+                """);
+        assertThat(result.timeframes()).extracting("timeframe").containsExactly("1h", "4h");
+        assertThat(result.timeframes()).extracting("candleCount").containsExactly(50, 30);
+    }
     @ParameterizedTest @ValueSource(strings = {"NaN", "Infinity", "-Infinity", "1e999999", "private-value", "01", "+1"})
     void invalidMetricIsNullWithExplicitProjectionQuality(String value) {
         var result = projection.read("{\"data_quality\":\"SUFFICIENT\",\"timeframes\":{\"15m\":"

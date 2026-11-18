@@ -32,6 +32,14 @@ public class StoredFeatureProjection {
             boolean partial = quality == null;
             for (String key : FRAMES) {
                 JsonNode frame = frames.get(key);
+                // The engine stores minute keys while the API exposes hour labels.
+                if (frame == null) {
+                    frame = switch (key) {
+                        case "1h" -> frames.get("60m");
+                        case "4h" -> frames.get("240m");
+                        default -> null;
+                    };
+                }
                 if (frame == null) continue; // Missing configured frames are not fabricated.
                 if (!frame.isObject()) {
                     partial = true;
