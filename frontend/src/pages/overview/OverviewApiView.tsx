@@ -37,6 +37,10 @@ function SummaryCards({ data }: { data: Summary }) {
           detail={
             p ? (
               <>
+                <span>
+                  평가 기준 시각 · <Time value={p.capturedAt} />
+                </span>
+                <br />
                 <StatusBadge status={p.valuationStatus} /> · 저장된 총액
               </>
             ) : (
@@ -466,7 +470,7 @@ export default function OverviewApiView() {
                               <th>자산 / 마켓</th>
                               <th>평가 상태 / 출처</th>
                               <th className="numeric">총 수량 / 사용 가능 / 잠금</th>
-                              <th className="numeric">현재 평가 가격</th>
+                              <th className="numeric">평가 기준 가격</th>
                               <th className="numeric">평가금액</th>
                               <th className="numeric">추정 원가</th>
                               <th className="numeric">평가손익</th>

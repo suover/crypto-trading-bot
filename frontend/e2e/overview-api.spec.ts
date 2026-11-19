@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  observedAt,
   overviewFixtureResponse,
   overviewPositions,
   overviewSummary,
@@ -34,7 +35,11 @@ test('session-selected API, exact values, server filters/pages, missing capabili
     if (r.url().includes('/api/') && !r.url().includes('/auth/')) urls.push(r.url());
   });
   await page.goto('/overview');
-  await expect(page.getByRole('table', { name: 'API 보유 자산' })).toBeVisible();
+  const positions = page.getByRole('table', { name: 'API 보유 자산' });
+  await expect(positions.getByRole('columnheader', { name: '평가 기준 가격' })).toBeVisible();
+  const valuation = page.getByRole('article').filter({ hasText: '총 계좌 평가금액' });
+  await expect(valuation).toContainText('평가 기준 시각 · 2026.01.04 09:00 KST');
+  await expect(valuation.locator('time')).toHaveAttribute('datetime', observedAt);
   await expect(
     page.getByText('12,345,678,901,234,567,890.123456789원', { exact: true }),
   ).toBeVisible();
@@ -140,6 +145,7 @@ test('no portfolio is distinct from a zero valued portfolio', async ({ page }) =
   await page.goto('/overview');
   await expect(page.getByRole('heading', { name: '계좌 snapshot이 없습니다' })).toBeVisible();
   await expect(page.getByText('0원', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('평가 기준 시각', { exact: false })).toHaveCount(0);
 });
 for (const width of [375, 1440]) {
   test(`API ${width}px dark/light and keyboard with no page overflow`, async ({
