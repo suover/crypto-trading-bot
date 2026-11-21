@@ -55,7 +55,7 @@ test('redirect, sidebar, theme, mobile navigation and 404', async ({ page }) => 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.getByRole('button', { name: '메뉴 열기' }).click();
   const dialog = page.getByRole('dialog', { name: '주요 메뉴' });
-  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeInViewport({ ratio: 1 });
   await dialog.getByRole('link', { name: 'AI 매매 분석', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(

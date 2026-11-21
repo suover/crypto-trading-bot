@@ -265,6 +265,28 @@ export const parseAnalysisRecommendations = (raw: string): Page<Recommendation> 
     if (p.items.some((r) => !marketMatches(r.market, p.scope))) return invalid();
     return p;
   });
+// Both the recommendation detail and the portfolio history expose the same stored order DTO.
+export const parseOrderPage = (raw: string): Page<Order> =>
+  decode(raw, (value) => {
+    const result = page(value, order);
+    if (result.items.some((item) => !marketMatches(item.market, result.scope))) return invalid();
+    return result;
+  });
+export function parseOrderFillPage(raw: string) {
+  return decode(raw, (value) => ({
+    ...page(value, (row) => {
+      const fill = object(row);
+      return {
+        id: id(fill.id),
+        price: decimal(fill.price),
+        quantity: decimal(fill.quantity),
+        fundsKrw: decimal(fill.fundsKrw),
+        recordedAt: timestamp(fill.recordedAt),
+      };
+    }),
+    orderId: id(object(value).orderId),
+  }));
+}
 function validCandidate(c: Candidate, s: Scope, u: Universe) {
   return (
     c.universeAnalysisRunId === u.analysisRunId &&

@@ -196,6 +196,7 @@ it('logout aborts in-flight business requests before clearing their cache', asyn
 it.each([
   ['/research', '증거를 쌓고, 정책을 검증합니다.', 'API 연구 후보 목록'],
   ['/ai-analysis', '판단의 근거를, 한눈에', 'API AI 추천'],
+  ['/portfolio', '자산의 흐름을 읽다', 'API 보유 자산'],
 ])(
   'returns to %s after login and shows its API without a source switch',
   async (path, heading, table) => {
@@ -227,14 +228,12 @@ it('preserves the real recommendation deep link across login without opening a d
 });
 
 it.each([
-  '/portfolio',
   '/operations',
   '/research',
   '/ai-analysis',
-  '/portfolio/',
   '/operations/',
-  '/Portfolio',
-  '/%70ortfolio',
+  '/Operations',
+  '/%6Fperations',
 ])('does not present mock figures as user data on unconnected %s', async (path) => {
   authenticated = true;
   setup(path);
@@ -242,6 +241,16 @@ it.each([
   expect(screen.queryByRole('table')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('데모 데이터 상태')).not.toBeInTheDocument();
   expect(businessReads).toEqual([]);
+});
+
+it('keeps portfolio unavailable for authenticated sessions when Overview reads are disabled', async () => {
+  authenticated = true;
+  vi.stubEnv('VITE_ENABLE_OVERVIEW_API', '');
+  vi.stubEnv('VITE_ENABLE_RESEARCH_API', 'true');
+  setup('/portfolio');
+  await screen.findByRole('heading', { name: '실제 데이터 미연동' });
+  expect(businessReads).toEqual([]);
+  expect(screen.queryByRole('table')).not.toBeInTheDocument();
 });
 
 it('opens the root route as the authenticated overview instead of an unconnected page', async () => {

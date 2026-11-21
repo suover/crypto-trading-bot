@@ -1,6 +1,8 @@
 package io.github.suover.cryptotradingbot.tradeanalysis.repository;
 
 import com.querydsl.core.BooleanBuilder;
+import com.querydsl.core.types.Expression;
+import com.querydsl.jpa.impl.JPAQuery;
 import com.querydsl.jpa.impl.JPAQueryFactory;
 import io.github.suover.cryptotradingbot.global.security.CurrentTradingScope.Scope;
 import io.github.suover.cryptotradingbot.tradeanalysis.dto.AnalysisQuery;
@@ -82,13 +84,27 @@ public class AnalysisReadRepository {
                 .orderBy(P.createdAt.asc(), P.id.asc()).limit(MAX_RELATED_RECORDS + 1L).fetch());
     }
     public Optional<OrderRecord> order(Scope scope, long recommendationId) {
-        return Optional.ofNullable(query.select(O).from(O).join(R).on(O.recommendationId.eq(R.id))
+        return Optional.ofNullable(ownedOrders(scope, O).where(R.id.eq(recommendationId)).fetchOne());
+    }
+    // The recommendation detail and portfolio history must agree on order ownership,
+    // including legacy orders with no approval and records with inconsistent foreign keys.
+    private <T> JPAQuery<T> ownedOrders(Scope scope, Expression<T> projection) {
+        return query.select(projection).from(O).join(R).on(O.recommendationId.eq(R.id))
                 .join(A).on(R.analysisRunId.eq(A.id))
                 .leftJoin(P).on(O.approvalRequestId.eq(P.id))
-                .where(owned(scope), R.id.eq(recommendationId), O.userId.eq(R.userId),
+                .where(owned(scope), O.userId.eq(R.userId),
                         O.exchange.eq(R.exchange), O.market.eq(R.market),
-                        O.approvalRequestId.isNull().or(P.recommendationId.eq(R.id).and(P.userId.eq(R.userId))))
-                .fetchOne());
+                        O.approvalRequestId.isNull().or(P.recommendationId.eq(R.id).and(P.userId.eq(R.userId))));
+    }
+    public List<OrderRecord> orders(Scope scope, AnalysisQuery.Pagination page) {
+        return ownedOrders(scope, O).orderBy(O.createdAt.desc(), O.id.desc())
+                .offset((long) page.page() * page.size()).limit(page.size()).fetch();
+    }
+    public long orderCount(Scope scope) {
+        return ownedOrders(scope, O.id.count()).fetchOne();
+    }
+    public boolean containsOrder(Scope scope, long orderId) {
+        return ownedOrders(scope, O.id).where(O.id.eq(orderId)).fetchOne() != null;
     }
     public List<ExecutionAttemptRecord> attempts(Scope scope, long recommendationId) {
         return bounded(query.select(T).from(T).join(R).on(T.recommendationId.eq(R.id))

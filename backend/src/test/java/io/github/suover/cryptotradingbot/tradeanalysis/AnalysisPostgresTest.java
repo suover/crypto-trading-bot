@@ -191,7 +191,7 @@ class AnalysisPostgresTest extends PostgresFixtureTest {
         try (Connection c = DriverManager.getConnection(POSTGRES.getJdbcUrl(), "backend_reader", "reader-fixture-only")) {
             c.setReadOnly(false);
             for (String table : List.of("analysis_runs", "market_universe_candidates", "approval_requests",
-                    "order_execution_attempts", "order_logs")) {
+                    "order_execution_attempts", "order_logs", "order_fills")) {
                 c.createStatement().execute("SELECT id FROM " + table + " LIMIT 1");
                 for (String sql : List.of("INSERT INTO " + table + " DEFAULT VALUES",
                         "UPDATE " + table + " SET id=id WHERE false", "DELETE FROM " + table + " WHERE false",
@@ -202,6 +202,8 @@ class AnalysisPostgresTest extends PostgresFixtureTest {
                     "SELECT telegram_chat_id FROM approval_requests", "SELECT error_message FROM analysis_runs",
                     "SELECT raw_response FROM order_logs", "SELECT exchange_order_id FROM order_logs",
                     "SELECT error_message FROM order_execution_attempts", "SELECT * FROM order_fills",
+                    "SELECT raw_data FROM order_fills", "SELECT exchange_trade_id FROM order_fills",
+                    "SELECT side FROM order_fills",
                     "SELECT * FROM account_snapshots", "CREATE TABLE forbidden(id integer)",
                     "CREATE TEMP TABLE forbidden(id integer)")) denied(c, sql);
         }

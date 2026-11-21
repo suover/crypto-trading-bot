@@ -86,6 +86,8 @@ public abstract class PostgresFixtureTest {
                                 + ",target=/workspace/trading-engine,readonly",
                         "--mount", "type=bind,source=" + root.resolve("backend/src/test/python")
                                 + ",target=/workspace/backend/src/test/python,readonly",
+                        "--mount", "type=bind,source=" + root.resolve("backend/scripts/portfolio_fill_permissions.sql")
+                                + ",target=/workspace/backend/scripts/portfolio_fill_permissions.sql,readonly",
                         "-e", "BACKEND_TEST_MIGRATION_URL=" + url,
                         "-e", "UV_PROJECT_ENVIRONMENT=/tmp/fixture-venv",
                         "-e", "PYTHONPATH=/workspace/trading-engine",

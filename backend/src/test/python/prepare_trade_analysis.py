@@ -9,6 +9,7 @@ from crypto_trading_bot.db.models import (
     MarketUniverseCandidate,
     TradeRecommendation,
     ApprovalRequest,
+    OrderFill,
     OrderLog,
     OrderExecutionAttempt,
 )
@@ -207,13 +208,30 @@ def prepare_trade_analysis(session, time):
                 average_execution_price=Decimal("1500") if oid == 9701 else None,
                 paid_fee=Decimal("0") if oid == 9701 else None,
                 remaining_quantity=Decimal("1") if oid == 9701 else None,
-                trades_count=1 if oid == 9701 else None,
+                trades_count=2 if oid == 9701 else None,
                 execution_synced_at=time + timedelta(minutes=3)
                 if oid == 9701
                 else None,
             )
         )
     session.flush()
+    for fill_id, order_id, volume in [
+        (9801, 9701, Decimal("0.25")),
+        (9802, 9701, Decimal("0.75")),
+        (9803, 9704, Decimal("1")),
+    ]:
+        session.add(
+            OrderFill(
+                id=fill_id,
+                order_log_id=order_id,
+                exchange_trade_id=f"fixture-private-trade-{fill_id}",
+                volume=volume,
+                price=Decimal("1500"),
+                funds_krw=volume * Decimal("1500"),
+                raw_data={"private": "fixture-private-fill-audit"},
+                created_at=time + timedelta(minutes=3),
+            )
+        )
     for tid, rid, pid, oid, user, mode, number in [
         (9601, 5001, 9501, 9701, 20, "LIVE", 1),
         (9602, 5002, 9502, 9702, 20, "LIVE", 1),

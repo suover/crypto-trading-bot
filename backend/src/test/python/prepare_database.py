@@ -220,6 +220,12 @@ def main():
                 "GRANT SELECT (id, recommendation_id, approval_request_id, user_id, trading_mode, exchange, market, side, order_type, amount_krw, quantity, price, status, executed_quantity, executed_funds_krw, average_execution_price, paid_fee, remaining_quantity, trades_count, execution_synced_at, created_at, updated_at) ON order_logs TO backend_reader"
             )
         )
+        fill_grant = (
+            Path(__file__).resolve().parents[3]
+            / "scripts"
+            / "portfolio_fill_permissions.sql"
+        )
+        connection.exec_driver_sql(fill_grant.read_text(encoding="utf-8"))
     engine.dispose()
 
 

@@ -107,11 +107,11 @@ export function AppShell() {
   const isAnalysis = pathname === '/ai-analysis';
   const isResearch = pathname === '/research';
   const isOverview = pathname === '/overview';
+  const isPortfolio = pathname === '/portfolio';
   const isApi =
     (isResearch && source === 'api') ||
-    (isOverview && overview.source === 'api') ||
+    ((isOverview || isPortfolio) && overview.source === 'api') ||
     (isAnalysis && analysis.source === 'api');
-  const apiName = isAnalysis ? 'AI Analysis' : isOverview ? 'Overview' : 'Research';
   const isDemo = !session.available || session.status === 'guest';
   const isAuthenticated = session.status === 'authenticated';
   const sourceLabel = isDemo
@@ -124,7 +124,7 @@ export function AppShell() {
   const sourceDescription = isDemo
     ? '현재 화면의 데이터는 Mock입니다.'
     : isApi
-      ? `현재 ${apiName}는 로그인한 사용자 데이터입니다.`
+      ? `${pageTitle} 화면에 로그인한 사용자의 데이터를 표시합니다.`
       : isAuthenticated
         ? '이 화면의 실제 데이터 조회는 연결되지 않았습니다.'
         : '인증 상태를 확인한 뒤 데이터를 표시합니다.';
@@ -191,7 +191,7 @@ export function AppShell() {
                   <Menu size={20} />
                 </Button>
               </DialogTrigger>
-              <DialogContent className="mobile-navigation">
+              <DialogContent placement="left">
                 <DialogTitle className="sr-only">주요 메뉴</DialogTitle>
                 <DialogDescription className="sr-only">조회 전용 대시보드 메뉴</DialogDescription>
                 <Brand onSelect={() => setMobileOpen(false)} />
@@ -261,7 +261,12 @@ export function AppShell() {
                   <p>이 화면은 아직 실제 데이터 조회가 연결되지 않았습니다.</p>
                   <p>데모 데이터는 로그아웃 후 둘러볼 수 있습니다.</p>
                 </section>
-              ) : pathname === '/' || isUnknownRoute || isResearch || isOverview || isAnalysis ? (
+              ) : pathname === '/' ||
+                isUnknownRoute ||
+                isResearch ||
+                isOverview ||
+                isAnalysis ||
+                isApi ? (
                 <Outlet />
               ) : query.isPending ? (
                 <LoadingSkeleton />

@@ -375,7 +375,7 @@ function Candidates() {
         }}
       >
         <DialogContent
-          className="detail-drawer"
+          placement="right"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             (opener.current?.isConnected

@@ -156,6 +156,8 @@ def main():
             f"type=bind,source={ROOT / 'trading-engine'},target=/workspace/trading-engine,readonly",
             "--mount",
             f"type=bind,source={ROOT / 'backend/src/test/python'},target=/workspace/backend/src/test/python,readonly",
+            "--mount",
+            f"type=bind,source={ROOT / 'backend/scripts/portfolio_fill_permissions.sql'},target=/workspace/backend/scripts/portfolio_fill_permissions.sql,readonly",
             "-e",
             "BACKEND_TEST_MIGRATION_URL=postgresql+psycopg://fixture_owner:fixture-only@fixture-db:5432/backend_fixture",
             "-e",
@@ -267,9 +269,12 @@ DROP EXTENSION pgcrypto;
             "-d",
             "backend_fixture",
             "-Atc",
-            "SELECT has_table_privilege(current_user, 'auth.accounts', 'INSERT,UPDATE,DELETE'), has_table_privilege(current_user, 'public.order_logs', 'INSERT,UPDATE,DELETE');",
+            "SELECT has_table_privilege(current_user, 'auth.accounts', 'INSERT,UPDATE,DELETE'), "
+            "has_table_privilege(current_user, 'public.order_logs', 'INSERT,UPDATE,DELETE'), "
+            "has_table_privilege(current_user, 'public.order_fills', 'INSERT,UPDATE,DELETE'), "
+            "has_column_privilege(current_user, 'public.order_fills', 'raw_data', 'SELECT');",
         )
-        assert denied == "f|f", denied
+        assert denied == "f|f|f|f", denied
         # Two actual TCP clients prove the backend sees distinct proxy-validated IPs.
         # Forged headers cannot reset the first client's budget or throttle the second.
         for suffix, attempts in [("a", 11), ("b", 1)]:

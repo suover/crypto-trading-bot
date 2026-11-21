@@ -7,18 +7,18 @@
 | 경로 | 상태 | 책임 |
 | --- | --- | --- |
 | `trading-engine/` | 구현됨 | Python trading, analytics, research engine |
-| `backend/` | 구현됨 | Java 21 / Spring Boot Research / Overview / AI Trade Analysis 조회 전용 API |
-| `frontend/` | 구현됨 | React/TypeScript 대시보드, 비로그인 DEMO 및 세션 기반 Research / Overview / AI Analysis 조회 |
+| `backend/` | 구현됨 | Java 21 / Spring Boot Research / Overview / AI Trade Analysis / Portfolio 조회 전용 API |
+| `frontend/` | 구현됨 | React/TypeScript 대시보드, 비로그인 DEMO 및 세션 기반 Research / Overview / AI Analysis / Portfolio 조회 |
 
 Root에는 Compose, 운영 shell script, 문서, `.env.example`이 있습니다. Python package는 `trading-engine/crypto_trading_bot`, 실행 module은 `trading-engine/scripts`입니다.
 
-Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 QueryDSL을 사용합니다. 기존 PostgreSQL 스키마의 소유자는 계속 Python/Alembic이며 Java는 `ddl-auto=validate`, SELECT 전용 DB 역할, 읽기 전용 트랜잭션을 사용합니다. 같은 DB의 `auth.accounts`에 저장된 관리자 계정과 연결된 활성 거래 사용자 및 서버의 exchange·quote 범위만 조회합니다. Research, Overview, AI Analysis GET API는 Spring Security 세션 인증을 요구합니다. 기본 바인딩은 localhost이며 외부 공개 시 TLS가 필수입니다. 저장된 Gate 상태는 과거 기록으로만 반환하며 평가·등록·승인·활성화·주문을 하지 않습니다. Production Compose는 변경하지 않았습니다. 자세한 계약은 [Research Read API v1](../backend/docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](../backend/docs/OVERVIEW_READ_API_V1.md)을 참고하세요.
+Backend는 Controller → Service → Repository 구조로 Spring Data JPA와 QueryDSL을 사용합니다. 기존 PostgreSQL 스키마의 소유자는 계속 Python/Alembic이며 Java는 `ddl-auto=validate`, SELECT 전용 DB 역할, 읽기 전용 트랜잭션을 사용합니다. 같은 DB의 `auth.accounts`에 저장된 관리자 계정과 연결된 활성 거래 사용자 및 서버의 exchange·quote 범위만 조회합니다. Research, Overview, AI Analysis, Portfolio GET API는 Spring Security 세션 인증을 요구합니다. 기본 바인딩은 localhost이며 외부 공개 시 TLS가 필수입니다. 저장된 Gate 상태는 과거 기록으로만 반환하며 평가·등록·승인·활성화·주문을 하지 않습니다. Production Compose는 변경하지 않았습니다. 자세한 계약은 [Research Read API v1](../backend/docs/RESEARCH_READ_API_V1.md)과 [Overview Read API v1](../backend/docs/OVERVIEW_READ_API_V1.md)을 참고하세요.
 
 Overview는 `portfolio_snapshots`의 `captured_at DESC, id DESC`로 최신 계좌를 선택합니다. Position과 Performance는 부모 snapshot을 JOIN해 소유자와 quote를 검증하며 현재 성과는 정확히 같은 snapshot에 연결된 행만 반환합니다. 오래된 성과로 대체하지 않습니다. 독립적인 `bot_trading_pnl_summaries`는 user/exchange 단위 KRW 회계이며 snapshot 시각이나 quote별 수익률로 해석하지 않습니다. KRW 이외 quote에서는 Bot PnL을 제공하지 않습니다. 추천은 user/exchange와 검증된 Upbit `QUOTE-` prefix로 제한합니다. 모든 지표는 저장 값이고 PARTIAL/null/BASELINE을 보존합니다. Overview JSON의 Long ID와 BigDecimal은 문자열, 시각은 UTC이며 raw AI payload는 읽거나 노출하지 않습니다. 거래소·OpenAI·Telegram 호출은 없습니다.
 
-프론트는 비로그인일 때 DEMO를 표시하고, 유효한 세션이 있으면 Research, Overview, AI Analysis의 사용자 데이터로 자동 전환합니다. 배포용 빌드는 같은 출처의 `/api`를 사용합니다. 개발 서버에서는 화면별 플래그를 켜면 API 연결을 사용할 수 있습니다. 로컬 Vite 프록시는 허용된 업무 GET 및 인증 GET/POST만 로컬 Spring Boot로 전달합니다. Spring Security가 세션과 HttpOnly 쿠키를 발급하고 로그인·로그아웃의 CSRF를 검증합니다. 업무 API는 조회 전용입니다.
+프론트는 비로그인일 때 DEMO를 표시하고, 유효한 세션이 있으면 Research, Overview, AI Analysis, Portfolio의 사용자 데이터로 자동 전환합니다. 배포용 빌드는 같은 출처의 `/api`를 사용합니다. 개발 서버에서는 화면별 플래그를 켜면 API 연결을 사용할 수 있습니다. 로컬 Vite 프록시는 허용된 업무 GET 및 인증 GET/POST만 로컬 Spring Boot로 전달합니다. Spring Security가 세션과 HttpOnly 쿠키를 발급하고 로그인·로그아웃의 CSRF를 검증합니다. 업무 API는 조회 전용입니다.
 
-Frontend Research는 별도의 read model/client/Query/view로 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. 응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 연구 Gate·연구 성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. Portfolio와 Operations의 실제 조회는 미연동이며, 데모 화면의 데이터는 Mock repository에서 가져옵니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
+Frontend Research는 별도의 read model/client/Query/view로 Summary, Candidate list/detail, Snapshot, Automation checkpoints를 조회합니다. 응답은 raw text에서 lossless JSON 파싱·스키마 검증을 거쳐 Long/BigDecimal을 문자열로 보존합니다. 현재 연구 Gate·연구 성과·승인·activation·Runtime·worker 상태는 미제공이며 저장된 과거 기록으로 이를 추정하지 않습니다. API 오류를 DEMO 값으로 대체하지 않습니다. Operations의 실제 조회는 미연동이며, 데모 화면의 데이터는 Mock repository에서 가져옵니다. 실행·인증·검증 경계는 [Frontend README](../frontend/README.md)에 설명합니다.
 
 Frontend Overview는 로그인한 계정의 Overview GET API 4개를 사용합니다. Summary 이후 Positions를 조회하고 scope/snapshot ID/관측 시각을 대조합니다. Snapshot 불일치는 1회 재조회 후 갱신 필요 상태로 표시하며 서로 다른 계좌 자료를 혼합하지 않습니다. 성과 이력과 추천은 독립 Query로 기간·action·page 조건을 포함합니다. 금융 값은 문자열과 BigInt로 표시하고 차트 좌표만 Number로 변환합니다. 저장된 성과 index를 사용하며 PARTIAL·새 BASELINE·연속성 미확인 구간은 연결하지 않습니다. 현재 페이지를 전체 기간으로 표현하지 않으며 전일 증감·worker·현재 정책 등 미제공 값은 DEMO로 채우지 않습니다.
 

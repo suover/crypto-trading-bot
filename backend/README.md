@@ -1,6 +1,6 @@
-# Research / Overview / AI Trade Analysis Read API Backend
+# Research / Overview / AI Trade Analysis / Portfolio Read API Backend
 
-Java 21 / Spring Boot 기반 관리자 전용 Research / Overview / AI Trade Analysis 조회 API입니다. 현재 Python 엔진이 저장한 PostgreSQL 데이터를 읽습니다. 연구 평가, 금융 지표 재계산, 등록, Telegram 승인, LIVE 활성화, 주문은 수행하지 않습니다.
+Java 21 / Spring Boot 기반 관리자 전용 조회 API입니다. Python 엔진이 저장한 PostgreSQL 데이터에서 연구, 계좌 평가, AI 추천, 봇 주문과 개별 체결을 조회합니다.
 
 ## 역할과 구조
 
@@ -19,6 +19,7 @@ src/main/java/io/github/suover/cryptotradingbot/
   research/dto/        외부 응답, 검색 조건
   overview/            controller/service/repository/entity/dto, 계좌·성과·추천 조회
   tradeanalysis/       추천 상세·당시 후보·승인·주문 시도·체결 요약 조회
+  portfolio/           봇 주문 이력과 주문별 개별 체결 조회
 src/test/java/         Mockito, MockMvc, PostgreSQL Testcontainers
 src/test/python/       기존 Alembic 실행 및 테스트 fixture 준비
 ```
@@ -71,7 +72,7 @@ GRANT SELECT ON
 TO backend_reader;
 ```
 
-이미 Research 권한이 설정된 계정에는 DBA가 검토 후 위 목록의 Overview 테이블 5개에 대한 SELECT를 추가합니다. 백엔드의 AI Trade Analysis 매핑을 조회하려면 아래 5개 테이블의 명시된 컬럼 SELECT도 필요합니다. `account_snapshots`, `order_fills`, sequence 권한은 필요하지 않습니다. 운영 권한은 자동 변경하지 않습니다.
+이미 Research 권한이 설정된 계정에는 DBA가 검토 후 위 목록의 Overview 테이블 5개에 대한 SELECT를 추가합니다. AI Trade Analysis와 봇 주문 이력 조회에 사용하는 컬럼 권한은 다음과 같습니다.
 
 ```sql
 GRANT SELECT (id, user_id, pipeline_run_id, run_type, trading_mode, status, started_at, finished_at)
@@ -89,6 +90,8 @@ GRANT SELECT (id, recommendation_id, approval_request_id, user_id, trading_mode,
     average_execution_price, paid_fee, remaining_quantity, trades_count, execution_synced_at, created_at, updated_at)
 ON public.order_logs TO backend_reader;
 ```
+
+**개별 체결 조회**에는 [체결 이력 권한 SQL](scripts/portfolio_fill_permissions.sql)도 필요합니다. 기존 백엔드 조회 권한을 갖춘 DB라면 관리자가 해당 DB에서 이 파일을 한 번 실행합니다. 이 SQL은 `public.order_fills`의 ID·주문 참조·가격·수량·금액·기록 시각 6개 컬럼에만 `SELECT`를 부여합니다.
 
 이는 DB 관리자가 대상 환경과 기존 권한을 검토한 뒤 적용할 예시입니다. 새 테이블의 callback token, Telegram 식별정보, raw 응답·자유형 error message 컬럼은 부여하지 않습니다. 기존 `trade_recommendations`는 전체 SELECT를 유지하지만 API Entity/DTO에서 `ai_response`를 제외합니다. 상세 계약은 [AI Trade Analysis Read API v1](docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요.
 
@@ -220,8 +223,12 @@ Spring Security 기본 로그인 필터가 인증·세션 ID 교체·SecurityCon
 | `/api/v1/ai-trade-analysis/recommendations` | AI 추천 이력 검색과 페이지 조회 |
 | `/api/v1/ai-trade-analysis/recommendations/{id}` | 추천 상세, 분석, 승인·주문 시도·체결 요약 |
 | `/api/v1/ai-trade-analysis/recommendations/{id}/candidates` | 추천에 연결된 당시 후보 목록 |
+| `/api/v1/portfolio/orders` | 로그인 사용자의 봇 주문 이력, 요청 값과 누적 체결 값 |
+| `/api/v1/portfolio/orders/{id}/fills` | 해당 주문에 저장된 개별 체결 수량·가격·금액과 원장 기록 시각 |
 
 로그인한 브라우저의 frontend origin에서 위 GET API를 조회할 수 있습니다.
+
+Portfolio의 두 경로는 `page`(0부터 시작)와 `size`로 페이지를 조회합니다. 주문은 최신 생성 시각과 ID 순, 개별 체결은 원장 ID 오름차순입니다. `recordedAt`은 봇이 체결을 원장에 저장한 시각입니다. 주문 수수료는 주문 단위로 반환하며, 누락된 체결 값은 `null`로 유지합니다. 다른 사용자의 주문 및 없는 주문의 체결 조회는 동일한 404를 반환합니다.
 
 파라미터·응답·오류의 전체 계약은 [Research Read API v1](docs/RESEARCH_READ_API_V1.md), [Overview Read API v1](docs/OVERVIEW_READ_API_V1.md), [AI Trade Analysis Read API v1](docs/AI_TRADE_ANALYSIS_READ_API_V1.md)을 참고하세요. Overview는 nullable 지표와 PARTIAL/BASELINE을 보존하며 성과를 재계산하지 않습니다. Bot PnL은 계좌 수익률이 아닌 user/exchange 단위 FIFO 인식 실현손익입니다.
 

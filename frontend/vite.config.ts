@@ -8,7 +8,8 @@ import { resolveDashboardApis } from './dashboard-api-options.ts';
 const readPaths = {
   research:
     /^\/api\/v1\/research\/(summary|candidates(?:\/[1-9]\d*)?|snapshots|automation-status)$/,
-  overview: /^\/api\/v1\/overview\/(summary|positions|performance|recommendations)$/,
+  overview:
+    /^\/api\/v1\/(?:overview\/(?:summary|positions|performance|recommendations)|portfolio\/orders(?:\/[1-9]\d{0,18}\/fills)?)$/,
   analysis: /^\/api\/v1\/ai-trade-analysis\/recommendations(?:\/[1-9]\d{0,18}(?:\/candidates)?)?$/,
 };
 

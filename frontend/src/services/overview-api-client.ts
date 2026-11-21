@@ -20,8 +20,16 @@ export class OverviewApiError extends Error {
 }
 export const overviewAuthenticationPath = '/api/v1/overview/summary';
 async function get<T>(path: string, read: (raw: string) => T, signal?: AbortSignal): Promise<T> {
+  return readAccountApi(`/api/v1/overview${path}`, read, signal);
+}
+
+export async function readAccountApi<T>(
+  path: `/api/v1/overview${string}` | `/api/v1/portfolio/orders${string}`,
+  read: (raw: string) => T,
+  signal?: AbortSignal,
+): Promise<T> {
   try {
-    const response = await fetch('/api/v1/overview' + path, {
+    const response = await fetch(path, {
       method: 'GET',
       signal,
       credentials: 'same-origin',
@@ -33,11 +41,17 @@ async function get<T>(path: string, read: (raw: string) => T, signal?: AbortSign
     if (!response.ok) throw new OverviewApiError('http', response.status);
     if (!response.headers.get('content-type')?.toLowerCase().includes('application/json'))
       throw new OverviewApiError('data');
-    return read(await response.text());
+    const raw = await response.text();
+    try {
+      return read(raw);
+    } catch (error) {
+      if (error instanceof OverviewApiError) throw error;
+      throw new OverviewApiError('data');
+    }
   } catch (error) {
     if (signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
     if (error instanceof OverviewApiError) throw error;
-    throw new OverviewApiError(error instanceof InvalidOverviewData ? 'data' : 'network');
+    throw new OverviewApiError('network');
   }
 }
 function pagination(page: number, size: number, max: number) {
@@ -73,6 +87,7 @@ export function recommendationQuery(f: RecommendationFilter): string {
 }
 export const overviewApi = {
   summary: (signal?: AbortSignal) => get('/summary', parseSummary, signal),
+  latestPositions: (signal?: AbortSignal) => get('/positions', parsePositions, signal),
   // Retry only an ID mismatch once; never retry authentication/network failures automatically.
   async positions(summary: Summary, signal?: AbortSignal) {
     for (let attempt = 0; attempt < 2; attempt++) {

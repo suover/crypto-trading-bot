@@ -41,6 +41,8 @@ public class SecurityConfiguration {
                                 "/api/v1/ai-trade-analysis/recommendations/{id}",
                                 "/api/v1/ai-trade-analysis/recommendations/{id}/candidates")
                         .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/portfolio/orders",
+                                "/api/v1/portfolio/orders/{id}/fills").hasRole("ADMIN")
                         .anyRequest().denyAll())
                 .formLogin(login -> login.loginPage("/login").loginProcessingUrl(AdminSessionFilter.LOGIN_PATH)
                         .successHandler((request, response, authentication) -> {

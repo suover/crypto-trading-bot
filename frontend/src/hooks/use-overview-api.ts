@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { overviewApi } from '@/services/overview-api-client';
 import type { Summary, PerformanceFilter, RecommendationFilter } from '@/types/overview-api';
 export const overviewApiKey = ['overview-local-api'] as const;
-const options = {
+export const accountReadOptions = {
   retry: false,
   refetchOnWindowFocus: false,
   refetchOnReconnect: false,
@@ -11,13 +11,13 @@ const options = {
 } as const;
 export const useOverviewSummary = () =>
   useQuery({
-    ...options,
+    ...accountReadOptions,
     queryKey: [...overviewApiKey, 'summary'],
     queryFn: ({ signal }) => overviewApi.summary(signal),
   });
 export const useOverviewPositions = (summary: Summary | undefined, enabled: boolean) =>
   useQuery({
-    ...options,
+    ...accountReadOptions,
     enabled: enabled && summary !== undefined,
     queryKey: [
       ...overviewApiKey,
@@ -33,13 +33,13 @@ export const useOverviewPositions = (summary: Summary | undefined, enabled: bool
   });
 export const useOverviewPerformance = (filter: PerformanceFilter) =>
   useQuery({
-    ...options,
+    ...accountReadOptions,
     queryKey: [...overviewApiKey, 'performance', filter],
     queryFn: ({ signal }) => overviewApi.performance(filter, signal),
   });
 export const useOverviewRecommendations = (filter: RecommendationFilter) =>
   useQuery({
-    ...options,
+    ...accountReadOptions,
     queryKey: [...overviewApiKey, 'recommendations', filter],
     queryFn: ({ signal }) => overviewApi.recommendations(filter, signal),
   });

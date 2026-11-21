@@ -31,7 +31,7 @@ class AdminSessionHttpTest extends PostgresFixtureTest {
     @Test void authenticatedAccountDeterminesTheScopeForEveryReadArea() throws Exception {
         var first = adminSession(mvc);
         var second = adminSession(mvc, "fixture-other");
-        for (String path : new String[] {"/api/v1/overview/summary", "/api/v1/research/summary",
+        for (String path : new String[] {"/api/v1/portfolio/orders", "/api/v1/overview/summary", "/api/v1/research/summary",
                 "/api/v1/ai-trade-analysis/recommendations"}) {
             mvc.perform(get(path).session(first)).andExpect(status().isOk())
                     .andExpect(jsonPath("$.scope.userId").value("1"));
@@ -57,7 +57,8 @@ class AdminSessionHttpTest extends PostgresFixtureTest {
                 mvc.perform(get("/api/v1/overview/summary").session(session)).andExpect(status().isForbidden());
                 sql.executeUpdate("UPDATE auth.accounts SET trading_user_id = 1, enabled = false WHERE username = 'fixture-admin'");
                 for (String path : new String[]{"/api/v1/auth/me", "/api/v1/overview/summary", "/api/v1/research/summary",
-                        "/api/v1/ai-trade-analysis/recommendations"}) {
+                        "/api/v1/ai-trade-analysis/recommendations", "/api/v1/portfolio/orders",
+                        "/api/v1/portfolio/orders/9701/fills"}) {
                     mvc.perform(get(path).session(session)).andExpect(status().isForbidden());
                 }
             } finally {

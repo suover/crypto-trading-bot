@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { lazy, useState } from 'react';
 import { Link } from 'react-router';
 import { ArrowUpRight, CircleHelp, Eye, Search, ShieldCheck, Wallet } from 'lucide-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
@@ -16,6 +16,8 @@ import {
 import { PortfolioChart } from '@/components/charts/PortfolioChart';
 import { Button } from '@/components/ui/button';
 import { useDashboardData } from '@/hooks/use-dashboard-data';
+import { useOverviewSource } from '@/hooks/use-overview-source';
+import { ApiSessionBoundary } from '@/components/auth/ApiSessionBoundary';
 import { dateTime, krw, percent, quantity, toNumber } from '@/lib/format';
 import type { OrderExecution } from '@/types/dashboard';
 import {
@@ -28,6 +30,7 @@ import './portfolio.css';
 
 type PortfolioTab = 'holdings' | 'orders' | 'pnl';
 const PAGE_SIZE = 4;
+const PortfolioApiView = lazy(() => import('./PortfolioApiView'));
 
 function ExecutionDetail({ order, analysisId }: { order: OrderExecution; analysisId?: string }) {
   return (
@@ -136,6 +139,17 @@ function ExecutionDetail({ order, analysisId }: { order: OrderExecution; analysi
 }
 
 export default function PortfolioPage() {
+  const { source } = useOverviewSource();
+  return source === 'api' ? (
+    <ApiSessionBoundary>
+      <PortfolioApiView />
+    </ApiSessionBoundary>
+  ) : (
+    <PortfolioDemoView />
+  );
+}
+
+function PortfolioDemoView() {
   const { data } = useDashboardData();
   const [tab, setTab] = useState<PortfolioTab>('holdings');
   const [positionSearch, setPositionSearch] = useState('');

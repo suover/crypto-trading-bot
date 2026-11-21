@@ -1,8 +1,8 @@
 # Crypto Trading Bot Dashboard
 
-Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 배포용 빌드에서는 비로그인은 DEMO, 로그인 후에는 연결된 거래 사용자의 Research, Overview, AI Analysis 데이터로 자동 전환합니다. 개발 서버에서도 API 플래그를 켜면 같은 흐름을 확인할 수 있습니다.
+Python trading/research engine의 주요 개념을 살펴볼 수 있는 React 기반 **조회 전용 대시보드**입니다. 기본 DEMO는 계좌 가치, AI 판단, 체결, 연구 정책과 운영 상태를 다섯 화면으로 제공합니다. 배포용 빌드에서는 비로그인은 DEMO, 로그인 후에는 연결된 거래 사용자의 Research, Overview, AI Analysis, Portfolio 데이터로 자동 전환합니다. 개발 서버에서도 API 플래그를 켜면 같은 흐름을 확인할 수 있습니다.
 
-DEMO의 모든 금액·상태·시각은 합성 데이터입니다. 개발 서버에서 API 플래그를 모두 끄면 백엔드 없이 데모를 볼 수 있습니다. API 연결 환경에서는 진입 시 서버 세션을 확인하고, 비로그인 상태에서는 업무 API를 호출하지 않습니다. 업무 데이터는 Spring Boot Research / Overview / AI Trade Analysis GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다.
+DEMO의 모든 금액·상태·시각은 합성 데이터입니다. 개발 서버에서 API 플래그를 모두 끄면 백엔드 없이 데모를 볼 수 있습니다. API 연결 환경에서는 진입 시 서버 세션을 확인하고, 비로그인 상태에서는 업무 API를 호출하지 않습니다. 업무 데이터는 Spring Boot의 세션 인증 GET API만 조회합니다. 브라우저가 PostgreSQL, Upbit, OpenAI, Telegram을 직접 호출하지 않습니다.
 
 ## 기술 스택
 
@@ -43,7 +43,7 @@ npm run build
 npm run preview
 ```
 
-[미리보기](http://127.0.0.1:4173/overview)에서 비로그인 → DEMO, 로그인 → 사용자 데이터, 로그아웃 → DEMO 전환을 확인합니다. `build`는 `dist/`를 생성하며 별도의 `VITE_ENABLE_*_API` 값 없이 Overview, Research, AI Analysis를 활성화합니다. `preview`는 그 산출물을 제공하고 같은 주소의 허용된 `/api` 요청을 로컬 Spring Boot로 전달합니다. 세션을 확인할 수 없으면 오류를 표시합니다. 백엔드를 다른 로컬 포트에서 실행할 때만 `DASHBOARD_PREVIEW_BACKEND_PORT`를 지정합니다.
+[미리보기](http://127.0.0.1:4173/overview)에서 비로그인 → DEMO, 로그인 → 사용자 데이터, 로그아웃 → DEMO 전환을 확인합니다. `build`는 `dist/`를 생성하며 별도의 `VITE_ENABLE_*_API` 값 없이 Overview, Research, AI Analysis, Portfolio를 활성화합니다. `preview`는 그 산출물을 제공하고 같은 주소의 허용된 `/api` 요청을 로컬 Spring Boot로 전달합니다. 세션을 확인할 수 없으면 오류를 표시합니다. 백엔드를 다른 로컬 포트에서 실행할 때만 `DASHBOARD_PREVIEW_BACKEND_PORT`를 지정합니다.
 
 ### 배포 시 동일 출처 구성
 
@@ -63,7 +63,7 @@ npm run preview
 | `/research`    | 전략 연구     | Runtime 정책, 11단계 lifecycle, 후보 목록, 가중치 비교, Historical/Forward/Shadow evidence, Gate 상세 |
 | `/operations`  | 운영 모니터링 | 모의 worker 상태, 분석 일정, Research Lifecycle 처리 현황, 이벤트와 경고                              |
 
-위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **API · READ ONLY**를 표시합니다. Research, Overview, AI Analysis는 세션 상태에 따라 출처가 함께 전환됩니다. 로그인 후 Portfolio / Operations 및 API flag가 꺼진 화면에는 **실제 데이터 미연동** 안내를 표시합니다. 해당 화면의 데모는 로그아웃 상태에서만 표시합니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
+위 표는 DEMO 화면입니다. `/`는 `/overview`로 이동합니다. 없는 경로에는 404 화면을 제공합니다. 공통 레이아웃은 현재 화면의 출처에 따라 **DEMO** 또는 **API · READ ONLY**를 표시합니다. Research, Overview, AI Analysis, Portfolio는 세션 상태에 따라 출처가 함께 전환됩니다. 로그인 후 Operations 및 API flag가 꺼진 화면에는 **실제 데이터 미연동** 안내를 표시합니다. 해당 화면의 데모는 로그아웃 상태에서만 표시합니다. API 모드에는 Mock 데이터 기준 시각과 시나리오 선택을 표시하지 않습니다.
 
 Sidebar는 데스크톱에서 접을 수 있고 모바일에서는 Drawer로 열립니다. 모바일 메뉴를 선택하면 Drawer가 닫힙니다. 다크 테마가 기본이며 라이트 테마로 전환할 수 있습니다. 선택한 테마만 브라우저 localStorage에 저장합니다.
 
@@ -238,11 +238,17 @@ Summary가 정상 조회된 뒤 Positions를 조회합니다. Scope가 다르면
 
 PARTIAL의 known total을 전체 총액으로 대체하지 않습니다. BASELINE은 기준점으로 표시하고, PARTIAL·새 BASELINE·periodStartAt 연속성을 확인할 수 없는 구간은 선으로 잇지 않습니다. 차트는 현재 조회 페이지의 기록만 사용하며 90개 row를 90일이나 전체 이력으로 표현하지 않습니다. 페이지 간 임의 누적 수익률 계산이나 보간도 없습니다. 긴 표는 내부 스크롤로 조회합니다.
 
-UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분합니다. AI Analysis opt-in이 활성화된 경우 실제 추천 상세로 이동하며 DEMO 상세로 대체하지 않습니다. 현재 Runtime 정책/Gate·worker 상태·주문/체결 상세 등은 **현재 API 미제공**으로 표시합니다.
+UNPRICED, EXCLUDED, null 원가·가격을 유지하며 계좌 비중·전일 증감은 재계산하지 않습니다. Bot PnL은 계좌 수익률과 별개인 user/exchange 단위 KRW 회계입니다. 추천 status와 거래 체결 상태를 구분합니다. AI Analysis opt-in이 활성화된 경우 실제 추천 상세로 이동하며 DEMO 상세로 대체하지 않습니다. 현재 Runtime 정책/Gate·worker 상태 등은 **현재 API 미제공**으로 표시합니다.
 
-401은 세션 만료로 처리하여 캐시를 비우고 DEMO로 전환합니다. 403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치는 조회 오류로 구분하며 오류 원문을 노출하지 않습니다. 이 경우 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 정확한 Overview 4개 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
+401은 세션 만료로 처리하여 캐시를 비우고 DEMO로 전환합니다. 403·500·잘못된 JSON/schema·네트워크 실패·snapshot 불일치는 조회 오류로 구분하며 오류 원문을 노출하지 않습니다. 이 경우 과거 성공 값을 현재 정상 데이터로 보여주거나 0/DEMO로 대체하지 않습니다. 자동 polling이나 인증 오류 재시도는 없습니다. Vite는 해당 flag가 켜진 경우 Overview 4개와 Portfolio 2개의 GET만 고정 loopback Backend로 전달하며 기존 Research 경계를 유지합니다.
 
 Vitest/Mock E2E 외에 별도 폐기 가능한 PostgreSQL 17에 기존 Alembic 및 Backend 테스트 fixture를 적용하고, SELECT 전용 Spring Boot → Vite → Chromium 조회/화면 표시를 검증했습니다. 미인증 401, 정확한 큰 금액/ID, PARTIAL, HOLD 필터와 기존 Research GET도 확인했습니다. 이 검증은 테스트 credential을 사용하는 브라우저 자동화이며 Production 인증/배포 검증을 대신하지 않습니다.
+
+## 자산 및 거래
+
+`/portfolio`는 개발 환경에서 Overview와 같은 `VITE_ENABLE_OVERVIEW_API=true` 설정을 사용합니다. 로그인 후 **보유 자산**에는 `/api/v1/overview/positions`가 반환한 계좌 평가 시각과 보유량·평가 가격이 표시됩니다. **주문·체결 이력**에는 봇이 저장한 주문의 모드, 요청 값, 실제 누적 체결 값이 표시됩니다. 주문을 선택하면 개별 체결 가격·수량·금액과 원장 기록 시각을 조회합니다. 로그인한 사용자의 외부 수동 거래나 입출금은 이 주문 목록의 대상에 포함되지 않습니다.
+
+기존 로컬 DB를 사용 중이라면 DB 관리자에게 [개별 체결 조회 권한](../backend/scripts/portfolio_fill_permissions.sql)을 확인하세요. 비로그인 방문자는 기존 데모를 둘러볼 수 있습니다.
 
 ## AI Analysis LOCAL API v1
 
@@ -313,7 +319,7 @@ Remove-Item Env:PLAYWRIGHT_CHANNEL
 
 회원가입·JWT, 직접 PostgreSQL 연결, Upbit 실시간 계좌 조회, 거래·승인/거절, 정책 등록/승인/활성화/종료, worker 시작/중지, 알림 해결 API와 Production 배포는 포함하지 않습니다. Python Trading Engine, root Compose와 LIVE 안전장치는 유지합니다. Backend의 인증만 Spring Security 세션으로 전환합니다.
 
-후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. Portfolio / Operations 화면의 API 연결도 별도 범위입니다.
+후속 Backend 확장에서는 현재 Gate와 immutable 평가 evidence, Historical/Forward/Shadow 성과, 승인·activation·Runtime 상태를 구분한 read API가 필요합니다. 제공되기 전에는 Mock을 실제 데이터로 승격하지 않습니다. Operations 화면의 API 연결도 별도 범위입니다.
 
 Production 공개 전 TLS reverse proxy, 관리자 인증/세션 설계, 권한·CSRF 정책, 최소 DB 권한, 접근 로그의 민감정보 처리, 보안 header와 origin 경계를 별도로 검토해야 합니다. 세션 인증이 구현되어도 Vite 개발 proxy는 Production 배포용이 아닙니다. 운영 API 모드를 자동으로 켜지 않습니다. `VITE_*`, bundle, URL, localStorage/sessionStorage에 secret을 넣지 마세요.
 

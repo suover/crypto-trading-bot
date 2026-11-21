@@ -1,6 +1,6 @@
 # 프론트엔드·백엔드 웹 배포
 
-React와 Spring Boot를 같은 HTTPS 주소로 제공하는 별도 배포 구성입니다. 비로그인은 DEMO, 로그인하면 연결된 거래 사용자의 조회 데이터, 로그아웃하면 DEMO로 전환합니다. 실제 데이터가 연결된 화면은 Overview, Research, AI Trade Analysis입니다. Portfolio와 Operations의 미연동 범위는 그대로입니다.
+React와 Spring Boot를 같은 HTTPS 주소로 제공하는 별도 배포 구성입니다. 비로그인은 DEMO, 로그인하면 연결된 거래 사용자의 조회 데이터, 로그아웃하면 DEMO로 전환합니다. Overview, Research, AI Trade Analysis와 자산 및 거래에서 실제 데이터를 조회합니다. 기존 웹 배포를 업데이트할 때에는 DB 관리자가 대상 DB의 `backend_reader`에 [개별 체결 조회 권한](../backend/scripts/portfolio_fill_permissions.sql)을 먼저 적용합니다. Deploy Web은 DB 권한을 변경하지 않습니다.
 
 ## 실행 구조
 

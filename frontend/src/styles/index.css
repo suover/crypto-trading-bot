@@ -828,11 +828,21 @@
     background-position: -200% 0;
   }
 }
+.mobile-navigation[data-slot='dialog-content'] {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: 280px;
+  max-width: calc(100vw - 36px);
+  height: 100svh;
+  border-radius: 0;
+  padding: 26px 18px;
+  display: flex;
+  flex-direction: column;
+  animation: none;
+}
 .detail-drawer[data-slot='dialog-content'] {
   position: fixed;
   inset: 0 0 0 auto;
-  transform: none;
-  translate: none;
   width: min(820px, 100vw);
   max-width: min(820px, 100vw);
   max-height: 100svh;
@@ -1477,20 +1487,6 @@
   }
   .schedule-grid {
     padding: 0 16px 20px;
-  }
-  .mobile-navigation[data-slot='dialog-content'] {
-    position: fixed;
-    inset: 0 auto 0 0;
-    width: 280px;
-    max-width: calc(100vw - 36px);
-    transform: none;
-    translate: none;
-    height: 100svh;
-    border-radius: 0;
-    padding: 26px 18px;
-    display: flex;
-    flex-direction: column;
-    animation: none;
   }
   .mobile-navigation .brand-text {
     display: block;

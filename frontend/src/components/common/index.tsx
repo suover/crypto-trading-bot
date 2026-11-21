@@ -241,7 +241,7 @@ export function DetailDrawer({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="detail-drawer"
+        placement="right"
         onOpenAutoFocus={() => {
           const active = document.activeElement;
           opener.current =
